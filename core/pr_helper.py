@@ -1,8 +1,6 @@
 """
 PRHelper - Pull Request olish va qidirish (UNIVERSAL Smart Patch)
 Bu class JIRA task uchun PR topish logikasini o'z ichiga oladi.
-
-Version: 3.0 UNIVERSAL SMART PATCH
 """
 
 from typing import Dict, List, Optional, Callable

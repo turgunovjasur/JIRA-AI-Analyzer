@@ -66,7 +66,7 @@ def render_sidebar():
             **Positive** - Asosiy funksionallik
             **Negative** - Xato holatlar
 
-            **Til:** Test case'lar har doim **O'ZBEK TILIDA**
+            **Til:** Test case'lar default **O'ZBEK TILIDA**
             """)
 
         st.divider()

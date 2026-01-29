@@ -43,7 +43,7 @@ def render_header(
         >>> render_header(
         >>>     title="Test Case Generator",
         >>>     subtitle="TZ va PR asosida test case'lar",
-        >>>     version="v3.3",
+        >>>     version="v4",
         >>>     icon="🧪"
         >>> )
     """

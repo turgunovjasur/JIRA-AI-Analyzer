@@ -1,4 +1,4 @@
-# ui/components.py - V2 (Emoji Fixed)
+# ui/components.py
 import streamlit as st
 from utils.embedding_helper import EmbeddingHelper
 from utils.vectordb_helper import VectorDBHelper
@@ -58,10 +58,9 @@ def render_results_info(top_n, found, filtered, min_similarity):
 
 
 def render_sidebar():
-    """Sidebar rendering - EMOJI FIXED"""
+    """Sidebar rendering"""
 
     with st.sidebar:
-        # Header - HTML version (emoji safe)
         st.markdown("""
         <div style="text-align: center; padding: 1rem 0;">
             <h2 style="color: #e6edf3; font-weight: 700;">🔬 JIRA Analyzer</h2>
