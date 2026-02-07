@@ -2,10 +2,16 @@
 """
 JIRA Comment Writer - JIRA taskga comment qo'shish
 
-AI tahlil natijalarini JIRA comment sifatida yozadi
+AI tahlil natijalarini JIRA comment sifatida yozadi.
+REST API v3 orqali ADF (Atlassian Document Format) qo'llab-quvvatlaydi.
+
+Author: JASUR TURGUNOV
+Version: 2.0 - ADF Support
 """
 from jira import JIRA
 import os
+import requests
+from typing import Dict, Optional
 from dotenv import load_dotenv
 import logging
 
@@ -15,22 +21,74 @@ logger = logging.getLogger(__name__)
 
 
 class JiraCommentWriter:
-    """JIRA ga comment yozish"""
+    """JIRA ga comment yozish (ADF va oddiy format)"""
 
     def __init__(self):
         """JIRA client yaratish"""
+        self.server = os.getenv('JIRA_SERVER', 'https://smartupx.atlassian.net')
+        self.email = os.getenv('JIRA_EMAIL')
+        self.api_token = os.getenv('JIRA_API_TOKEN')
+
+        # python-jira client (oddiy format uchun)
         try:
             self.jira = JIRA(
-                server=os.getenv('JIRA_SERVER'),
-                basic_auth=(
-                    os.getenv('JIRA_EMAIL'),
-                    os.getenv('JIRA_API_TOKEN')
-                )
+                server=self.server,
+                basic_auth=(self.email, self.api_token)
             )
             logger.info("✅ JIRA connected for commenting")
         except Exception as e:
             logger.error(f"❌ JIRA connection failed: {e}")
             self.jira = None
+
+        # REST API session (ADF format uchun)
+        self._session = None
+
+    @property
+    def session(self) -> requests.Session:
+        """REST API session (lazy loading)"""
+        if self._session is None:
+            self._session = requests.Session()
+            self._session.auth = (self.email, self.api_token)
+            self._session.headers.update({
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            })
+        return self._session
+
+    def add_comment_adf(self, task_key: str, adf_document: Dict) -> bool:
+        """
+        ADF formatda comment qo'shish (REST API v3)
+
+        Bu metod expand panel (dropdown) ishlatish imkonini beradi.
+
+        Args:
+            task_key: JIRA task key (DEV-1234)
+            adf_document: ADF format document (dict)
+
+        Returns:
+            True - success, False - failed
+        """
+        try:
+            url = f"{self.server}/rest/api/3/issue/{task_key}/comment"
+
+            payload = {
+                "body": adf_document
+            }
+
+            response = self.session.post(url, json=payload)
+
+            if response.status_code == 201:
+                logger.info(f"✅ ADF Comment added to {task_key}")
+                return True
+            else:
+                logger.error(
+                    f"❌ ADF Comment failed: {response.status_code} - {response.text}"
+                )
+                return False
+
+        except Exception as e:
+            logger.error(f"❌ ADF Comment error for {task_key}: {e}")
+            return False
 
     def add_comment(self, task_key: str, comment_text: str) -> bool:
         """

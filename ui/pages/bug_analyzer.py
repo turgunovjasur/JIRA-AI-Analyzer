@@ -187,9 +187,11 @@ def render_bug_analyzer():
         # Load models
         embedding_helper, vectordb_helper, gemini_helper = load_models()
 
-        # Get settings
-        top_n = st.session_state.get('top_n', 5)
-        min_similarity = st.session_state.get('min_similarity', 0.75)
+        # Get settings from app_settings (v4.0)
+        from config.app_settings import get_app_settings
+        app_settings = get_app_settings()
+        top_n = app_settings.bug_analyzer.default_top_n
+        min_similarity = app_settings.bug_analyzer.default_min_similarity / 100
 
         # Update loading
         with loading_placeholder.container():

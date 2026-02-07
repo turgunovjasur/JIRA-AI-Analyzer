@@ -52,7 +52,7 @@ def render_tz_pr_checker():
     render_header(
         title="🔍 TZ-PR Moslik Tekshirish",
         subtitle="Task TZ va GitHub kod o'zgarishlarini solishtiring",
-        version="v6.0 DRY FIXED"
+        version="v3"
     )
 
     # Info
@@ -156,11 +156,14 @@ def _run_analysis(task_key: str):
 
 
 def _get_analysis_settings() -> Dict:
-    """Tahlil sozlamalarini olish"""
+    """Tahlil sozlamalarini olish (v4.0 - app_settings'dan)"""
+    from config.app_settings import get_app_settings
+    app_settings = get_app_settings()
+
     return {
-        'max_files': st.session_state.get('max_files'),
-        'show_full_diff': st.session_state.get('show_full_diff', True),
-        'use_smart_patch': st.session_state.get('use_smart_patch', True)
+        'max_files': None,  # No limit by default
+        'show_full_diff': True,  # Always show full diff
+        'use_smart_patch': True  # Always use smart patch
     }
 
 
@@ -332,6 +335,23 @@ def _render_technical_details(result):
             key="tz_in_tab1",
             label_visibility="collapsed"
         )
+
+        # BARCHA comment'larni ko'rsatish (v5.2 - FIXED)
+        comments = []
+        if result.comment_analysis:
+            comments = result.comment_analysis.get('comments', [])
+
+        if comments:
+            st.markdown("---")
+            st.markdown(f"### 💬 JIRA Comment'lar ({len(comments)} ta)")
+
+            for i, comment in enumerate(comments, 1):
+                author = comment.get('author', 'Unknown')
+                created = comment.get('created', '')
+                body = comment.get('body', '').strip()
+
+                with st.expander(f"[#{i}] {author} - {created}", expanded=False):
+                    st.markdown(body)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -48,12 +48,12 @@ def render_history(
 
     history = st.session_state[history_key]
 
-    # Header
-    st.markdown("---")
-    st.markdown(f"### 📜 So'nggi {max_items} ta tahlil")
-
     # Teskari tartibda ko'rsatish (eng yangi birinchi)
     items_to_show = list(reversed(history[-max_items:]))
+
+    # Header
+    st.markdown("---")
+    st.markdown(f"### 📜 So'nggi {len(items_to_show)} ta tahlil")
 
     for idx, item in enumerate(items_to_show):
         col1, col2, col3 = st.columns([2, 2, 1])

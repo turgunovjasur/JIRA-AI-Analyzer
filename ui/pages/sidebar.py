@@ -1,75 +1,91 @@
 # ui/pages/sidebar.py
+"""
+Sidebar - Navigation
+
+Yoqilgan modullarni ko'rsatadi.
+Barcha sozlamalar alohida unified settings page'da.
+
+Author: JASUR TURGUNOV
+Version: 4.0
+"""
 import streamlit as st
 
 
 def render_sidebar():
-    """Sidebar rendering - Returns: (page_name, settings_dict)"""
+    """
+    Sidebar rendering
+
+    Returns:
+        tuple: (page_name, None) - settings olib tashlandi (v4.0)
+    """
+    from config.app_settings import get_app_settings
+
+    app_settings = get_app_settings()
 
     with st.sidebar:
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # HEADER
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         st.markdown("""
         <div style="text-align: center; padding: 1rem 0; margin-bottom: 1rem;">
-            <h2 style="color: #e6edf3; font-weight: 700; margin: 0;">JIRA Analyzer</h2>
+            <h2 style="color: #e6edf3; font-weight: 700; margin: 0;">QA Assistant</h2>
             <p style="color: #8b949e; font-size: 0.85rem; margin-top: 0.5rem;">AI-Powered Analysis Suite</p>
-            <p style="color: #6e7681; font-size: 0.7rem; font-style: italic;">v3.3 FINAL by JASUR TURGUNOV</p>
+            <p style="color: #6e7681; font-size: 0.7rem; font-style: italic;">v4.0 by JASUR TURGUNOV</p>
         </div>
         """, unsafe_allow_html=True)
 
         st.divider()
 
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # NAVIGATION - Faqat yoqilgan modullar
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        modules = []
+
+        if app_settings.modules.bug_analyzer_enabled:
+            modules.append("Bug Analyzer")
+        if app_settings.modules.statistics_enabled:
+            modules.append("Sprint Statistics")
+        if app_settings.modules.tz_pr_checker_enabled:
+            modules.append("TZ-PR Checker")
+        if app_settings.modules.testcase_generator_enabled:
+            modules.append("Test Case Generator")
+
         st.markdown("### Sahifa tanlang")
-        page = st.radio(
-            "Funksiyalar",
-            options=["Bug Analyzer", "Sprint Statistics", "TZ-PR Checker", "Test Case Generator"],
-            label_visibility="collapsed",
-            key="page_selector"
-        )
+
+        if modules:
+            # Default page
+            default_index = 0
+            if 'selected_page' in st.session_state and st.session_state.selected_page in modules:
+                default_index = modules.index(st.session_state.selected_page)
+
+            page = st.radio(
+                "Funksiyalar",
+                options=modules,
+                index=default_index,
+                label_visibility="collapsed",
+                key="page_selector"
+            )
+
+            # Save selected page
+            st.session_state.selected_page = page
+        else:
+            st.warning("⚠️ Hech qaysi modul yoqilmagan!")
+            page = None
 
         st.divider()
-        st.markdown("### Sozlamalar")
-        settings = {}
 
-        if page == "Bug Analyzer":
-            settings['top_n'] = st.slider("Top tasklar soni", 1, 10, 5)
-            settings['min_similarity'] = st.slider("Min o'xshashlik %", 50, 95, 75, 5) / 100
-
-        elif page == "Sprint Statistics":
-            settings['chart_theme'] = st.selectbox("Chart theme", ["Dark", "Light"], 0)
-
-        elif page == "TZ-PR Checker":
-            st.markdown("#### AI Tahlil Sozlamalari")
-            use_limit = st.checkbox("Fayllar sonini cheklash", False)
-            settings['max_files'] = st.slider("Max fayllar", 5, 100, 20) if use_limit else None
-            settings['show_full_diff'] = st.checkbox("To'liq diff", True)
-            settings['use_smart_patch'] = st.checkbox("🧠 Smart Patch", True)
-
-        elif page == "Test Case Generator":
-            st.markdown("#### 🧪 Test Case Settings")
-            settings['include_pr'] = st.checkbox("🔎 GitHub PR hisobga olish", True)
-            settings['use_smart_patch'] = st.checkbox("🧠 Smart Patch", True)
-
-            st.markdown("**🎯 Test Type'lar:**")
-            col1, col2 = st.columns(2)
-            with col1:
-                pos = st.checkbox("✅ Positive", True)
-            with col2:
-                neg = st.checkbox("❌ Negative", True)
-
-            test_types = []
-            if pos:
-                test_types.append('positive')
-            if neg:
-                test_types.append('negative')
-            settings['test_types'] = test_types if test_types else ['positive']
-
-            st.divider()
-            st.info("""
-            **Positive** - Asosiy funksionallik
-            **Negative** - Xato holatlar
-
-            **Til:** Test case'lar default **O'ZBEK TILIDA**
-            """)
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # SETTINGS TUGMASI
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        if st.button("⚙️ Sozlamalar", use_container_width=True, key="settings_btn"):
+            st.session_state.show_settings = True
+            st.rerun()
 
         st.divider()
+
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # STATUS
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         st.markdown("### Status")
         col1, col2 = st.columns(2)
         with col1:
@@ -77,19 +93,27 @@ def render_sidebar():
         with col2:
             st.markdown("✅ GitHub: OK" if _check_github() else "⚠️ GitHub: Optional")
 
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # FOOTER
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         st.markdown("""
         <div style="background: rgba(88, 166, 255, 0.1); padding: 0.75rem; border-radius: 8px; margin-top: 1rem;">
             <p style="color: #8b949e; font-size: 0.75rem; margin: 0;">
                 <strong style="color: #58a6ff;">AI:</strong> Gemini 2.5 Flash<br>
-                <strong style="color: #58a6ff;">Version:</strong> 3.3 FINAL
+                <strong style="color: #58a6ff;">Version:</strong> 4.0
             </p>
         </div>
         """, unsafe_allow_html=True)
 
-    return page, settings
+    # Settings sahifasi tanlangan bo'lsa
+    if st.session_state.get('show_settings', False):
+        return "Settings", None
+
+    return page, None
 
 
 def _check_jira():
+    """JIRA ulanishini tekshirish"""
     try:
         from config.settings import settings
         return bool(settings.JIRA_EMAIL and settings.JIRA_API_TOKEN)
@@ -98,6 +122,7 @@ def _check_jira():
 
 
 def _check_github():
+    """GitHub ulanishini tekshirish"""
     try:
         from config.settings import settings
         return bool(settings.GITHUB_TOKEN)

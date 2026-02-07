@@ -345,6 +345,26 @@ class GitHubClient:
                     print(f"   ⚠️ Branch search exception ({pattern}): {e}")
                     continue
 
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # Strategy 3: Numeric part broad search + verification
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        numeric_part, prefix_part = self._extract_numeric_part(jira_key)
+
+        if not found_prs and numeric_part:
+            found_prs = self._search_by_numeric_part(jira_key, numeric_part, url)
+
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # Strategy 4: Extended head: patterns (numeric-only)
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        if not found_prs and numeric_part:
+            found_prs = self._search_extended_branch_patterns(jira_key, numeric_part, prefix_part, url)
+
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # Strategy 5: Repo PR listing (last resort)
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        if not found_prs and numeric_part:
+            found_prs = self._search_by_repo_listing(jira_key, numeric_part)
+
         # Final result
         if found_prs:
             print(f"   ✅ JAMI: {len(found_prs)} ta PR topildi!")
@@ -352,3 +372,277 @@ class GitHubClient:
             print(f"   ❌ Hech qanday PR topilmadi")
 
         return found_prs
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # HELPER METHODS
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    def _extract_numeric_part(self, jira_key: str) -> Tuple[Optional[str], Optional[str]]:
+        """
+        JIRA key dan numeric va prefix qismini ajratish.
+
+        DEV-7068 → ('7068', 'DEV-')
+        PROJ-123 → ('123', 'PROJ-')
+        DEV-0042 → ('0042', 'DEV-')  leading zeros saqlandi
+
+        Returns:
+            (numeric_part, prefix_part) yoki (None, None)
+        """
+        match = re.match(r'^([A-Z]+-?)(\d+)$', jira_key.strip().upper())
+        if match:
+            return match.group(2), match.group(1)
+        return None, None
+
+    def _verify_pr_for_ticket(self, pr_url: str, numeric_part: str, jira_key: str) -> Tuple[bool, str]:
+        """
+        PR URL'ni JIRA ticketga aloqadorligini tekshirish.
+
+        Verification checks (priority order):
+        1. head branch'da numeric_part substring
+        2. title/body'da full jira_key (case-insensitive)
+        3. title/body'da numeric_part with word-boundary isolation
+
+        Returns:
+            (is_match, reason) — reason debug log uchun
+        """
+        owner, repo, pr_number = self.parse_pr_url(pr_url)
+        if not all([owner, repo, pr_number]):
+            return False, "URL parse failed"
+
+        print(f"   🔍 Verifying PR #{pr_number} ({owner}/{repo})...")
+
+        pr_info = self.get_pr_info(owner, repo, pr_number)
+        if not pr_info:
+            return False, "get_pr_info returned None"
+
+        head_branch = pr_info.get('head', '')
+        title = pr_info.get('title', '')
+        body = pr_info.get('body', '') or ''
+
+        # Check 1: numeric_part in head branch name
+        if numeric_part in head_branch:
+            return True, f"branch '{head_branch}' contains '{numeric_part}'"
+
+        # Check 2: full jira_key in title+body (case-insensitive)
+        combined = f"{title} {body}".lower()
+        if jira_key.lower() in combined:
+            return True, f"title/body contains '{jira_key}'"
+
+        # Check 3: numeric_part with word-boundary ((?<!\d)7068(?!\d))
+        boundary_pattern = r'(?<!\d)' + re.escape(numeric_part) + r'(?!\d)'
+        if re.search(boundary_pattern, combined):
+            return True, f"title/body contains '{numeric_part}' (word-boundary)"
+
+        return False, f"no match in branch '{head_branch}' or title/body"
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # STRATEGY 3: Numeric broad search + verification
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    def _search_by_numeric_part(self, jira_key: str, numeric_part: str, search_url: str) -> List[Dict]:
+        """
+        Strategy 3: Unquoted numeric search + post-filter verification.
+
+        Query: org:{org} {numeric_part} is:pr  (unquoted — matches anywhere in PR index)
+        Then verify each candidate via get_pr_info() to avoid false positives.
+        """
+        found = []
+        query = f'org:{self.org} {numeric_part} is:pr'
+        print(f"   🔎 Numeric search: {query} (from {jira_key})")
+
+        try:
+            response = self._make_request(search_url, params={
+                'q': query,
+                'sort': 'updated',
+                'per_page': 10
+            })
+
+            if response.status_code != 200:
+                print(f"   ⚠️ Numeric search error: {response.status_code}")
+                return found
+
+            items = response.json().get('items', [])
+            print(f"   🔎 Numeric search: {len(items)} candidate(s) found, verifying...")
+
+            for item in items:
+                pr_url = item.get('html_url')
+                if not pr_url:
+                    continue
+
+                is_match, reason = self._verify_pr_for_ticket(pr_url, numeric_part, jira_key)
+
+                if is_match:
+                    print(f"   ✅ PR matched: {reason}")
+                    found.append({
+                        'url': pr_url,
+                        'title': item.get('title'),
+                        'status': item.get('state'),
+                        'source': 'GitHub (numeric-search)'
+                    })
+                    break  # First valid match is enough
+                else:
+                    print(f"   ⏭️  PR rejected: {reason}")
+
+            if not found:
+                print(f"   ⏭️  Numeric search: all candidates rejected")
+
+        except Exception as e:
+            print(f"   ⚠️ Numeric search exception: {e}")
+
+        return found
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # STRATEGY 4: Extended head: patterns (numeric-only variants)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    def _search_extended_branch_patterns(
+            self, jira_key: str, numeric_part: str, prefix_part: str, search_url: str
+    ) -> List[Dict]:
+        """
+        Strategy 4: head: patterns using numeric-only branch names.
+
+        Covers cases like:
+        - 7068 (bare number)
+        - 7068b (number + letter suffix)
+        - fix/7068, feature/7068, etc.
+        - DEV7068 (prefix without hyphen)
+        """
+        found = []
+        prefix_clean = prefix_part.rstrip('-') if prefix_part else ''
+
+        patterns = [
+            numeric_part,                                    # 7068
+            f"{numeric_part}b",                              # 7068b
+            f"fix-{numeric_part}",                           # fix-7068
+            f"fix/{numeric_part}",                           # fix/7068
+            f"hotfix-{numeric_part}",                        # hotfix-7068
+            f"hotfix/{numeric_part}",                        # hotfix/7068
+            f"feature-{numeric_part}",                       # feature-7068
+            f"feature/{numeric_part}",                       # feature/7068
+            f"bugfix-{numeric_part}",                        # bugfix-7068
+            f"bugfix/{numeric_part}",                        # bugfix/7068
+            f"{prefix_clean}{numeric_part}",                 # DEV7068
+            f"{prefix_clean.lower()}{numeric_part}",         # dev7068
+        ]
+
+        # Deduplicate while preserving order
+        seen = set()
+        unique_patterns = []
+        for p in patterns:
+            if p not in seen:
+                seen.add(p)
+                unique_patterns.append(p)
+
+        print(f"   🔎 Extended branch patterns (numeric): {len(unique_patterns)} patterns...")
+
+        for pattern in unique_patterns:
+            query = f'org:{self.org} head:{pattern} is:pr'
+
+            try:
+                response = self._make_request(search_url, params={'q': query, 'sort': 'updated'})
+
+                if response.status_code == 200:
+                    items = response.json().get('items', [])
+                    for item in items:
+                        pr_url = item.get('html_url')
+                        if not any(pr['url'] == pr_url for pr in found):
+                            found.append({
+                                'url': pr_url,
+                                'title': item.get('title'),
+                                'status': item.get('state'),
+                                'source': f'GitHub (extended-branch:{pattern})'
+                            })
+
+                    if items:
+                        print(f"   ✅ Extended branch: {len(items)} ta topildi (pattern: {pattern})!")
+                        break  # Found — stop trying patterns
+
+            except Exception as e:
+                print(f"   ⚠️ Extended branch exception ({pattern}): {e}")
+                continue
+
+        if not found:
+            print(f"   ⏭️  Extended branch patterns: nothing found")
+
+        return found
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # STRATEGY 5: Org repo listing + local branch filter (last resort)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    def _get_org_repos(self, max_repos: int = 5) -> List[Dict]:
+        """Org'dagi eng so'nggi update qilgan repo'larni olish"""
+        url = f"{self.base_url}/orgs/{self.org}/repos"
+        response = self._make_request(url, params={
+            'sort': 'updated',
+            'per_page': max_repos
+        })
+
+        if response.status_code == 200:
+            return response.json()
+
+        print(f"   ⚠️ Org repos olishda xatolik: {response.status_code}")
+        return []
+
+    def _search_by_repo_listing(self, jira_key: str, numeric_part: str) -> List[Dict]:
+        """
+        Strategy 5: Org'dagi repo'larning PR list'larini scan qilib
+        branch name'da numeric_part qidirish.
+
+        GitHub search index hali yangilanmagan holat uchun zaxira.
+        Faqat 5 eng so'nggi repo tekshiriladi.
+        """
+        found = []
+        print(f"   🔎 Repo listing search (last resort): numeric '{numeric_part}' qidirilmoqda...")
+
+        try:
+            repos = self._get_org_repos(max_repos=5)
+            if not repos:
+                print(f"   ⚠️ Repo listing: no repos returned")
+                return found
+
+            for repo_data in repos:
+                repo_name = repo_data.get('name', '')
+                owner = repo_data.get('owner', {}).get('login', self.org)
+                print(f"   🔍 Checking repo: {owner}/{repo_name}...")
+
+                try:
+                    pr_list_url = f"{self.base_url}/repos/{owner}/{repo_name}/pulls"
+                    response = self._make_request(pr_list_url, params={
+                        'state': 'all',
+                        'per_page': 100,
+                        'sort': 'updated'
+                    })
+
+                    if response.status_code != 200:
+                        print(f"   ⚠️ PR list error for {repo_name}: {response.status_code}")
+                        continue
+
+                    prs = response.json()
+                    for pr in prs:
+                        head_ref = pr.get('head', {}).get('ref', '')
+                        if numeric_part in head_ref:
+                            pr_html_url = pr.get('html_url', '')
+                            print(f"   ✅ Found in {repo_name}: PR #{pr.get('number')} branch '{head_ref}' contains '{numeric_part}'")
+                            found.append({
+                                'url': pr_html_url,
+                                'title': pr.get('title', ''),
+                                'status': pr.get('state', ''),
+                                'source': f'GitHub (repo-listing:{repo_name})'
+                            })
+                            break  # Found in this repo
+
+                except Exception as e:
+                    print(f"   ⚠️ Repo listing exception ({repo_name}): {e}")
+                    continue
+
+                if found:
+                    break  # Found — stop scanning repos
+
+        except Exception as e:
+            print(f"   ⚠️ Repo listing search exception: {e}")
+
+        if not found:
+            print(f"   ⏭️  Repo listing: checked repos, no match")
+
+        return found

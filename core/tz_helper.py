@@ -309,3 +309,108 @@ class TZHelper:
             lines.append("• PR topilmadi")
 
         return "\n".join(lines)
+
+    @staticmethod
+    def format_contradictory_comments_for_ai(comment_analysis: Dict) -> str:
+        """
+        Zid commentlarni AI uchun formatda tayyorlash
+
+        AI ga aniq warning va barcha zid commentlarni ko'rsatish uchun.
+
+        Args:
+            comment_analysis: analyze_comments() natijasi
+
+        Returns:
+            str: AI uchun formatted warning text
+
+        Example:
+            >>> warning = TZHelper.format_contradictory_comments_for_ai(analysis)
+            >>> prompt = tz_text + "\n\n" + warning
+        """
+        if not comment_analysis.get('has_changes'):
+            return ""
+
+        lines = [
+            "=" * 70,
+            "⚠️ DIQQAT AI! COMMENT'LARDA O'ZGARISHLAR TOPILDI!",
+            "=" * 70,
+            "",
+            f"Jami {comment_analysis['change_count']} ta comment'da TZ'ni o'zgartiruvchi",
+            "yoki bekor qiluvchi kalit so'zlar topildi.",
+            "",
+            "Quyidagi comment'lar TZ'ni o'zgartirgan yoki bekor qilgan bo'lishi mumkin:",
+            ""
+        ]
+
+        for idx, comment in enumerate(comment_analysis.get('important_comments', []), 1):
+            lines.append(f"📌 Comment #{idx}:")
+            lines.append(f"   Muallif: {comment['author']}")
+            lines.append(f"   Sana: {comment['created']}")
+            lines.append(f"   Matn: {comment['full_text']}")
+            lines.append("")
+
+        lines.extend([
+            "=" * 70,
+            "⚠️ MUHIM: Barcha comment'larni diqqat bilan o'qing!",
+            "Eng so'nggi talablar va o'zgarishlarni hisobga oling!",
+            "=" * 70,
+            ""
+        ])
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def format_contradictory_comments_for_ui(comment_analysis: Dict) -> dict:
+        """
+        Zid commentlarni UI (Streamlit) uchun formatda tayyorlash
+
+        Streamlit warning va expander'larda ko'rsatish uchun.
+
+        Args:
+            comment_analysis: analyze_comments() natijasi
+
+        Returns:
+            dict: {
+                'show_warning': bool,
+                'title': str,
+                'summary': str,
+                'comments': List[Dict]
+            }
+
+        Example:
+            >>> ui_data = TZHelper.format_contradictory_comments_for_ui(analysis)
+            >>> if ui_data['show_warning']:
+            >>>     st.warning(ui_data['title'])
+        """
+        if not comment_analysis.get('has_changes'):
+            return {
+                'show_warning': False,
+                'title': '',
+                'summary': '',
+                'comments': []
+            }
+
+        change_count = comment_analysis['change_count']
+        title = f"⚠️ Diqqat! {change_count} ta comment'da TZ'ga zid yoki bekor qilingan shartlar topildi!"
+
+        summary = (
+            f"Tahlil jarayonida {change_count} ta comment'da TZ'ni o'zgartiruvchi "
+            "yoki bekor qiluvchi kalit so'zlar topildi. "
+            "Quyida har bir comment'ning tafsilotlarini ko'ring."
+        )
+
+        formatted_comments = []
+        for comment in comment_analysis.get('important_comments', []):
+            formatted_comments.append({
+                'author': comment['author'],
+                'created': comment['created'],
+                'preview': comment['preview'],
+                'full_text': comment['full_text']
+            })
+
+        return {
+            'show_warning': True,
+            'title': title,
+            'summary': summary,
+            'comments': formatted_comments
+        }

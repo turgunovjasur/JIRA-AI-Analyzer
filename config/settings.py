@@ -25,6 +25,7 @@ class Settings:
 
     # ==================== Gemini AI ====================
     GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
+    GOOGLE_API_KEY_2 = os.getenv('GOOGLE_API_KEY_2')  # Fallback key (ixtiyoriy)
     GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
 
     # ==================== Embedding ====================
@@ -75,6 +76,7 @@ class Settings:
             'jira': bool(cls.JIRA_EMAIL and cls.JIRA_API_TOKEN),
             'github': bool(cls.GITHUB_TOKEN),
             'gemini': bool(cls.GOOGLE_API_KEY),
+            'gemini_fallback': bool(cls.GOOGLE_API_KEY_2),
             'vectordb': os.path.exists(cls.VECTOR_DB_PATH) if cls.VECTOR_DB_PATH else False
         }
 

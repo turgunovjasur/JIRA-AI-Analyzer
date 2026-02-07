@@ -81,25 +81,69 @@ AI_PROMPT_TEMPLATE_UZ = """
 ║ 📊 JAVOB FORMATI (ANIQ SHU FORMATDA YOZ!)                        ║
 ╚══════════════════════════════════════════════════════════════════╝
 
-## ✅ BAJARILGAN TALABLAR
-[TZ dan olingan har bir talab va uning bajarilish holati]
-
-## ⚠️ QISMAN BAJARILGAN
-[Qisman bajarilgan talablar va nimasi yetishmayotgani]
-
-## ❌ BAJARILMAGAN TALABLAR
-[TZ da bor, lekin kodda yo'q narsalar]
-
-## 🐛 POTENSIAL MUAMMOLAR
-[Kod sifati, buglar, edge case'lar, error handling]
-
-{figma_response_section}
+{response_format_sections}
 
 ## 📊 MOSLIK BALI
 [0-100% oralig'ida baho. Format: **COMPLIANCE_SCORE: XX%**]
 
 ╚══════════════════════════════════════════════════════════════════╝
 """
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# VISIBLE SECTIONS → AI OUTPUT FORMAT MAPPING
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Keys must match TZPRCheckerSettings.visible_sections values
+_SECTION_PROMPT_BLOCKS = {
+    'completed': (
+        "## ✅ BAJARILGAN TALABLAR\n"
+        "[TZ dan olingan har bir talab va uning bajarilish holati]\n"
+    ),
+    'partial': (
+        "## ⚠️ QISMAN BAJARILGAN\n"
+        "[Qisman bajarilgan talablar va nimasi yetishmayotgani]\n"
+    ),
+    'failed': (
+        "## ❌ BAJARILMAGAN TALABLAR\n"
+        "[TZ da bor, lekin kodda yo'q narsalar]\n"
+    ),
+    'issues': (
+        "## 🐛 POTENSIAL MUAMMOLAR\n"
+        "[Kod sifati, buglar, edge case'lar, error handling]\n"
+    ),
+}
+
+# Canonical order in which sections appear in the prompt
+_SECTION_ORDER = ['completed', 'partial', 'failed', 'issues', 'figma']
+
+
+def _build_response_format_sections(
+        visible_sections: List[str],
+        figma_response_section: str
+) -> str:
+    """
+    visible_sections sozlamasi asosida AI javob formati bo'limlarini dinamik yigit.
+
+    COMPLIANCE_SCORE bo'limi har doim alohida template'da qoladi, bu funksiya uni qo'shmasdan.
+
+    Args:
+        visible_sections: Yoqilgan bo'limlar ro'yxati (masalan: ['completed', 'partial'])
+        figma_response_section: Figma bo'limi (allaqachon _build_figma_prompt_section'dan tayyorlangan)
+
+    Returns:
+        str: Barcha yoqilgan bo'limlarni o'z ichiga olgan formatli string
+    """
+    blocks = []
+    for key in _SECTION_ORDER:
+        if key not in visible_sections:
+            continue
+        if key == 'figma':
+            # Figma section is already built by _build_figma_prompt_section
+            if figma_response_section:
+                blocks.append(figma_response_section)
+        else:
+            blocks.append(_SECTION_PROMPT_BLOCKS[key])
+    return "\n".join(blocks)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -130,6 +174,9 @@ class TZPRAnalysisResult:
 
     # ✅ FIGMA INTEGRATION
     figma_data: Optional[Dict] = None  # Figma ma'lumotlari (optional)
+
+    # ✅ COMMENT ANALYSIS
+    comment_analysis: Optional[Dict] = None  # TZHelper.analyze_comments() natijasi (zid commentlar)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -255,7 +302,8 @@ class TZPRService(BaseService):
                 ai_retry_count=ai_result.get('retry_count', 0),
                 files_analyzed=ai_result.get('files_analyzed', 0),
                 total_prompt_size=ai_result.get('prompt_size', 0),
-                figma_data=figma_data  # ✅ Include Figma data
+                figma_data=figma_data,  # ✅ Include Figma data
+                comment_analysis=comment_analysis  # ✅ Include contradictory comments analysis
             )
 
         except Exception as e:
@@ -380,7 +428,22 @@ class TZPRService(BaseService):
 
     def _get_tz_content(self, task_details: Dict, update_status):
         """TZ kontentini olish"""
-        tz_content, comment_analysis = TZHelper.format_tz_with_comments(task_details)
+        from config.app_settings import get_app_settings
+
+        # O'ZGARISH: comment_reading o'rniga tz_pr_checker ishlatamiz
+        tz_settings = get_app_settings().tz_pr_checker
+
+        if not tz_settings.read_comments_enabled:
+            # Comments o'chirilgan: bo'sh comment list ile chaqirish
+            task_no_comments = dict(task_details)
+            task_no_comments['comments'] = []
+            tz_content, comment_analysis = TZHelper.format_tz_with_comments(task_no_comments)
+        else:
+            max_c = tz_settings.max_comments_to_read if tz_settings.max_comments_to_read > 0 else None
+            tz_content, comment_analysis = TZHelper.format_tz_with_comments(
+                task_details, max_comments=max_c
+            )
+
         update_status("success", f"✅ TZ olindi: {len(tz_content)} chars")
 
         if comment_analysis['has_changes']:
@@ -455,15 +518,24 @@ class TZPRService(BaseService):
         # Build Figma sections
         figma_section, figma_analysis, figma_response = self._build_figma_prompt_section(figma_data)
 
+        # Read visible_sections from settings
+        from config.app_settings import get_app_settings
+        visible_sections = get_app_settings().tz_pr_checker.visible_sections
+
+        # Build dynamic response format (respects visible_sections)
+        response_format_sections = _build_response_format_sections(
+            visible_sections, figma_response
+        )
+
         # Strategy 1: Try with all files
         result = self._try_ai_analysis(
             task_key=task_key,
             task_details=task_details,
             tz_content=tz_content,
             pr_info=pr_info,
-            figma_section=figma_section,  # ✅ Pass Figma section
+            figma_section=figma_section,
             figma_analysis=figma_analysis,
-            figma_response=figma_response,
+            response_format_sections=response_format_sections,
             max_files=max_files,
             show_full_diff=show_full_diff,
             use_smart_patch=use_smart_patch,
@@ -486,7 +558,7 @@ class TZPRService(BaseService):
                 pr_info=pr_info,
                 figma_section=figma_section,
                 figma_analysis=figma_analysis,
-                figma_response=figma_response,
+                response_format_sections=response_format_sections,
                 max_files=reduced_files,
                 show_full_diff=show_full_diff,
                 use_smart_patch=use_smart_patch,
@@ -508,7 +580,7 @@ class TZPRService(BaseService):
                 pr_info=pr_info,
                 figma_section=figma_section,
                 figma_analysis=figma_analysis,
-                figma_response=figma_response,
+                response_format_sections=response_format_sections,
                 max_files=3,  # Very limited
                 show_full_diff=False,
                 use_smart_patch=use_smart_patch,
@@ -528,9 +600,9 @@ class TZPRService(BaseService):
             task_details: Dict,
             tz_content: str,
             pr_info: Dict,
-            figma_section: str,  # ✅ NEW
-            figma_analysis: str,  # ✅ NEW
-            figma_response: str,  # ✅ NEW
+            figma_section: str,
+            figma_analysis: str,
+            response_format_sections: str,
             max_files: Optional[int],
             show_full_diff: bool,
             use_smart_patch: bool,
@@ -547,15 +619,15 @@ class TZPRService(BaseService):
                 use_smart_patch
             )
 
-            # Build final prompt with Figma
+            # Build final prompt with dynamic response format
             prompt = AI_PROMPT_TEMPLATE_UZ.format(
                 task_key=task_key,
                 task_summary=task_details['summary'],
                 tz_content=tz_content,
                 code_changes=code_changes,
-                figma_section=figma_section,  # ✅ Include Figma
+                figma_section=figma_section,
                 figma_analysis_section=figma_analysis,
-                figma_response_section=figma_response
+                response_format_sections=response_format_sections
             )
 
             prompt_size = len(prompt)

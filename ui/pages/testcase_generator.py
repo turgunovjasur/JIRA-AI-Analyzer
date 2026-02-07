@@ -32,6 +32,65 @@ from ui.components import (
 from ui.components.pr_code_viewer import render_code_changes_tab
 
 
+# ============================================================================
+# CACHE HELPERS (v5.2)
+# ============================================================================
+
+def _init_cache():
+    """Initialize task history cache in session state"""
+    if 'task_history' not in st.session_state:
+        st.session_state.task_history = []
+    if 'current_task' not in st.session_state:
+        st.session_state.current_task = None
+
+
+def _add_to_cache(task_key: str, result, params: dict = None):
+    """Add task result to cache (max 3 tasks) with generation parameters"""
+    _init_cache()
+
+    # Remove existing entry for this task (avoid duplicates)
+    st.session_state.task_history = [
+        item for item in st.session_state.task_history
+        if item['task_key'] != task_key
+    ]
+
+    # Add new entry
+    st.session_state.task_history.append({
+        'task_key': task_key,
+        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'result': result,
+        'params': params or {}  # Store generation parameters
+    })
+
+    # Keep only last 3 tasks
+    if len(st.session_state.task_history) > 3:
+        st.session_state.task_history = st.session_state.task_history[-3:]
+
+    # Set as current task
+    st.session_state.current_task = task_key
+
+
+def _get_from_cache(task_key: str):
+    """Get task result from cache (returns full cache item with params)"""
+    _init_cache()
+
+    for item in st.session_state.task_history:
+        if item['task_key'] == task_key:
+            return item  # Returns full item (result + params)
+
+    return None
+
+
+def _get_cached_tasks():
+    """Get list of cached task keys"""
+    _init_cache()
+    return [item['task_key'] for item in st.session_state.task_history]
+
+
+# ============================================================================
+# MAIN PAGE
+# ============================================================================
+
 def render_testcase_generator():
     """Test Case Generator sahifasi - WITH CUSTOM INPUT"""
 
@@ -43,14 +102,56 @@ def render_testcase_generator():
     )
 
     # Info
-    render_info("""
-    📋 **Jarayon:** 
-    1. Task key kiriting → 2. TZ va Comments olinadi → 3. PR qidiriladi → 4. AI O'zbek tilida test case'lar yaratadi
+    render_info("📋 Task key kiriting → AI test case'lar yaratadi | ⚙️ Settings: Sidebar'dan")
 
-    🆕 **YANGI:** Custom Input - AI ga qo'shimcha buyruq bering (product nomi, narxlar, maxsus talablar)
+    # ═══════════════════════════════════════════════════════════════
+    # CACHE SELECTOR (v5.3 - tuzatilgan)
+    # ═══════════════════════════════════════════════════════════════
 
-    ⚙️ **Settings:** Sidebar'dan (PR hisobga olish, Smart Patch, Test type'lar)
-    """)
+    _init_cache()
+    cached_tasks = _get_cached_tasks()
+    current = st.session_state.get('current_task')
+
+    if cached_tasks:
+        st.info(f"📦 Keshda: {', '.join(cached_tasks)}")
+
+        # current_task keshda bo'lsa — default sifatida tanlash
+        default_idx = 0
+        if current and current in cached_tasks:
+            default_idx = cached_tasks.index(current) + 1  # +1 chunki '' birinchi element
+
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            selected_cached = st.selectbox(
+                "Keshdan yuklash:",
+                options=[''] + cached_tasks,
+                index=default_idx,
+                key="cache_selector",
+                help="Oldingi natijani tanlang"
+            )
+        with col2:
+            if st.button("🗑️ Keshni tozalash", help="Barcha kesh ma'lumotlarini o'chirish"):
+                st.session_state.task_history = []
+                st.session_state.current_task = None
+                st.rerun()
+
+        # Keshdan yuklash
+        if selected_cached:
+            cached_item = _get_from_cache(selected_cached)
+            if cached_item:
+                st.session_state.current_task = selected_cached
+
+                result = cached_item['result']
+                params = cached_item.get('params', {})
+
+                _display_results(
+                    result,
+                    include_pr=params.get('include_pr', False),
+                    use_smart_patch=params.get('use_smart_patch', False),
+                    test_types=params.get('test_types', ['positive']),
+                    custom_context=params.get('custom_context', '')
+                )
+                return
 
     # ═══════════════════════════════════════════════════════════════
     # INPUT SECTION
@@ -81,9 +182,13 @@ def render_testcase_generator():
     # ═══════════════════════════════════════════════════════════════
 
     if btn and task_key:
-        include_pr = st.session_state.get('include_pr', True)
-        use_smart_patch = st.session_state.get('use_smart_patch', True)
-        test_types = st.session_state.get('test_types', ['positive', 'negative'])
+        # Get settings from app_settings (v4.0)
+        from config.app_settings import get_app_settings
+        app_settings = get_app_settings()
+
+        include_pr = app_settings.testcase_generator.default_include_pr
+        use_smart_patch = app_settings.testcase_generator.default_use_smart_patch
+        test_types = app_settings.testcase_generator.default_test_types
 
         _run_generation(
             task_key=task_key,
@@ -257,6 +362,19 @@ def _run_generation(
             'custom_context': custom_context[:100] if custom_context else ''
         })
 
+        # Save to cache va sahifani qayta yuklash (v5.3)
+        if result.success:
+            _add_to_cache(task_key, result, params={
+                'include_pr': include_pr,
+                'use_smart_patch': use_smart_patch,
+                'test_types': test_types,
+                'custom_context': custom_context
+            })
+            # Keshga yozildi — sahifani rerun qilish
+            # Shunda kesh selectboxda barcha tasklar ko'rinadi
+            # va current_task avtomatik tanlanadi
+            st.rerun()
+
     except Exception as e:
         progress.error(f"❌ Xatolik: {str(e)}")
         with st.expander("🔧 Debug"):
@@ -294,13 +412,12 @@ def _display_results(
     st.markdown("---")
 
     # Tabs
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📊 Task Overview",
         "🧪 Test Scenarios",
-        "💻 Code Changes",
-        "📈 Statistics",
-        "📋 Technical Specification",
-        "📥 Export"
+        "💻 Kod O'zgarishlari",
+        "📋 Texnik Spetsifikatsiya",
+        "📥 Eksport"
     ])
 
     with tab1:
@@ -310,16 +427,12 @@ def _display_results(
         _render_test_scenarios(result)
 
     with tab3:
-        # ✅ DRY FIX: Umumiy komponent ishlatamiz
         render_code_changes_tab(result.pr_details, use_smart_patch)
 
     with tab4:
-        _render_statistics(result)
-
-    with tab5:
         _render_technical_spec(result)
 
-    with tab6:
+    with tab5:
         _render_export(result)
 
 
@@ -330,25 +443,105 @@ def _render_overview(
         test_types: list,
         custom_context: str = ""
 ):
-    """Task Overview"""
-    st.markdown("### 📊 Task Overview")
+    """Task Overview - yaxshilangan dizayn"""
 
-    # Header card
+    details = result.task_full_details or {}
+
+    # ── A) Header Card ──
+    task_type = details.get('type', '')
+    type_badge = f'<span style="background: rgba(255,255,255,0.25); padding: 2px 10px; border-radius: 12px; font-size: 0.8rem;">{task_type}</span>' if task_type else ''
+
     st.markdown(f"""
-    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                 padding: 1.5rem; border-radius: 12px; margin-bottom: 1rem;">
-        <h2 style="color: white; margin: 0;">{result.task_key}</h2>
-        <p style="color: #e0e0e0; margin: 0.5rem 0 0 0;">{result.task_summary}</p>
+        <div style="display: flex; align-items: center; gap: 12px;">
+            <h2 style="color: white; margin: 0;">{result.task_key}</h2>
+            {type_badge}
+        </div>
+        <p style="color: #e0e0e0; margin: 0.5rem 0 0 0; font-size: 1.05rem;">{result.task_summary}</p>
     </div>
     """, unsafe_allow_html=True)
 
-    # Settings info
+    # ── B) Task Ma'lumotlari ──
+    status = details.get('status', '')
+    priority = details.get('priority', '')
+    assignee = details.get('assignee', '')
+    reporter = details.get('reporter', '')
+    created = details.get('created', '')
+    story_points = details.get('story_points', '')
+
+    has_info = any([status, priority, assignee, reporter, created])
+
+    if has_info:
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if status:
+                st.markdown(f"""
+                <div style="background: rgba(88, 166, 255, 0.08); padding: 0.6rem 0.8rem;
+                            border-radius: 8px; border-left: 3px solid #58a6ff;">
+                    <div style="font-size: 0.75rem; color: #888;">Status</div>
+                    <div style="font-weight: 600;">{status}</div>
+                </div>
+                """, unsafe_allow_html=True)
+        with col2:
+            if priority:
+                st.markdown(f"""
+                <div style="background: rgba(88, 166, 255, 0.08); padding: 0.6rem 0.8rem;
+                            border-radius: 8px; border-left: 3px solid #f0883e;">
+                    <div style="font-size: 0.75rem; color: #888;">Priority</div>
+                    <div style="font-weight: 600;">{priority}</div>
+                </div>
+                """, unsafe_allow_html=True)
+        with col3:
+            if assignee:
+                st.markdown(f"""
+                <div style="background: rgba(88, 166, 255, 0.08); padding: 0.6rem 0.8rem;
+                            border-radius: 8px; border-left: 3px solid #3fb950;">
+                    <div style="font-size: 0.75rem; color: #888;">Assignee</div>
+                    <div style="font-weight: 600;">{assignee}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+        st.markdown("<div style='height: 0.5rem'></div>", unsafe_allow_html=True)
+
+        col4, col5, col6 = st.columns(3)
+        with col4:
+            if reporter:
+                st.markdown(f"""
+                <div style="background: rgba(88, 166, 255, 0.08); padding: 0.6rem 0.8rem;
+                            border-radius: 8px; border-left: 3px solid #bc8cff;">
+                    <div style="font-size: 0.75rem; color: #888;">Reporter</div>
+                    <div style="font-weight: 600;">{reporter}</div>
+                </div>
+                """, unsafe_allow_html=True)
+        with col5:
+            if created:
+                st.markdown(f"""
+                <div style="background: rgba(88, 166, 255, 0.08); padding: 0.6rem 0.8rem;
+                            border-radius: 8px; border-left: 3px solid #8b949e;">
+                    <div style="font-size: 0.75rem; color: #888;">Yaratilgan</div>
+                    <div style="font-weight: 600;">{created}</div>
+                </div>
+                """, unsafe_allow_html=True)
+        with col6:
+            if story_points:
+                st.markdown(f"""
+                <div style="background: rgba(88, 166, 255, 0.08); padding: 0.6rem 0.8rem;
+                            border-radius: 8px; border-left: 3px solid #d29922;">
+                    <div style="font-size: 0.75rem; color: #888;">Story Points</div>
+                    <div style="font-weight: 600;">{story_points}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+        st.markdown("---")
+
+    # ── C) Generation Settings ──
     settings_parts = []
     if include_pr:
         settings_parts.append("🔎 PR hisobga olindi")
     if use_smart_patch:
         settings_parts.append("🧠 Smart Patch")
-    settings_parts.append(f"🎯 Test types: {', '.join(test_types)}")
+    settings_parts.append(f"🎯 Test turlari: {', '.join(test_types)}")
     if custom_context:
         settings_parts.append("💬 Custom Input")
 
@@ -359,44 +552,84 @@ def _render_overview(
     if custom_context:
         with st.expander("💬 Qo'shimcha Buyruq (Custom Input)", expanded=False):
             st.markdown(f"""
-            <div style="background: rgba(88, 166, 255, 0.1); padding: 1rem; 
+            <div style="background: rgba(88, 166, 255, 0.1); padding: 1rem;
                         border-radius: 8px; white-space: pre-wrap;">
 {custom_context}
             </div>
             """, unsafe_allow_html=True)
 
-    # Overview content
-    st.markdown(result.task_overview)
-
-    # Comment Analysis
+    # ── D) Comment'lar ──
     if result.comment_changes_detected:
         st.warning(f"⚠️ {result.comment_summary}")
 
-        if result.comment_details:
-            with st.expander("🔍 Muhim Comment'lar"):
-                for comment in result.comment_details:
-                    st.markdown(f"• {comment}")
+    if details.get('comments'):
+        all_comments = details['comments']
+
+        # Settingdagi comment limitni inobatga olish
+        from config.app_settings import get_app_settings
+        max_c = get_app_settings().testcase_generator.max_comments_to_read
+        if max_c and max_c > 0:
+            comments = all_comments[-max_c:]
+        else:
+            comments = all_comments
+
+        st.markdown(f"#### 💬 JIRA Comment'lar ({len(comments)} / {len(all_comments)} ta)")
+
+        # Oxirgi commentlar yuqorida
+        for i, comment in enumerate(reversed(comments), 1):
+            author = comment.get('author', 'Noma\'lum')
+            created = comment.get('created', '')
+            body = comment.get('body', '').strip()
+
+            # Author bosh harfi
+            initial = author[0].upper() if author else '?'
+
+            st.markdown(f"""
+            <div style="background: rgba(88, 166, 255, 0.05); padding: 0.8rem 1rem;
+                        border-radius: 10px; margin-bottom: 0.5rem;
+                        border: 1px solid rgba(88, 166, 255, 0.15);">
+                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 0.4rem;">
+                    <div style="width: 32px; height: 32px; border-radius: 50%;
+                                background: linear-gradient(135deg, #667eea, #764ba2);
+                                display: flex; align-items: center; justify-content: center;
+                                color: white; font-weight: bold; font-size: 0.85rem;">{initial}</div>
+                    <div>
+                        <span style="font-weight: 600;">{author}</span>
+                        <span style="color: #888; font-size: 0.8rem; margin-left: 8px;">{created}</span>
+                    </div>
+                </div>
+                <div style="padding-left: 42px; font-size: 0.9rem; line-height: 1.5;">
+                    {body[:500]}{'...' if len(body) > 500 else ''}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
 
+@st.fragment
 def _render_test_scenarios(result):
-    """Test Scenarios"""
+    """Test Scenarios (v5.3 - @st.fragment bilan filter sahifani qayta yuklamaydi)"""
     st.markdown("### 🧪 Test Scenarios")
 
     if not result.test_cases:
         st.info("Test case'lar topilmadi")
         return
 
-    # Filter by type
+    # Filter by type (fragment ichida - faqat shu qism rerun bo'ladi)
     test_type = st.selectbox(
-        "Test Type",
-        options=['All'] + list(result.by_type.keys()),
-        label_visibility="visible"
+        "Test turi bo'yicha filterlash",
+        options=['Barchasi'] + list(result.by_type.keys()),
+        key="scenarios_filter_select",
+        label_visibility="visible",
+        help="Test case'larni turi bo'yicha filterlang"
     )
 
     # Filter test cases
     filtered_cases = result.test_cases
-    if test_type != 'All':
+    if test_type != 'Barchasi':
         filtered_cases = [tc for tc in result.test_cases if tc.test_type == test_type]
+
+    # Show filtered count
+    st.caption(f"📊 {len(filtered_cases)} / {len(result.test_cases)} ta test case ko'rsatilmoqda")
 
     # Display test cases
     for tc in filtered_cases:
@@ -419,24 +652,6 @@ def _render_test_scenarios(result):
                 st.markdown(f"**Severity:** `{tc.severity}`")
 
 
-def _render_statistics(result):
-    """Statistics"""
-    st.markdown("### 📈 Statistics")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("#### By Type")
-        for test_type, count in result.by_type.items():
-            percentage = (count / result.total_test_cases * 100) if result.total_test_cases > 0 else 0
-            st.markdown(f"• **{test_type}:** {count} ({percentage:.1f}%)")
-
-    with col2:
-        st.markdown("#### By Priority")
-        for priority, count in result.by_priority.items():
-            percentage = (count / result.total_test_cases * 100) if result.total_test_cases > 0 else 0
-            st.markdown(f"• **{priority}:** {count} ({percentage:.1f}%)")
-
 
 def _render_technical_spec(result):
     """Technical Specification"""
@@ -452,51 +667,79 @@ def _render_technical_spec(result):
     )
 
 
+@st.fragment
 def _render_export(result):
-    """Export"""
+    """Export - JSON, CSV (v5.3 - @st.fragment bilan filter sahifani qayta yuklamaydi)"""
     st.markdown("### 📥 Export Test Cases")
 
     import json
     import io
     import csv
 
-    # JSON Export
-    test_cases_json = [
-        {
-            'id': tc.id,
-            'title': tc.title,
-            'description': tc.description,
-            'preconditions': tc.preconditions,
-            'steps': tc.steps,
-            'expected_result': tc.expected_result,
-            'test_type': tc.test_type,
-            'priority': tc.priority,
-            'severity': tc.severity,
-            'tags': tc.tags
-        }
-        for tc in result.test_cases
-    ]
-
-    json_str = json.dumps(test_cases_json, indent=2, ensure_ascii=False)
-
-    st.download_button(
-        label="📥 Download JSON",
-        data=json_str,
-        file_name=f"{result.task_key}_test_cases.json",
-        mime="application/json"
+    # Export tab filter (independent from Test Scenarios tab)
+    export_filter = st.selectbox(
+        "Filter for Export (JSON/CSV)",
+        options=['All'] + list(result.by_type.keys()),
+        key="export_filter_select",  # Unique key
+        help="Filter test cases before exporting to JSON/CSV"
     )
 
-    # CSV Export
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(['ID', 'Title', 'Type', 'Priority', 'Severity', 'Steps Count'])
+    # Apply filter
+    filtered_cases = result.test_cases
+    if export_filter != 'All':
+        filtered_cases = [tc for tc in result.test_cases if tc.test_type == export_filter]
 
-    for tc in result.test_cases:
-        writer.writerow([tc.id, tc.title, tc.test_type, tc.priority, tc.severity, len(tc.steps)])
+    # Show count
+    st.caption(f"📊 {len(filtered_cases)} test case(s) will be exported")
 
-    st.download_button(
-        label="📥 Download CSV",
-        data=output.getvalue(),
-        file_name=f"{result.task_key}_test_cases.csv",
-        mime="text/csv"
-    )
+    # 2 ta ustun: JSON, CSV
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("#### 📄 JSON")
+        # JSON Export - uses FILTERED cases
+        test_cases_json = [
+            {
+                'id': tc.id,
+                'title': tc.title,
+                'description': tc.description,
+                'preconditions': tc.preconditions,
+                'steps': tc.steps,
+                'expected_result': tc.expected_result,
+                'test_type': tc.test_type,
+                'priority': tc.priority,
+                'severity': tc.severity,
+                'tags': tc.tags
+            }
+            for tc in filtered_cases
+        ]
+
+        json_str = json.dumps(test_cases_json, indent=2, ensure_ascii=False)
+
+        st.download_button(
+            label="📥 JSON yuklab olish",
+            data=json_str,
+            file_name=f"{result.task_key}_test_cases.json",
+            mime="application/json",
+            use_container_width=True
+        )
+
+    with col2:
+        st.markdown("#### 📊 CSV")
+        # CSV Export - uses FILTERED cases
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(['ID', 'Title', 'Type', 'Priority', 'Severity', 'Steps Count'])
+
+        for tc in filtered_cases:
+            writer.writerow([tc.id, tc.title, tc.test_type, tc.priority, tc.severity, len(tc.steps)])
+
+        st.download_button(
+            label="📥 CSV yuklab olish",
+            data=output.getvalue(),
+            file_name=f"{result.task_key}_test_cases.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+
+
