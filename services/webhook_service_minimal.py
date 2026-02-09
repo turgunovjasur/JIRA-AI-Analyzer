@@ -47,6 +47,22 @@ from services.testcase_webhook_service import (
     generate_testcases_sync
 )
 
+# DB helper (v4.0 - DB bilan boshqarish)
+from utils.task_db import (
+    get_task,
+    mark_progressing,
+    mark_completed,
+    mark_returned,
+    mark_error,
+    increment_return_count,
+    set_skip_detected,
+    set_service1_done,
+    set_service1_error,
+    set_service2_done,
+    set_service2_error,
+    reset_service_statuses
+)
+
 # ============================================================================
 # WINDOWS ENCODING FIX (cp1251 emoji error)
 # ============================================================================
@@ -154,7 +170,7 @@ async def jira_webhook(
         body = await request.json()
 
         logger.info("=" * 80)
-        logger.info(f"Webhook received: {body.get('webhookEvent', 'unknown')}")
+        logger.info(f"📥 Webhook received: {body.get('webhookEvent', 'unknown')}")
 
         # Webhook event type
         event = body.get('webhookEvent')
@@ -171,6 +187,8 @@ async def jira_webhook(
         if not task_key:
             logger.warning("⚠️ No task key found")
             return {"status": "error", "reason": "no task key"}
+
+        logger.info(f"[{task_key}] 📋 Webhook qabul qilindi")
 
         # Changelog tekshirish
         changelog = body.get('changelog', {})
@@ -191,10 +209,10 @@ async def jira_webhook(
 
         if not status_changed:
             # Debug: changelog nima o'z ichiga olib — server logda ko'rish mumkin
-            logger.info(f"⏭️  {task_key}: No status change. Changelog items: {items}")
+            logger.info(f"[{task_key}] ⏭️ Status o'zgarishi yo'q. Changelog items: {items}")
             return {"status": "ignored", "reason": "status not changed", "debug_items": items}
 
-        logger.info(f"📋 {task_key}: {old_status} → {new_status}")
+        logger.info(f"[{task_key}] 📋 Status o'zgarishi aniqlangan: {old_status} → {new_status}")
 
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         # DINAMIK STATUS TEKSHIRISH (Admin sozlamalaridan)
@@ -203,38 +221,88 @@ async def jira_webhook(
         settings = app_settings.tz_pr_checker
         target_statuses = settings.get_trigger_statuses()
 
-        logger.info(f"🎯 Target statuses: {target_statuses}")
+        logger.info(f"[{task_key}] 🎯 Target statuses: {target_statuses}")
 
         if new_status not in target_statuses:
-            logger.info(f"⏭️  Status '{new_status}' ignored (not in target list)")
+            logger.info(f"[{task_key}] ⏭️ Status '{new_status}' ignored (not in target list)")
             return {
                 "status": "ignored",
                 "reason": f"status is '{new_status}', not in {target_statuses}"
             }
 
         # BINGO! Target statusga o'tdi
-        logger.info(f"✅ {task_key} → {new_status} - Starting TZ-PR check...")
+        logger.info(f"[{task_key}] ✅ Target statusga o'tdi: {new_status} - TZ-PR check boshlandi...")
 
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # EARLY SKIP CODE CHECK (v3.1)
-        # Background task'lar boshlanishga qadar tekshirish.
-        # Skip topilgan bo'lsa — checker va testcase ikkalasi bekor.
+        # DB HOLAT TEKSHIRISH (v4.0)
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        task_db = get_task(task_key)
+        task_status = task_db.get('task_status') if task_db else 'none'
+        return_count = task_db.get('return_count', 0) if task_db else 0
+        last_jira_status = task_db.get('last_jira_status') if task_db else None
+        last_processed_at = task_db.get('last_processed_at') if task_db else None
+        
+        logger.info(f"[{task_key}] 📊 DB holat tekshirildi:")
+        logger.info(f"[{task_key}]   - task_status: {task_status}")
+        logger.info(f"[{task_key}]   - return_count: {return_count}")
+        logger.info(f"[{task_key}]   - last_jira_status: {last_jira_status}")
+        logger.info(f"[{task_key}]   - last_processed_at: {last_processed_at}")
+        
+        # Dublikat event tekshirish
+        if last_jira_status == new_status and task_status == 'progressing':
+            logger.info(f"[{task_key}] ⏭️ Dublikat event: {new_status} allaqachon ishlanmoqda")
+            return {
+                "status": "ignored",
+                "reason": f"Duplicate event: {new_status} already processing",
+                "task_status": task_status
+            }
+        
+        # Task holatini yangilash
+        if task_status == 'none' or task_status == 'error':
+            mark_progressing(task_key, new_status, datetime.now())
+            logger.info(f"[{task_key}] ✅ DB: mark_progressing (status: {task_status} → progressing)")
+        elif task_status == 'returned':
+            increment_return_count(task_key)
+            mark_progressing(task_key, new_status, datetime.now())
+            new_return_count = get_task(task_key).get('return_count', 0) if get_task(task_key) else 0
+            logger.info(f"[{task_key}] ✅ DB: returned → progressing, return_count: {return_count} → {new_return_count}")
+        elif task_status == 'progressing':
+            logger.info(f"[{task_key}] ⏭️ Task allaqachon progressing, skip")
+            return {
+                "status": "ignored",
+                "reason": "Task already in progressing state",
+                "task_status": task_status
+            }
+
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # AI_SKIP SHARTI (v4.0 - faqat return_count > 0 bo'lsa)
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         skip_code = settings.skip_code.strip() if settings.skip_code else ""
-        if skip_code:
+        if skip_code and return_count > 0:
+            # Faqat return_count > 0 bo'lsa AI_SKIP ishlaydi
             comment_writer = get_comment_writer()
             skip_detected = await _check_skip_code(task_key, skip_code, comment_writer)
             if skip_detected:
-                logger.info(f"[{task_key}] ⏭️ Skip code '{skip_code}' topildi (early check), "
+                logger.info(f"[{task_key}] ⏭️ Skip code '{skip_code}' topildi (return_count={return_count} > 0), "
                             f"checker va testcase bekor")
+                set_skip_detected(task_key)
                 adf_formatter = get_adf_formatter()
                 await _write_skip_notification(task_key, settings, comment_writer, adf_formatter)
                 return {
                     "status": "skipped",
                     "task_key": task_key,
-                    "reason": f"Skip code '{skip_code}' topildi",
+                    "reason": f"Skip code '{skip_code}' topildi (return_count={return_count})",
                     "skipped_tasks": ["tz_pr_check", "testcase_generation"]
                 }
+        elif skip_code and return_count == 0:
+            logger.info(f"[{task_key}] ⏭️ Skip code mavjud, lekin return_count=0, AI tekshirish davom etadi")
+        
+        # Queue sozlamalari
+        queue_settings = app_settings.queue
+        logger.info(f"[{task_key}] ⏳ Queue sozlamalari:")
+        logger.info(f"[{task_key}]   - queue_enabled: {queue_settings.queue_enabled}")
+        logger.info(f"[{task_key}]   - task_wait_timeout: {queue_settings.task_wait_timeout}s")
+        logger.info(f"[{task_key}]   - checker_testcase_delay: {queue_settings.checker_testcase_delay}s")
 
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         # BACKGROUND TASKS (checker + testcase)
@@ -297,17 +365,24 @@ async def jira_webhook(
 
 async def check_tz_pr_and_comment(task_key: str, new_status: str):
     """
-    Background task: TZ-PR mosligini tekshirish va comment yozish
+    Background task: TZ-PR mosligini tekshirish va comment yozish (Service1)
 
-    Yangi funksionalliklar:
-    - ADF format (dropdown)
-    - Avtomatik Return (agar enabled)
-    - Skip-code tekshirish (DEV AI_SKIP yozgan bo'lsa tekshirish o'chiladi)
-    - Re-check detect (task qaytarildigan so'ng yana Ready to Test)
+    Yangi funksionalliklar (v4.0):
+    - DB orqali Service1 holatini boshqarish
+    - Score threshold tekshiruvi va testcase bloklash
+    - Xatolarda DB holatini yangilash
     """
     try:
-        logger.info(f"[{task_key}] TZ-PR check started...")
+        logger.info(f"[{task_key}] 🔵 Service1 (TZ-PR) boshlandi...")
 
+        # DB holatini tekshirish
+        task_db = get_task(task_key)
+        service1_status = task_db.get('service1_status', 'pending') if task_db else 'pending'
+        
+        if service1_status == 'done':
+            logger.info(f"[{task_key}] ⏭️ Service1 allaqachon done, skip")
+            return
+        
         # Settings yuklash
         app_settings = get_app_settings()
         settings = app_settings.tz_pr_checker
@@ -320,18 +395,6 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str):
         comment_writer = get_comment_writer()
         adf_formatter = get_adf_formatter()
 
-        # ━━━ 0. SKIP CODE TEKSHIRISH ━━━
-        # DEV comment'ga skip_code yozgan bo'lsa AI tekshirish o'chadi
-        skip_code = settings.skip_code.strip() if settings.skip_code else ""
-        if skip_code:
-            skip_found = await _check_skip_code(task_key, skip_code, comment_writer)
-            if skip_found:
-                logger.info(f"[{task_key}] ⏭️ Skip code '{skip_code}' topildi, AI tekshirish o'chirilgan")
-                await _write_skip_notification(
-                    task_key, settings, comment_writer, adf_formatter
-                )
-                return
-
         # ━━━ 0.5. RE-CHECK DETECT ━━━
         # Oldingi status return_status bo'lsa bu re-check
         is_recheck = await _detect_recheck(task_key, settings, comment_writer)
@@ -343,9 +406,11 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str):
         result = tz_pr_service.analyze_task(task_key)
 
         if not result.success:
-            logger.error(f"[{task_key}] Analysis failed: {result.error_message}")
+            error_msg = result.error_message
+            logger.error(f"[{task_key}] ❌ Service1 Analysis failed: {error_msg}")
+            set_service1_error(task_key, error_msg)
             await _write_error_comment(
-                task_key, result.error_message, new_status,
+                task_key, error_msg, new_status,
                 settings, comment_writer, adf_formatter
             )
             return
@@ -358,12 +423,28 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str):
             is_recheck=is_recheck
         )
 
-        # 3. Avtomatik Return (agar enabled va threshold dan past)
-        if settings.auto_return_enabled and result.compliance_score is not None:
-            await _handle_auto_return(task_key, result, settings)
+        # 3. Service1 holatini 'done' ga o'zgartirish
+        compliance_score = result.compliance_score
+        set_service1_done(task_key, compliance_score)
+        logger.info(f"[{task_key}] ✅ Service1 done: compliance_score={compliance_score}%")
+
+        # 4. Score threshold tekshiruvi va avtomatik Return
+        if settings.auto_return_enabled and compliance_score is not None:
+            threshold = settings.return_threshold
+            logger.info(f"[{task_key}] Score threshold tekshiruvi: {compliance_score}% vs {threshold}%")
+            
+            if compliance_score < threshold:
+                logger.info(f"[{task_key}] ⚠️ Score past: {compliance_score}% < {threshold}%, task qaytariladi")
+                await _handle_auto_return(task_key, result, settings)
+                # Task qaytarilgan, testcase ishlamaydi
+                mark_returned(task_key)
+                logger.info(f"[{task_key}] ✅ Task returned, Service2 (testcase) bloklangan")
+            else:
+                logger.info(f"[{task_key}] ✅ Score OK: {compliance_score}% >= {threshold}%, Service2 ishlaydi")
 
     except Exception as e:
-        logger.error(f"[{task_key}] Background task error: {e}", exc_info=True)
+        logger.error(f"[{task_key}] ❌ Service1 Background task error: {e}", exc_info=True)
+        set_service1_error(task_key, str(e))
 
         # Critical error ham yoziladi
         try:
@@ -466,13 +547,13 @@ async def _write_critical_error(
 
 
 async def _handle_auto_return(task_key: str, result: Any, settings: TZPRCheckerSettings):
-    """Avtomatik Return logikasi"""
+    """Avtomatik Return logikasi (v4.0)"""
     try:
         score = result.compliance_score
         threshold = settings.return_threshold
 
         if score < threshold:
-            logger.info(f"[{task_key}] Auto-return triggered: {score}% < {threshold}%")
+            logger.info(f"[{task_key}] 🔄 Auto-return triggered: {score}% < {threshold}%")
 
             status_manager = get_status_manager()
             success, msg = status_manager.auto_return_if_needed(
@@ -485,6 +566,10 @@ async def _handle_auto_return(task_key: str, result: Any, settings: TZPRCheckerS
 
             if success:
                 logger.info(f"[{task_key}] ✅ Auto-return successful: {msg}")
+                
+                # DB holatini 'returned' ga o'zgartirish
+                mark_returned(task_key)
+                logger.info(f"[{task_key}] ✅ DB: task_status = returned")
 
                 # Qaytarilgan xaqida ADF notification comment yozish
                 try:
@@ -518,7 +603,7 @@ async def _handle_auto_return(task_key: str, result: Any, settings: TZPRCheckerS
             else:
                 logger.warning(f"[{task_key}] ⚠️ Auto-return failed: {msg}")
         else:
-            logger.info(f"[{task_key}] Score OK: {score}% >= {threshold}%")
+            logger.info(f"[{task_key}] ✅ Score OK: {score}% >= {threshold}%")
 
     except Exception as e:
         logger.error(f"[{task_key}] Auto-return xato: {e}")
@@ -695,23 +780,71 @@ async def _write_skip_notification(
 
 async def _run_testcase_generation(task_key: str, new_status: str):
     """
-    Background task: Testcase yaratish va JIRA ga yozish (v3.0)
+    Background task: Testcase yaratish va JIRA ga yozish (Service2) (v4.0)
 
-    Bu funksiya TZ-PR check'dan alohida ishlaydi.
+    Yangi funksionalliklar:
+    - DB orqali Service2 holatini boshqarish
+    - Service1 done va score threshold tekshiruvi
+    - Xatolarda DB holatini yangilash
     """
     try:
-        logger.info(f"[{task_key}] 🧪 Testcase generation started...")
+        logger.info(f"[{task_key}] 🟢 Service2 (Testcase) boshlandi...")
 
-        # Sinxron funksiyani chaqirish
+        # DB holatini tekshirish
+        task_db = get_task(task_key)
+        if not task_db:
+            logger.warning(f"[{task_key}] ⚠️ Task DB'da topilmadi, Service2 skip")
+            return
+        
+        service1_status = task_db.get('service1_status', 'pending')
+        service2_status = task_db.get('service2_status', 'pending')
+        compliance_score = task_db.get('compliance_score')
+        task_status = task_db.get('task_status', 'none')
+        
+        logger.info(f"[{task_key}] DB holat: service1={service1_status}, service2={service2_status}, "
+                   f"score={compliance_score}, task_status={task_status}")
+        
+        # Service1 done bo'lishi kerak
+        if service1_status != 'done':
+            logger.warning(f"[{task_key}] ⚠️ Service1 hali done emas ({service1_status}), Service2 skip")
+            return
+        
+        # Service2 allaqachon done bo'lsa skip
+        if service2_status == 'done':
+            logger.info(f"[{task_key}] ⏭️ Service2 allaqachon done, skip")
+            return
+        
+        # Score threshold tekshiruvi
+        app_settings = get_app_settings()
+        settings = app_settings.tz_pr_checker
+        threshold = settings.return_threshold
+        
+        if compliance_score is not None and compliance_score < threshold:
+            logger.warning(f"[{task_key}] ⚠️ Score past: {compliance_score}% < {threshold}%, Service2 bloklangan")
+            return
+        
+        # Task returned bo'lsa Service2 ishlamaydi
+        if task_status == 'returned':
+            logger.warning(f"[{task_key}] ⚠️ Task returned, Service2 bloklangan")
+            return
+
+        # Testcase generation
+        logger.info(f"[{task_key}] Generating testcases...")
         success, message = generate_testcases_sync(task_key, new_status)
 
         if success:
-            logger.info(f"[{task_key}] ✅ Testcase generation successful: {message}")
+            set_service2_done(task_key)
+            mark_completed(task_key)
+            logger.info(f"[{task_key}] ✅ Service2 done: {message}")
         else:
-            logger.warning(f"[{task_key}] ⚠️ Testcase generation failed: {message}")
+            error_msg = f"Testcase generation failed: {message}"
+            set_service2_error(task_key, error_msg)
+            logger.warning(f"[{task_key}] ❌ Service2 error: {error_msg}")
 
     except Exception as e:
-        logger.error(f"[{task_key}] 🧪 Testcase generation error: {e}", exc_info=True)
+        error_msg = f"Testcase generation error: {str(e)}"
+        logger.error(f"[{task_key}] ❌ Service2 error: {e}", exc_info=True)
+        set_service2_error(task_key, error_msg)
 
 
 # ============================================================================
@@ -760,11 +893,15 @@ async def _write_timeout_error_comment(task_key: str, timeout_seconds: int):
 
 async def _run_task_group(task_key: str, new_status: str):
     """
-    Task-level queue wrapper (parallel mode).
+    Task-level queue wrapper (parallel mode) (v4.0).
 
     Bitta task'ning checker + testcase AI chaqrishlari lock ichida
     birma-bir yashlanadi. Boshqa task lock olgunga qadar kutadi.
-    Ichidagi order: checker → (checker_testcase_delay) → testcase.
+    Ichidagi order: Service1 (checker) → (checker_testcase_delay) → Service2 (testcase).
+    
+    Yangi funksionalliklar:
+    - Service1 done bo'lgandan keyin Service2 ishlaydi
+    - Score threshold tekshiruvi Service2 ni bloklaydi
     """
     app_settings = get_app_settings()
     queue_settings = app_settings.queue
@@ -772,6 +909,13 @@ async def _run_task_group(task_key: str, new_status: str):
     if not queue_settings.queue_enabled:
         # Queue o'chirilgan: ikkalasi birma-bir lekin lock siz
         await check_tz_pr_and_comment(task_key=task_key, new_status=new_status)
+        
+        # Service1 done bo'lgandan keyin Service2
+        delay = queue_settings.checker_testcase_delay
+        if delay > 0:
+            logger.info(f"[{task_key}] Service1→Service2 delay: {delay}s kutiladi...")
+            await asyncio.sleep(delay)
+        
         await _run_testcase_generation(task_key=task_key, new_status=new_status)
         return
 
@@ -787,18 +931,37 @@ async def _run_task_group(task_key: str, new_status: str):
         return
 
     try:
-        # Checker
+        # Service1 (Checker)
+        logger.info(f"[{task_key}] 🔵 Service1 boshlandi (queue lock ichida)...")
         await _wait_for_ai_slot(task_key)
         await check_tz_pr_and_comment(task_key=task_key, new_status=new_status)
 
-        # Checker → Testcase delay
+        # Service1 → Service2 delay
         if delay > 0:
-            logger.info(f"[{task_key}] Checker→Testcase delay: {delay}s kutiladi...")
+            logger.info(f"[{task_key}] Service1→Service2 delay: {delay}s kutiladi...")
             await asyncio.sleep(delay)
 
-        # Testcase
-        await _wait_for_ai_slot(task_key)
-        await _run_testcase_generation(task_key=task_key, new_status=new_status)
+        # Service2 (Testcase) - faqat Service1 done bo'lsa va score OK bo'lsa
+        task_db = get_task(task_key)
+        if task_db:
+            service1_status = task_db.get('service1_status', 'pending')
+            compliance_score = task_db.get('compliance_score')
+            task_status = task_db.get('task_status', 'none')
+            settings = app_settings.tz_pr_checker
+            threshold = settings.return_threshold
+            
+            if service1_status == 'done':
+                if compliance_score is None or compliance_score >= threshold:
+                    if task_status != 'returned':
+                        logger.info(f"[{task_key}] 🟢 Service2 boshlandi (queue lock ichida)...")
+                        await _wait_for_ai_slot(task_key)
+                        await _run_testcase_generation(task_key=task_key, new_status=new_status)
+                    else:
+                        logger.info(f"[{task_key}] ⏭️ Task returned, Service2 skip")
+                else:
+                    logger.info(f"[{task_key}] ⏭️ Score past ({compliance_score}% < {threshold}%), Service2 skip")
+            else:
+                logger.warning(f"[{task_key}] ⚠️ Service1 hali done emas ({service1_status}), Service2 skip")
     finally:
         lock.release()
 
@@ -836,9 +999,13 @@ async def _run_sequential_tasks(
         run_testcase: bool = True
 ):
     """
-    Sequential task execution: birinchi task tugangandan so'ng ikkinchisi yashlanadi.
+    Sequential task execution (v4.0): birinchi task tugangandan so'ng ikkinchisi yashlanadi.
     Task-level queue: lock bitta oliladi, ichida birma-bir ketadi.
-    Checker → Testcase o'rtasida checker_testcase_delay sozlamasi ile kutish.
+    Service1 → Service2 o'rtasida checker_testcase_delay sozlamasi ile kutish.
+    
+    Yangi funksionalliklar:
+    - Service1 done bo'lgandan keyin Service2 ishlaydi
+    - Score threshold tekshiruvi Service2 ni bloklaydi
 
     Args:
         first: "checker" yoki "testcase"
@@ -854,29 +1021,29 @@ async def _run_sequential_tasks(
             try:
                 await check_tz_pr_and_comment(task_key=task_key, new_status=new_status)
             except Exception as e:
-                logger.error(f"[{task_key}] Sequential checker error: {e}", exc_info=True)
+                logger.error(f"[{task_key}] Sequential Service1 error: {e}", exc_info=True)
             if run_testcase:
                 if delay > 0:
-                    logger.info(f"[{task_key}] Checker→Testcase delay: {delay}s kutiladi...")
+                    logger.info(f"[{task_key}] Service1→Service2 delay: {delay}s kutiladi...")
                     await asyncio.sleep(delay)
                 try:
                     await _run_testcase_generation(task_key=task_key, new_status=new_status)
                 except Exception as e:
-                    logger.error(f"[{task_key}] Sequential testcase error: {e}", exc_info=True)
-        else:  # testcase_first
+                    logger.error(f"[{task_key}] Sequential Service2 error: {e}", exc_info=True)
+        else:  # testcase_first (kam ishlatiladi)
             if run_testcase:
                 try:
                     await _run_testcase_generation(task_key=task_key, new_status=new_status)
                 except Exception as e:
-                    logger.error(f"[{task_key}] Sequential testcase error: {e}", exc_info=True)
-            # Testcase → Checker delay (aksi tartib)
+                    logger.error(f"[{task_key}] Sequential Service2 error: {e}", exc_info=True)
+            # Service2 → Service1 delay (aksi tartib)
             if delay > 0:
-                logger.info(f"[{task_key}] Testcase→Checker delay: {delay}s kutiladi...")
+                logger.info(f"[{task_key}] Service2→Service1 delay: {delay}s kutiladi...")
                 await asyncio.sleep(delay)
             try:
                 await check_tz_pr_and_comment(task_key=task_key, new_status=new_status)
             except Exception as e:
-                logger.error(f"[{task_key}] Sequential checker error: {e}", exc_info=True)
+                logger.error(f"[{task_key}] Sequential Service1 error: {e}", exc_info=True)
         return
 
     lock = _get_ai_queue_lock()
@@ -892,41 +1059,60 @@ async def _run_sequential_tasks(
 
     try:
         if first == "checker":
-            # 1) Checker
+            # 1) Service1 (Checker)
             await _wait_for_ai_slot(task_key)
             try:
                 await check_tz_pr_and_comment(task_key=task_key, new_status=new_status)
             except Exception as e:
-                logger.error(f"[{task_key}] Sequential checker error: {e}", exc_info=True)
+                logger.error(f"[{task_key}] Sequential Service1 error: {e}", exc_info=True)
 
-            # 2) Checker → Testcase delay
+            # 2) Service1 → Service2 delay
             if run_testcase:
                 if delay > 0:
-                    logger.info(f"[{task_key}] Checker→Testcase delay: {delay}s kutiladi...")
+                    logger.info(f"[{task_key}] Service1→Service2 delay: {delay}s kutiladi...")
                     await asyncio.sleep(delay)
-                await _wait_for_ai_slot(task_key)
-                try:
-                    await _run_testcase_generation(task_key=task_key, new_status=new_status)
-                except Exception as e:
-                    logger.error(f"[{task_key}] Sequential testcase error: {e}", exc_info=True)
-        else:  # testcase_first
-            # 1) Testcase
+                
+                # Service1 done va score OK tekshiruvi
+                task_db = get_task(task_key)
+                if task_db:
+                    service1_status = task_db.get('service1_status', 'pending')
+                    compliance_score = task_db.get('compliance_score')
+                    task_status = task_db.get('task_status', 'none')
+                    settings = app_settings.tz_pr_checker
+                    threshold = settings.return_threshold
+                    
+                    if service1_status == 'done':
+                        if compliance_score is None or compliance_score >= threshold:
+                            if task_status != 'returned':
+                                await _wait_for_ai_slot(task_key)
+                                try:
+                                    await _run_testcase_generation(task_key=task_key, new_status=new_status)
+                                except Exception as e:
+                                    logger.error(f"[{task_key}] Sequential Service2 error: {e}", exc_info=True)
+                            else:
+                                logger.info(f"[{task_key}] ⏭️ Task returned, Service2 skip")
+                        else:
+                            logger.info(f"[{task_key}] ⏭️ Score past ({compliance_score}% < {threshold}%), Service2 skip")
+                    else:
+                        logger.warning(f"[{task_key}] ⚠️ Service1 hali done emas ({service1_status}), Service2 skip")
+        else:  # testcase_first (kam ishlatiladi)
+            # 1) Service2 (Testcase)
             if run_testcase:
                 await _wait_for_ai_slot(task_key)
                 try:
                     await _run_testcase_generation(task_key=task_key, new_status=new_status)
                 except Exception as e:
-                    logger.error(f"[{task_key}] Sequential testcase error: {e}", exc_info=True)
+                    logger.error(f"[{task_key}] Sequential Service2 error: {e}", exc_info=True)
 
-            # 2) Testcase → Checker delay (aksi tartib)
+            # 2) Service2 → Service1 delay (aksi tartib)
             if delay > 0:
-                logger.info(f"[{task_key}] Testcase→Checker delay: {delay}s kutiladi...")
+                logger.info(f"[{task_key}] Service2→Service1 delay: {delay}s kutiladi...")
                 await asyncio.sleep(delay)
             await _wait_for_ai_slot(task_key)
             try:
                 await check_tz_pr_and_comment(task_key=task_key, new_status=new_status)
             except Exception as e:
-                logger.error(f"[{task_key}] Sequential checker error: {e}", exc_info=True)
+                logger.error(f"[{task_key}] Sequential Service1 error: {e}", exc_info=True)
     finally:
         lock.release()
 
