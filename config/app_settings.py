@@ -162,7 +162,7 @@ class TZPRCheckerSettings:
 
     # ━━━ Comment Tartib ━━━
     # JIRA ga comment yozilish tartibini nazorat qilish
-    comment_order: str = "checker_first"  # "checker_first" | "testcase_first"
+    comment_order: str = "checker_first"  # "checker_first" | "testcase_first" | "parallel"
 
     # ━━━ Zid Commentlar ━━━
     # Zid commentlar panelini JIRA comment'da ko'rsatish
@@ -193,7 +193,8 @@ class TZPRCheckerSettings:
     comment_order_help: str = (
         "JIRA ga comment yozilish tartibini nazorat qilish. "
         "'checker_first' — TZ-PR tahlil birinchi, test case ikkinchi. "
-        "'testcase_first' — test case birinchi, TZ-PR tahlil ikkinchi."
+        "'testcase_first' — test case birinchi, TZ-PR tahlil ikkinchi. "
+        "'parallel' — ikkala servis parallel ishlaydi (tezroq)."
     )
     show_contradictory_comments_help: str = "Zid commentlar (TZ ni o'zgartiruvchi) panelini JIRA comment'da ko'rsatish"
     visible_sections_help: str = (
@@ -445,6 +446,7 @@ class AppSettingsManager:
             with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
 
+            # Cache'ni yangilash (yoki tozalash - har safar fayldan o'qish uchun)
             self._settings = settings
             logger.info(f"Sozlamalar saqlandi: {SETTINGS_FILE}")
             return True
@@ -452,11 +454,20 @@ class AppSettingsManager:
             logger.error(f"Sozlamalarni saqlashda xato: {e}")
             return False
 
-    def get_settings(self) -> AppSettings:
-        """Joriy sozlamalarni olish"""
-        if self._settings is None:
+    def get_settings(self, force_reload: bool = False) -> AppSettings:
+        """Joriy sozlamalarni olish
+        
+        Args:
+            force_reload: Agar True bo'lsa, cache'ni tozalab fayldan o'qiydi
+        """
+        if force_reload or self._settings is None:
             self._settings = self._load_settings()
         return self._settings
+    
+    def reload_settings(self) -> AppSettings:
+        """Sozlamalarni qayta yuklash (cache'ni tozalash)"""
+        self._settings = None
+        return self._load_settings()
 
     def is_module_enabled(self, module_name: str) -> bool:
         """Modul yoqilganligini tekshirish"""
@@ -477,12 +488,17 @@ class AppSettingsManager:
 _settings_manager: Optional[AppSettingsManager] = None
 
 
-def get_app_settings() -> AppSettings:
-    """Tizim sozlamalarini olish (global funksiya)"""
+def get_app_settings(force_reload: bool = False) -> AppSettings:
+    """Tizim sozlamalarini olish (global funksiya)
+    
+    Args:
+        force_reload: Agar True bo'lsa, cache'ni tozalab fayldan o'qiydi.
+                     Webhook service uchun har safar fayldan o'qish uchun True qiling.
+    """
     global _settings_manager
     if _settings_manager is None:
         _settings_manager = AppSettingsManager()
-    return _settings_manager.get_settings()
+    return _settings_manager.get_settings(force_reload=force_reload)
 
 
 def save_app_settings(settings: AppSettings) -> bool:

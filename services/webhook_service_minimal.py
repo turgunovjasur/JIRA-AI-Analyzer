@@ -25,7 +25,8 @@ import logging
 import sys
 import os
 import asyncio
-import time as _time
+import requests
+from dotenv import load_dotenv
 
 # Loyiha root path qo'shish
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -44,7 +45,8 @@ from config.app_settings import get_app_settings, TZPRCheckerSettings
 # Testcase auto-comment (v3.0)
 from services.testcase_webhook_service import (
     is_testcase_trigger_status,
-    generate_testcases_sync
+    generate_testcases_sync,
+    check_and_generate_testcases
 )
 
 # DB helper (v4.0 - DB bilan boshqarish)
@@ -217,7 +219,8 @@ async def jira_webhook(
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         # DINAMIK STATUS TEKSHIRISH (Admin sozlamalaridan)
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        app_settings = get_app_settings()
+        # force_reload=True - har safar fayldan o'qish (UI'da o'zgartirilgan sozlamalar uchun)
+        app_settings = get_app_settings(force_reload=True)
         settings = app_settings.tz_pr_checker
         target_statuses = settings.get_trigger_statuses()
 
@@ -263,9 +266,10 @@ async def jira_webhook(
             logger.info(f"[{task_key}] ✅ DB: mark_progressing (status: {task_status} → progressing)")
         elif task_status == 'returned':
             increment_return_count(task_key)
+            reset_service_statuses(task_key)  # ✅ Service statuslarni qayta boshlash
             mark_progressing(task_key, new_status, datetime.now())
             new_return_count = get_task(task_key).get('return_count', 0) if get_task(task_key) else 0
-            logger.info(f"[{task_key}] ✅ DB: returned → progressing, return_count: {return_count} → {new_return_count}")
+            logger.info(f"[{task_key}] ✅ DB: returned → progressing, return_count: {return_count} → {new_return_count}, services reset")
         elif task_status == 'progressing':
             logger.info(f"[{task_key}] ⏭️ Task allaqachon progressing, skip")
             return {
@@ -383,8 +387,8 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str):
             logger.info(f"[{task_key}] ⏭️ Service1 allaqachon done, skip")
             return
         
-        # Settings yuklash
-        app_settings = get_app_settings()
+        # Settings yuklash (force_reload=True - har safar fayldan o'qish)
+        app_settings = get_app_settings(force_reload=True)
         settings = app_settings.tz_pr_checker
         logger.info(f"[{task_key}] Settings: ADF={settings.use_adf_format}, "
                     f"AutoReturn={settings.auto_return_enabled}, "
@@ -448,7 +452,7 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str):
 
         # Critical error ham yoziladi
         try:
-            app_settings = get_app_settings()
+            app_settings = get_app_settings(force_reload=True)
             settings = app_settings.tz_pr_checker
             await _write_critical_error(
                 task_key, str(e), new_status,
@@ -674,9 +678,6 @@ async def _detect_recheck(
 
         # JIRA REST API v2 changelog'dan tekshirish
         # python-jira changelog to'g'ridan support etmaydi, REST API ishlash
-        import requests
-        from dotenv import load_dotenv
-        import os
         load_dotenv()
 
         server = os.getenv('JIRA_SERVER', 'https://smartupx.atlassian.net')
@@ -814,8 +815,8 @@ async def _run_testcase_generation(task_key: str, new_status: str):
             logger.info(f"[{task_key}] ⏭️ Service2 allaqachon done, skip")
             return
         
-        # Score threshold tekshiruvi
-        app_settings = get_app_settings()
+        # Score threshold tekshiruvi (force_reload=True - har safar fayldan o'qish)
+        app_settings = get_app_settings(force_reload=True)
         settings = app_settings.tz_pr_checker
         threshold = settings.return_threshold
         
@@ -830,7 +831,7 @@ async def _run_testcase_generation(task_key: str, new_status: str):
 
         # Testcase generation
         logger.info(f"[{task_key}] Generating testcases...")
-        success, message = generate_testcases_sync(task_key, new_status)
+        success, message = await check_and_generate_testcases(task_key, new_status)
 
         if success:
             set_service2_done(task_key)
@@ -857,15 +858,16 @@ async def _wait_for_ai_slot(task_key: str):
     Foydalanuvchi sozlamasiz ichki himoya.
     """
     global _ai_last_call_time
+    import time
     _GEMINI_MIN_INTERVAL = 6  # Google: 10 req/min = 6 sek/req
 
-    elapsed = _time.time() - _ai_last_call_time
+    elapsed = time.time() - _ai_last_call_time
     if elapsed < _GEMINI_MIN_INTERVAL:
         wait_time = _GEMINI_MIN_INTERVAL - elapsed
         logger.info(f"[{task_key}] AI queue: {wait_time:.1f}s kutiladi (Gemini rate limit)...")
         await asyncio.sleep(wait_time)
 
-    _ai_last_call_time = _time.time()
+    _ai_last_call_time = time.time()
 
 
 async def _write_timeout_error_comment(task_key: str, timeout_seconds: int):
@@ -903,7 +905,7 @@ async def _run_task_group(task_key: str, new_status: str):
     - Service1 done bo'lgandan keyin Service2 ishlaydi
     - Score threshold tekshiruvi Service2 ni bloklaydi
     """
-    app_settings = get_app_settings()
+    app_settings = get_app_settings(force_reload=True)
     queue_settings = app_settings.queue
 
     if not queue_settings.queue_enabled:
@@ -968,7 +970,7 @@ async def _run_task_group(task_key: str, new_status: str):
 
 async def _queued_check_tz_pr(task_key: str, new_status: str):
     """Queue wrapper: faqat checker (testcase_should_run = False bo'lgan holat)"""
-    app_settings = get_app_settings()
+    app_settings = get_app_settings(force_reload=True)
     queue_settings = app_settings.queue
 
     if not queue_settings.queue_enabled:
@@ -1011,7 +1013,7 @@ async def _run_sequential_tasks(
         first: "checker" yoki "testcase"
         run_testcase: testcase yashlanishi kerak ekanmi
     """
-    app_settings = get_app_settings()
+    app_settings = get_app_settings(force_reload=True)
     queue_settings = app_settings.queue
     delay = queue_settings.checker_testcase_delay
 
@@ -1183,7 +1185,7 @@ _System administrator'ga xabar berildi._
 @app.get("/")
 async def root():
     """Root endpoint - service holatini ko'rsatish"""
-    app_settings = get_app_settings()
+    app_settings = get_app_settings(force_reload=True)
     settings = app_settings.tz_pr_checker
 
     return {
@@ -1230,7 +1232,7 @@ async def health_check():
         health["status"] = "unhealthy"
 
     try:
-        app_settings = get_app_settings()
+        app_settings = get_app_settings(force_reload=True)
         settings = app_settings.tz_pr_checker
         health["services"]["settings"] = "ok"
         health["settings"] = {
@@ -1248,7 +1250,7 @@ async def health_check():
 @app.get("/settings")
 async def get_settings():
     """Joriy sozlamalarni ko'rsatish"""
-    app_settings = get_app_settings()
+    app_settings = get_app_settings(force_reload=True)
     settings = app_settings.tz_pr_checker
 
     return {
@@ -1282,7 +1284,7 @@ async def manual_check(task_key: str, background_tasks: BackgroundTasks):
     )
 
     # Testcase generation (settings-dan trigger statusini olish)
-    app_settings = get_app_settings()
+    app_settings = get_app_settings(force_reload=True)
     tc_settings = app_settings.testcase_generator
     testcase_triggered = False
 
@@ -1316,7 +1318,7 @@ async def manual_testcase(task_key: str, background_tasks: BackgroundTasks):
     """
     logger.info(f"Manual testcase generation triggered for {task_key}")
 
-    app_settings = get_app_settings()
+    app_settings = get_app_settings(force_reload=True)
     tc_settings = app_settings.testcase_generator
     trigger_status = tc_settings.auto_comment_trigger_status
 
@@ -1341,7 +1343,7 @@ async def manual_testcase(task_key: str, background_tasks: BackgroundTasks):
 @app.on_event("startup")
 async def startup_event():
     """Service boshlanganda"""
-    app_settings = get_app_settings()
+    app_settings = get_app_settings(force_reload=True)
     settings = app_settings.tz_pr_checker
 
     logger.info("=" * 80)

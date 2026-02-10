@@ -71,6 +71,17 @@ def main():
             st.session_state.show_settings = False
             st.rerun()
 
+    elif page == "Monitoring":
+        # Monitoring Dashboard sahifasi
+        from ui.pages.monitoring_dashboard import render_monitoring_dashboard
+        render_monitoring_dashboard()
+
+        # Monitoring'dan chiqish tugmasi
+        st.markdown("---")
+        if st.button("← Orqaga qaytish", use_container_width=False):
+            st.session_state.show_monitoring = False
+            st.rerun()
+
     elif page == "Bug Analyzer":
         # Bug Analyzer sahifasi
         if app_settings.modules.bug_analyzer_enabled:

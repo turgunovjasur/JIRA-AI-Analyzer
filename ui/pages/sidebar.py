@@ -75,6 +75,15 @@ def render_sidebar():
         st.divider()
 
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # MONITORING DASHBOARD
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        if st.button("📊 Monitoring", use_container_width=True, key="monitoring_btn"):
+            st.session_state.show_monitoring = True
+            st.rerun()
+
+        st.divider()
+
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         # SETTINGS TUGMASI
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         if st.button("⚙️ Sozlamalar", use_container_width=True, key="settings_btn"):
@@ -108,6 +117,10 @@ def render_sidebar():
     # Settings sahifasi tanlangan bo'lsa
     if st.session_state.get('show_settings', False):
         return "Settings", None
+
+    # Monitoring sahifasi tanlangan bo'lsa
+    if st.session_state.get('show_monitoring', False):
+        return "Monitoring", None
 
     return page, None
 

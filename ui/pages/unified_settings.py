@@ -719,6 +719,8 @@ def _render_testcase_settings(settings: AppSettings) -> TestcaseGeneratorSetting
         default_use_smart_patch=default_use_smart_patch,
         default_test_types=default_test_types if default_test_types else ['positive'],
         max_test_cases=max_test_cases,
+        read_comments_enabled=tc_read_comments,
+        max_comments_to_read=tc_max_comments,
         auto_comment_enabled=auto_comment_enabled,
         auto_comment_trigger_status=auto_comment_trigger_status,
         auto_comment_trigger_aliases=auto_comment_trigger_aliases,
