@@ -29,10 +29,10 @@ import requests
 from dotenv import load_dotenv
 
 # Loyiha root path qo'shish
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 # Core imports
-from services.tz_pr_service import TZPRService
+from services.checkers.tz_pr_checker import TZPRService
 from utils.jira.jira_comment_writer import JiraCommentWriter
 
 # Yangi imports - ADF va Settings
@@ -43,14 +43,14 @@ from utils.jira.jira_status_manager import get_status_manager
 from config.app_settings import get_app_settings, TZPRCheckerSettings
 
 # Testcase auto-comment (v3.0)
-from services.testcase_webhook_service import (
+from services.webhook.testcase_webhook_handler import (
     is_testcase_trigger_status,
     generate_testcases_sync,
     check_and_generate_testcases
 )
 
 # DB helper (v4.0 - DB bilan boshqarish)
-from utils.task_db import (
+from utils.database.task_db import (
     get_task,
     mark_progressing,
     mark_completed,

@@ -7,12 +7,12 @@ from tqdm import tqdm
 import json
 from datetime import datetime
 
-from utils.chunking_helper import ChunkingHelper
+from utils.ai.chunking_helper import ChunkingHelper
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.embedding_helper import EmbeddingHelper
-from utils.vectordb_helper import VectorDBHelper
+from utils.ai.embedding_helper import EmbeddingHelper
+from utils.database.vectordb_helper import VectorDBHelper
 from dotenv import load_dotenv
 
 load_dotenv()

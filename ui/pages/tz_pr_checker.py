@@ -120,7 +120,7 @@ def _run_analysis(task_key: str):
 
     try:
         # Service import
-        from services.tz_pr_service import TZPRService
+        from services.checkers.tz_pr_checker import TZPRService
         service = TZPRService()
 
         # Status callback
@@ -292,12 +292,23 @@ def _render_compliance_score(result):
 
     with col1:
         st.markdown("### 🎯 Moslik Bali")
-        st.markdown(
-            f"""<div style="font-size: 3rem; font-weight: bold; color: {color};">
-                {result.compliance_score}%
-            </div>""",
-            unsafe_allow_html=True
-        )
+
+        # Handle None case
+        if result.compliance_score is None:
+            st.markdown(
+                f"""<div style="font-size: 3rem; font-weight: bold; color: {color};">
+                    ⚠️ N/A
+                </div>""",
+                unsafe_allow_html=True
+            )
+            st.warning("⚠️ AI javobdan moslik balini ajratib bo'lmadi. AI response formatini tekshiring.")
+        else:
+            st.markdown(
+                f"""<div style="font-size: 3rem; font-weight: bold; color: {color};">
+                    {result.compliance_score}%
+                </div>""",
+                unsafe_allow_html=True
+            )
 
     with col2:
         st.markdown("### 📊 Statistika")

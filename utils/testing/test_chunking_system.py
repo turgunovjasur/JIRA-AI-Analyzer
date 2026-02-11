@@ -8,11 +8,11 @@ Bu script chunking quality va embedding accuracy'ni test qiladi
 import sys
 import os
 
-from utils.chunking_helper import ChunkingHelper
+from utils.ai.chunking_helper import ChunkingHelper
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from metadata_helper import MetadataHelper
+from utils.database.metadata_helper import MetadataHelper
 
 
 def print_section(title):

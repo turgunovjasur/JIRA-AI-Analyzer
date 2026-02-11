@@ -1,6 +1,6 @@
-# services/testcase_webhook_service.py
+# services/webhook/testcase_webhook_handler.py
 """
-Testcase Webhook Service
+Testcase Webhook Handler
 
 Task statusiga ko'ra avtomatik test case yaratish va JIRA ga yozish.
 Ready to Test statusga tushganda ishga tushadi.
@@ -53,7 +53,7 @@ async def check_and_generate_testcases(
 
     try:
         # 3. Test case'lar yaratish
-        from services.testcase_generator_service import TestCaseGeneratorService
+        from services.generators.testcase_generator import TestCaseGeneratorService
 
         service = TestCaseGeneratorService()
 

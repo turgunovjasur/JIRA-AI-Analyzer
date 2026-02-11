@@ -117,6 +117,9 @@ class TZPRCheckerSettings:
     return_threshold: int = 60
     auto_return_enabled: bool = False
 
+    # AI Token Sozlamalari
+    ai_max_output_tokens: int = 16384  # Gemini javob uchun max token
+
     # Status Nomlari
     trigger_status: str = "READY TO TEST"
     trigger_status_aliases: str = "READY TO TEST,Ready To Test"

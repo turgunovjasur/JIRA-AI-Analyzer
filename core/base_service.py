@@ -71,7 +71,7 @@ class BaseService:
             GeminiHelper: Google Gemini AI helper instance
         """
         if self._gemini_helper is None:
-            from utils.gemini_helper import GeminiHelper
+            from utils.ai.gemini_helper import GeminiHelper
             self._gemini_helper = GeminiHelper()
         return self._gemini_helper
 

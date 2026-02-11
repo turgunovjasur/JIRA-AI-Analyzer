@@ -86,6 +86,9 @@ AI_PROMPT_TEMPLATE_UZ = """
 ## 📊 MOSLIK BALI
 [0-100% oralig'ida baho. Format: **COMPLIANCE_SCORE: XX%**]
 
+⚠️ MUHIM: Javobingiz oxirida ALBATTA **COMPLIANCE_SCORE: XX%** formatida baho yoz!
+Bu qatorni HECH QACHON tashlab ketma, aks holda natija noto'g'ri bo'ladi.
+
 ╚══════════════════════════════════════════════════════════════════╝
 """
 
@@ -632,8 +635,11 @@ class TZPRService(BaseService):
 
             prompt_size = len(prompt)
 
-            # Call AI
-            analysis = self.gemini.analyze(prompt)
+            # Call AI — barcha bo'limlar yoqilganda javob katta bo'ladi,
+            # shuning uchun max_output_tokens settings'dan olinadi
+            from config.app_settings import get_app_settings
+            max_tokens = get_app_settings().tz_pr_checker.ai_max_output_tokens
+            analysis = self.gemini.analyze(prompt, max_output_tokens=max_tokens)
 
             return {
                 'success': True,
@@ -704,15 +710,34 @@ class TZPRService(BaseService):
     def _extract_compliance_score(self, analysis: str) -> Optional[int]:
         """Extract compliance score from AI response"""
         try:
+            # Try format: COMPLIANCE_SCORE: XX%
             match = re.search(r'COMPLIANCE_SCORE:\s*(\d+)%', analysis, re.IGNORECASE)
             if match:
                 return int(match.group(1))
 
-            match = re.search(r'(\d+)%', analysis)
+            # Try format: **COMPLIANCE_SCORE: XX%**
+            match = re.search(r'\*\*COMPLIANCE_SCORE:\s*(\d+)%\*\*', analysis, re.IGNORECASE)
             if match:
                 return int(match.group(1))
-        except Exception:
-            pass
+
+            # Try to find "MOSLIK BALI" section with score
+            match = re.search(r'(?:MOSLIK BALI|📊 MOSLIK BALI)[\s\S]*?(\d+)%', analysis, re.IGNORECASE)
+            if match:
+                return int(match.group(1))
+
+            # Last resort: "MOSLIK BALI" yoki "Statistika" bo'limidan tashqari
+            # COMPLIANCE yoki "bali" so'zi yonida turgan foizni qidirish
+            match = re.search(r'(?:compliance|bali|score|moslik)[\s\S]{0,30}?(\d+)%', analysis, re.IGNORECASE)
+            if match:
+                return int(match.group(1))
+        except Exception as e:
+            import logging
+            logging.error(f"Score extraction error: {e}")
+
+        # If not found, log warning
+        import logging
+        logging.warning("⚠️ COMPLIANCE_SCORE not found in AI response!")
+        logging.debug(f"AI Response preview: {analysis[:500]}...")
 
         return None
 

@@ -2,7 +2,7 @@
 import json
 from dotenv import load_dotenv
 
-from utils.vectordb_helper import VectorDBHelper
+from utils.database.vectordb_helper import VectorDBHelper
 
 load_dotenv()
 

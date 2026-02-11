@@ -321,7 +321,7 @@ def _run_generation(
             progress.update(4, msg)
 
     try:
-        from services.testcase_generator_service import TestCaseGeneratorService
+        from services.generators.testcase_generator import TestCaseGeneratorService
 
         # Service
         svc = TestCaseGeneratorService()

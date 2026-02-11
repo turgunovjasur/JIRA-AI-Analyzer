@@ -1,8 +1,8 @@
 # ui/components.py
 import streamlit as st
-from utils.embedding_helper import EmbeddingHelper
-from utils.vectordb_helper import VectorDBHelper
-from utils.gemini_helper import GeminiHelper
+from utils.ai.embedding_helper import EmbeddingHelper
+from utils.database.vectordb_helper import VectorDBHelper
+from utils.ai.gemini_helper import GeminiHelper
 
 
 @st.cache_resource

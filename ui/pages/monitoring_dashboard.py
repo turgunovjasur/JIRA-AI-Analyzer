@@ -45,7 +45,7 @@ def render_monitoring_dashboard():
         # DB ni avtomatik yaratish tugmasi
         if st.button("🔧 DB yaratish", type="primary"):
             try:
-                from utils.task_db import init_db
+                from utils.database.task_db import init_db
                 init_db()
                 st.success("✅ DB muvaffaqiyatli yaratildi!")
                 st.rerun()

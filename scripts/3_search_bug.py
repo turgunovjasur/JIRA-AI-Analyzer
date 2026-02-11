@@ -6,9 +6,9 @@ from tqdm import tqdm
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.embedding_helper import EmbeddingHelper
-from utils.vectordb_helper import VectorDBHelper
-from utils.gemini_helper import GeminiHelper
+from utils.ai.embedding_helper import EmbeddingHelper
+from utils.database.vectordb_helper import VectorDBHelper
+from utils.ai.gemini_helper import GeminiHelper
 from dotenv import load_dotenv
 
 load_dotenv()
