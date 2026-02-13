@@ -12,7 +12,7 @@ import sqlite3
 import os
 import logging
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -84,9 +84,61 @@ def init_db():
         conn.close()
         
         logger.info(f"✅ DB initialized: {DB_FILE}")
-        
+
     except Exception as e:
         logger.error(f"❌ DB initialization error: {e}", exc_info=True)
+        raise
+
+
+def migrate_db_v2():
+    """
+    Migrate DB to v2: add assignee, task_type, feature_name, technology_stack
+    Idempotent - safe to run multiple times
+    """
+    try:
+        _ensure_db_dir()
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+
+        # Check if already migrated
+        cursor.execute("PRAGMA table_info(task_processing)")
+        columns = [row[1] for row in cursor.fetchall()]
+
+        if 'assignee' in columns:
+            logger.info("✅ DB already migrated to v2")
+            conn.close()
+            return
+
+        logger.info("🔄 DB migration to v2...")
+
+        # Add new columns
+        cursor.execute("ALTER TABLE task_processing ADD COLUMN assignee TEXT NULL")
+        cursor.execute("ALTER TABLE task_processing ADD COLUMN task_type TEXT NULL")
+        cursor.execute("ALTER TABLE task_processing ADD COLUMN feature_name TEXT NULL")
+        cursor.execute("ALTER TABLE task_processing ADD COLUMN technology_stack TEXT NULL")
+
+        # Indexes for performance
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_task_type
+            ON task_processing(task_type)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_assignee
+            ON task_processing(assignee)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_feature_name
+            ON task_processing(feature_name)
+        """)
+
+        conn.commit()
+        conn.close()
+        logger.info("✅ DB migration v2 completed!")
+
+    except Exception as e:
+        logger.error(f"❌ DB migration error: {e}", exc_info=True)
         raise
 
 
@@ -323,8 +375,147 @@ def reset_service_statuses(task_id: str):
     })
 
 
+def _extract_task_type(task_details: Dict) -> str:
+    """
+    Extract task type from JIRA labels or issue type.
+
+    Returns one of: product, client, bug, error, analiz, other
+    """
+    # Priority 1: Check labels
+    labels = task_details.get('labels', [])
+    labels_lower = [label.lower() for label in labels]
+
+    type_keywords = {
+        'product': ['product', 'mahsulot', 'feature'],
+        'client': ['client', 'mijoz', 'customer'],
+        'bug': ['bug', 'xato', 'defect'],
+        'error': ['error', 'crash', 'exception'],
+        'analiz': ['analiz', 'analysis', 'research']
+    }
+
+    for task_type, keywords in type_keywords.items():
+        for keyword in keywords:
+            if any(keyword in label for label in labels_lower):
+                return task_type
+
+    # Priority 2: Issue type name
+    issue_type = task_details.get('type', '').lower()
+    if 'bug' in issue_type:
+        return 'bug'
+    elif 'error' in issue_type:
+        return 'error'
+    elif 'task' in issue_type or 'story' in issue_type:
+        return 'product'
+
+    return 'other'
+
+
+def _extract_features_from_pr_files(pr_files: List[Dict]) -> tuple:
+    """
+    Extract feature names and tech stack from PR file paths.
+
+    Patterns:
+    - main/page/form/anor/mkpi/robot_bonus_setting.html → mkpi, HTML
+    - main/oracle/anor/mkpi/pkg_bonus.sql → mkpi, Oracle
+    - main/app/bonus/BonusService.java → bonus, Java
+
+    Returns:
+        tuple: (feature_names_csv, tech_stack_csv) or (None, None)
+    """
+    import re
+
+    features = set()
+    technologies = set()
+
+    # Technology patterns
+    tech_patterns = {
+        'Oracle': [r'\.sql$', r'\.pks$', r'\.pkb$', r'\.pck$', r'/oracle/'],
+        'HTML': [r'\.html?$'],
+        'Java': [r'\.java$'],
+        'JavaScript': [r'\.jsx?$'],
+        'TypeScript': [r'\.tsx?$'],
+        'Python': [r'\.py$'],
+    }
+
+    # Feature extraction patterns
+    feature_patterns = [
+        r'main/page/form/[^/]+/([^/]+)/',    # HTML forms
+        r'main/oracle/[^/]+/([^/]+)/',       # Oracle packages
+        r'main/app/([^/]+)/',                 # Java app
+        r'src/([^/]+)/',                      # Generic src
+    ]
+
+    for file_data in pr_files:
+        filename = file_data.get('filename', '')
+
+        # Detect technology
+        for tech, patterns in tech_patterns.items():
+            for pattern in patterns:
+                if re.search(pattern, filename, re.IGNORECASE):
+                    technologies.add(tech)
+                    break
+
+        # Extract feature
+        for pattern in feature_patterns:
+            match = re.search(pattern, filename)
+            if match:
+                feature = match.group(1)
+                # Clean: lowercase, remove non-alphanumeric
+                feature = re.sub(r'[^a-z0-9_]', '', feature.lower())
+                if len(feature) > 2:  # Skip too short
+                    features.add(feature)
+
+    # Convert to comma-separated strings
+    feature_csv = ', '.join(sorted(features)) if features else None
+    tech_csv = ', '.join(sorted(technologies)) if technologies else None
+
+    return feature_csv, tech_csv
+
+
+def update_task_metadata(
+    task_id: str,
+    task_details: Dict,
+    pr_info: Optional[Dict] = None
+):
+    """
+    Update task metadata: assignee, task_type, feature_name, technology_stack.
+
+    Called from TZ-PR checker after PR fetch.
+    """
+    try:
+        # Extract from JIRA
+        assignee = task_details.get('assignee', 'Unassigned')
+        task_type = _extract_task_type(task_details)
+
+        # Extract from PR files
+        feature_name = None
+        technology_stack = None
+
+        if pr_info and pr_info.get('all_files'):
+            feature_name, technology_stack = _extract_features_from_pr_files(
+                pr_info['all_files']
+            )
+
+        # Update DB
+        upsert_task(task_id, {
+            'assignee': assignee,
+            'task_type': task_type,
+            'feature_name': feature_name,
+            'technology_stack': technology_stack
+        })
+
+        logger.info(
+            f"[{task_id}] Metadata: {assignee}, {task_type}, "
+            f"{feature_name or 'N/A'}, {technology_stack or 'N/A'}"
+        )
+
+    except Exception as e:
+        logger.error(f"[{task_id}] Metadata update error: {e}")
+
+
 # DB initialization on import
 try:
     init_db()
+    migrate_db_v2()  # ✅ Auto-migrate to v2
 except Exception as e:
     logger.warning(f"DB initialization warning: {e}")

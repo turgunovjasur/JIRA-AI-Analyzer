@@ -81,6 +81,13 @@ def render_sidebar():
             st.session_state.show_monitoring = True
             st.rerun()
 
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # SPRINT REPORT
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        if st.button("📈 Sprint Report", use_container_width=True, key="sprint_report_btn"):
+            st.session_state.show_sprint_report = True
+            st.rerun()
+
         st.divider()
 
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -121,6 +128,10 @@ def render_sidebar():
     # Monitoring sahifasi tanlangan bo'lsa
     if st.session_state.get('show_monitoring', False):
         return "Monitoring", None
+
+    # ✅ Sprint Report sahifasi tanlangan bo'lsa
+    if st.session_state.get('show_sprint_report', False):
+        return "Sprint Report", None
 
     return page, None
 

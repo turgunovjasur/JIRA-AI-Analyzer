@@ -91,9 +91,17 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 app = FastAPI(
     title="JIRA TZ-PR Auto Checker",
-    description="Avtomatik TZ-PR moslik tekshirish + Testcase Auto-Comment",
-    version="3.0.0"
+    description="Avtomatik TZ-PR moslik tekshirish + Testcase Auto-Comment + Sprint Report",
+    version="3.1.0"
 )
+
+# ✅ Mount Sprint Report API
+try:
+    from services.api.sprint_report_api import router as sprint_report_router
+    app.include_router(sprint_report_router)
+    logger.info("✅ Sprint Report API mounted at /api/sprint-report")
+except ImportError as e:
+    logger.warning(f"⚠️ Sprint Report API not available: {e}")
 
 # Services (lazy loading)
 _tz_pr_service = None
@@ -279,27 +287,37 @@ async def jira_webhook(
             }
 
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # AI_SKIP SHARTI (v4.0 - faqat return_count > 0 bo'lsa)
+        # AI_SKIP SHARTI (v5.0 - birinchi urinishda ham ishlaydi)
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         skip_code = settings.skip_code.strip() if settings.skip_code else ""
-        if skip_code and return_count > 0:
-            # Faqat return_count > 0 bo'lsa AI_SKIP ishlaydi
+        if skip_code:
+            # ✅ return_count sharti olib tashlandi - birinchi urinishda ham ishlaydi
             comment_writer = get_comment_writer()
             skip_detected = await _check_skip_code(task_key, skip_code, comment_writer)
             if skip_detected:
-                logger.info(f"[{task_key}] ⏭️ Skip code '{skip_code}' topildi (return_count={return_count} > 0), "
-                            f"checker va testcase bekor")
+                logger.info(f"[{task_key}] ⏭️ Skip code '{skip_code}' topildi, Service1 bekor, Service2 run")
+
+                # Mark Service1 as done (100% to skip compliance check)
+                set_service1_done(task_key, compliance_score=100)
                 set_skip_detected(task_key)
+
+                # Write skip notification
                 adf_formatter = get_adf_formatter()
                 await _write_skip_notification(task_key, settings, comment_writer, adf_formatter)
+
+                # Run Service2 ONLY if testcase trigger matches
+                testcase_should_run = is_testcase_trigger_status(new_status)
+                if testcase_should_run:
+                    background_tasks.add_task(_run_testcase_generation, task_key=task_key, new_status=new_status)
+                    logger.info(f"[{task_key}] ✅ Service2 (testcase) ishga tushirildi")
+
                 return {
-                    "status": "skipped",
+                    "status": "skipped_service1",
                     "task_key": task_key,
-                    "reason": f"Skip code '{skip_code}' topildi (return_count={return_count})",
-                    "skipped_tasks": ["tz_pr_check", "testcase_generation"]
+                    "reason": f"Skip code '{skip_code}' topildi",
+                    "skipped_tasks": ["tz_pr_check"],
+                    "running_tasks": ["testcase"] if testcase_should_run else []
                 }
-        elif skip_code and return_count == 0:
-            logger.info(f"[{task_key}] ⏭️ Skip code mavjud, lekin return_count=0, AI tekshirish davom etadi")
         
         # Queue sozlamalari
         queue_settings = app_settings.queue

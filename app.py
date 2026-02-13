@@ -82,6 +82,17 @@ def main():
             st.session_state.show_monitoring = False
             st.rerun()
 
+    elif page == "Sprint Report":
+        # ✅ Sprint Report sahifasi
+        from ui.pages.sprint_report import render_sprint_report
+        render_sprint_report()
+
+        # Sprint Report'dan chiqish tugmasi
+        st.markdown("---")
+        if st.button("← Orqaga qaytish", use_container_width=False):
+            st.session_state.show_sprint_report = False
+            st.rerun()
+
     elif page == "Bug Analyzer":
         # Bug Analyzer sahifasi
         if app_settings.modules.bug_analyzer_enabled:

@@ -16,12 +16,10 @@ Version: 7.0 WITH FIGMA
 """
 from typing import Dict, List, Optional, Callable
 from dataclasses import dataclass, field
-import base64
 import re
 
 # Core imports
 from core import BaseService, PRHelper, TZHelper
-from utils.github.smart_patch_helper import SmartPatchHelper
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # CONSTANTS
@@ -43,6 +41,8 @@ AI_PROMPT_TEMPLATE_UZ = """
 ─────────────────────────────────────────────────────────────────────
 
 {tz_content}
+
+{dev_comments_section}
 
 {figma_section}
 
@@ -288,7 +288,14 @@ class TZPRService(BaseService):
 
             update_status("success", f"✅ Tahlil tugadi! Moslik: {compliance_score}%")
 
-            # Step 6: Return result
+            # Step 6: Update metadata (assignee, task_type, features)
+            try:
+                from utils.database.task_db import update_task_metadata
+                update_task_metadata(task_key, task_details, pr_info)
+            except Exception as e:
+                logger.warning(f"[{task_key}] Metadata update failed: {e}")
+
+            # Step 7: Return result
             return TZPRAnalysisResult(
                 task_key=task_key,
                 task_summary=task_details['summary'],
@@ -454,6 +461,57 @@ class TZPRService(BaseService):
 
         return tz_content, comment_analysis
 
+    def _build_dev_comments_section(self, task_details: Dict) -> str:
+        """
+        Extract developer comments for AI context.
+
+        DEV comments help AI understand:
+        - What was actually changed and why
+        - Developer explanations for implementation decisions
+        - Edge cases that were handled
+
+        Returns:
+            str: Formatted section for AI prompt (empty if no relevant comments)
+        """
+        comments = task_details.get('comments', [])
+
+        if not comments:
+            return ""
+
+        # Filter: skip AI/BOT comments, keep human comments
+        dev_comments = [
+            c for c in comments
+            if 'AI' not in c.get('author', '').upper()
+            and 'BOT' not in c.get('author', '').upper()
+            and 'ROBOT' not in c.get('author', '').upper()
+            and len(c.get('body', '').strip()) > 20  # Skip trivial comments
+        ]
+
+        if not dev_comments:
+            return ""
+
+        lines = [
+            "",
+            "─────────────────────────────────────────────────────────────────────",
+            "💬 DEVELOPER IZOHLAR (KONTEKST)",
+            "─────────────────────────────────────────────────────────────────────",
+            "",
+            "Developerlar quyidagi izohlarni qoldirgan. Ularni moslik baliga ta'sir qiling:",
+            ""
+        ]
+
+        # Show last 5 meaningful comments
+        for comment in dev_comments[-5:]:
+            author = comment.get('author', 'Unknown')
+            body = comment.get('body', '').strip()
+            created = comment.get('created', '')
+
+            lines.append(f"👤 {author} ({created}):")
+            lines.append(f"   {body}")
+            lines.append("")
+
+        return "\n".join(lines)
+
     def _get_pr_info(self, task_key: str, task_details: Dict, update_status, use_smart_patch):
         """PR ma'lumotlarini olish"""
         update_status("progress", "🔗 PR'lar qidirilmoqda...")
@@ -485,8 +543,11 @@ class TZPRService(BaseService):
             use_smart_patch: bool,
             update_status
     ) -> Dict:
-        """AI tahlil qilish (with Figma support)"""
+        """AI tahlil qilish (with Figma and DEV comments support)"""
         update_status("progress", "🤖 AI tahlil qilmoqda...")
+
+        # ✅ Build DEV comments section
+        dev_comments_section = self._build_dev_comments_section(task_details)
 
         return self._analyze_with_retry(
             task_key=task_key,
@@ -494,6 +555,7 @@ class TZPRService(BaseService):
             tz_content=tz_content,
             pr_info=pr_info,
             figma_data=figma_data,  # ✅ Pass to retry logic
+            dev_comments_section=dev_comments_section,  # ✅ NEW
             max_files=max_files,
             show_full_diff=show_full_diff,
             use_smart_patch=use_smart_patch,
@@ -511,12 +573,13 @@ class TZPRService(BaseService):
             tz_content: str,
             pr_info: Dict,
             figma_data: Optional[Dict],  # ✅ NEW
+            dev_comments_section: str,  # ✅ NEW
             max_files: Optional[int],
             show_full_diff: bool,
             use_smart_patch: bool,
             status_callback
     ) -> Dict:
-        """AI tahlil with automatic retry on overload"""
+        """AI tahlil with automatic retry on overload (with DEV comments)"""
 
         # Build Figma sections
         figma_section, figma_analysis, figma_response = self._build_figma_prompt_section(figma_data)
@@ -538,6 +601,7 @@ class TZPRService(BaseService):
             pr_info=pr_info,
             figma_section=figma_section,
             figma_analysis=figma_analysis,
+            dev_comments_section=dev_comments_section,  # ✅ NEW
             response_format_sections=response_format_sections,
             max_files=max_files,
             show_full_diff=show_full_diff,
@@ -561,6 +625,7 @@ class TZPRService(BaseService):
                 pr_info=pr_info,
                 figma_section=figma_section,
                 figma_analysis=figma_analysis,
+                dev_comments_section=dev_comments_section,  # ✅ NEW
                 response_format_sections=response_format_sections,
                 max_files=reduced_files,
                 show_full_diff=show_full_diff,
@@ -583,6 +648,7 @@ class TZPRService(BaseService):
                 pr_info=pr_info,
                 figma_section=figma_section,
                 figma_analysis=figma_analysis,
+                dev_comments_section=dev_comments_section,  # ✅ NEW
                 response_format_sections=response_format_sections,
                 max_files=3,  # Very limited
                 show_full_diff=False,
@@ -605,13 +671,14 @@ class TZPRService(BaseService):
             pr_info: Dict,
             figma_section: str,
             figma_analysis: str,
+            dev_comments_section: str,  # ✅ NEW
             response_format_sections: str,
             max_files: Optional[int],
             show_full_diff: bool,
             use_smart_patch: bool,
             retry_attempt: int
     ) -> Dict:
-        """Single AI analysis attempt"""
+        """Single AI analysis attempt (with DEV comments)"""
 
         try:
             # Build code changes
@@ -627,6 +694,7 @@ class TZPRService(BaseService):
                 task_key=task_key,
                 task_summary=task_details['summary'],
                 tz_content=tz_content,
+                dev_comments_section=dev_comments_section,  # ✅ NEW
                 code_changes=code_changes,
                 figma_section=figma_section,
                 figma_analysis_section=figma_analysis,

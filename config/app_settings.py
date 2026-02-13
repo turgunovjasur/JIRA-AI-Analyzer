@@ -229,7 +229,7 @@ class TestcaseGeneratorSettings:
     # AI yaratadigan maksimal test case soni
     max_test_cases: int = 10
     # AI javob uchun maksimal token soni (truncation oldini olish uchun)
-    ai_max_output_tokens: int = 8192
+    ai_max_output_tokens: int = 16384
 
     # ━━━ Comment O'qish ━━━
     read_comments_enabled: bool = True
@@ -255,7 +255,7 @@ class TestcaseGeneratorSettings:
     smart_patch_help: str = "Faqat o'zgargan qismlarni AI ga yuborish (tezroq va arzonroq)"
     test_types_help: str = "Default test turlari: positive (asosiy), negative (xato holatlari)"
     max_test_cases_help: str = "AI yaratadigan maksimal test case soni (1-30)"
-    ai_max_output_tokens_help: str = "AI javob uchun maksimal token soni (8192 tavsiya etiladi)"
+    ai_max_output_tokens_help: str = "AI javob uchun maksimal token soni (16384 tavsiya etiladi)"
     read_comments_help: str = "JIRA task comment'larini AI ga yuborish. O'chirilsa faqat TZ asosida ishlaydi"
     max_comments_help: str = "AI ga yuborilgan comment'lar soni. 0 = barcha comment'lar"
     auto_comment_help: str = "Task Ready to Test statusga tushganda avtomatik test case yaratib JIRA ga yozish"
