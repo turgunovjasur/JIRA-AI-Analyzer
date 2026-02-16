@@ -90,11 +90,9 @@ def clear_all_tasks():
     import sqlite3
     import os
 
-    db_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        'data',
-        'processing.db'
-    )
+    # Project root/data papkasi
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    db_path = os.path.join(project_root, 'data', 'processing.db')
 
     if not os.path.exists(db_path):
         print("❌ DB fayl topilmadi")

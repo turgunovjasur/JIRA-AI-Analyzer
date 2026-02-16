@@ -93,14 +93,17 @@ def validate_db(db_path):
 
 def backup_current_db():
     """Hozirgi DB ni backup qilish"""
-    current_db = "data/processing.db"
+    # Project root/data papkasi
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    data_dir = os.path.join(project_root, 'data')
+    current_db = os.path.join(data_dir, 'processing.db')
 
     if not os.path.exists(current_db):
         log("ℹ️", BLUE, "Hozirgi DB yo'q, backup kerak emas")
         return None
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_path = f"data/processing_backup_{timestamp}.db"
+    backup_path = os.path.join(data_dir, f"processing_backup_{timestamp}.db")
 
     shutil.copy2(current_db, backup_path)
     log("💾", GREEN, f"Backup: {backup_path}")
@@ -191,7 +194,11 @@ def import_server_db(server_db_path, force=False):
     backup_path = backup_current_db()
 
     # 3. Import
-    target_db = "data/processing.db"
+    # Project root/data papkasi
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    data_dir = os.path.join(project_root, 'data')
+    os.makedirs(data_dir, exist_ok=True)
+    target_db = os.path.join(data_dir, 'processing.db')
 
     log("📥", BLUE, f"Import: {server_db_path} → {target_db}")
 

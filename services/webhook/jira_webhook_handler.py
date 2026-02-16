@@ -76,11 +76,17 @@ if sys.platform == 'win32':
 # ============================================================================
 # LOGGING SETUP
 # ============================================================================
+# Log faylini data/ papkasiga yozish
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+LOG_DIR = os.path.join(PROJECT_ROOT, 'data')
+os.makedirs(LOG_DIR, exist_ok=True)
+LOG_FILE = os.path.join(LOG_DIR, 'webhook.log')
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('webhook.log', encoding='utf-8'),
+        logging.FileHandler(LOG_FILE, encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
@@ -947,6 +953,7 @@ async def _run_task_group(task_key: str, new_status: str):
         await asyncio.wait_for(lock.acquire(), timeout=timeout)
     except asyncio.TimeoutError:
         logger.warning(f"[{task_key}] AI queue timeout: {timeout}s kutildi")
+        set_task_timeout_error(task_key, f"Queue timeout: {timeout}s")
         await _write_timeout_error_comment(task_key, timeout)
         return
 
@@ -1002,6 +1009,7 @@ async def _queued_check_tz_pr(task_key: str, new_status: str):
         await asyncio.wait_for(lock.acquire(), timeout=timeout)
     except asyncio.TimeoutError:
         logger.warning(f"[{task_key}] AI queue timeout: {timeout}s kutildi")
+        set_task_timeout_error(task_key, f"Queue timeout: {timeout}s")
         await _write_timeout_error_comment(task_key, timeout)
         return
 
@@ -1042,6 +1050,8 @@ async def _run_sequential_tasks(
                 await check_tz_pr_and_comment(task_key=task_key, new_status=new_status)
             except Exception as e:
                 logger.error(f"[{task_key}] Sequential Service1 error: {e}", exc_info=True)
+                set_service1_error(task_key, str(e))
+                return
             if run_testcase:
                 if delay > 0:
                     logger.info(f"[{task_key}] Service1→Service2 delay: {delay}s kutiladi...")
@@ -1050,12 +1060,15 @@ async def _run_sequential_tasks(
                     await _run_testcase_generation(task_key=task_key, new_status=new_status)
                 except Exception as e:
                     logger.error(f"[{task_key}] Sequential Service2 error: {e}", exc_info=True)
+                    set_service2_error(task_key, str(e))
         else:  # testcase_first (kam ishlatiladi)
             if run_testcase:
                 try:
                     await _run_testcase_generation(task_key=task_key, new_status=new_status)
                 except Exception as e:
                     logger.error(f"[{task_key}] Sequential Service2 error: {e}", exc_info=True)
+                    set_service2_error(task_key, str(e))
+                    return
             # Service2 → Service1 delay (aksi tartib)
             if delay > 0:
                 logger.info(f"[{task_key}] Service2→Service1 delay: {delay}s kutiladi...")
@@ -1064,6 +1077,7 @@ async def _run_sequential_tasks(
                 await check_tz_pr_and_comment(task_key=task_key, new_status=new_status)
             except Exception as e:
                 logger.error(f"[{task_key}] Sequential Service1 error: {e}", exc_info=True)
+                set_service1_error(task_key, str(e))
         return
 
     lock = _get_ai_queue_lock()
@@ -1074,6 +1088,7 @@ async def _run_sequential_tasks(
     except asyncio.TimeoutError:
         logger.warning(f"[{task_key}] AI queue timeout: {timeout}s kutildi, "
                        f"sequential tasks o'tib ketdi")
+        set_task_timeout_error(task_key, f"Queue timeout: {timeout}s")
         await _write_timeout_error_comment(task_key, timeout)
         return
 

@@ -11,14 +11,15 @@ Version: 1.0
 import sqlite3
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# DB fayl joylashuvi
-DB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
+# DB fayl joylashuvi - loyiha root/data papkasi
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+DB_DIR = os.path.join(PROJECT_ROOT, 'data')
 DB_FILE = os.path.join(DB_DIR, 'processing.db')
 
 
@@ -30,13 +31,19 @@ def _ensure_db_dir():
 def init_db():
     """
     DB va jadvalni yaratish (yoki yangilash)
+    WAL mode va busy_timeout concurrent access uchun
     """
     try:
         _ensure_db_dir()
-        
+
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
-        
+
+        # SQLite optimizatsiyalar concurrent access uchun
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=30000")  # 30s
+        cursor.execute("PRAGMA foreign_keys=ON")
+
         # task_processing jadvali
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS task_processing (
@@ -176,23 +183,30 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
 
 def upsert_task(task_id: str, fields: Dict[str, Any]):
     """
-    Task ma'lumotlarini yangilash yoki yaratish
-    
+    Task ma'lumotlarini yangilash yoki yaratish (transaction-safe)
+
     Args:
         task_id: JIRA task key
         fields: Yangilash kerak bo'lgan maydonlar
     """
     try:
-        conn = sqlite3.connect(DB_FILE)
+        conn = sqlite3.connect(DB_FILE, timeout=30.0)
         cursor = conn.cursor()
-        
+
+        # SQLite optimizatsiyalar
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=30000")
+
+        # IMMEDIATE transaction - lock olish
+        cursor.execute("BEGIN IMMEDIATE")
+
         # Mavjud taskni tekshirish
         cursor.execute("SELECT task_id FROM task_processing WHERE task_id = ?", (task_id,))
         exists = cursor.fetchone()
-        
+
         # updated_at avtomatik yangilanadi
         fields['updated_at'] = datetime.now().isoformat()
-        
+
         if exists:
             # UPDATE
             set_clause = ", ".join([f"{k} = ?" for k in fields.keys()])
@@ -206,10 +220,15 @@ def upsert_task(task_id: str, fields: Dict[str, Any]):
             placeholders = ", ".join(["?" for _ in fields])
             values = list(fields.values())
             cursor.execute(f"INSERT INTO task_processing ({columns}) VALUES ({placeholders})", values)
-        
+
         conn.commit()
         conn.close()
-        
+
+    except sqlite3.OperationalError as e:
+        logger.error(f"[{task_id}] SQLite lock error: {e}", exc_info=True)
+        if 'locked' in str(e).lower():
+            logger.error(f"[{task_id}] Database locked, retry recommended")
+        raise
     except Exception as e:
         logger.error(f"[{task_id}] upsert_task error: {e}", exc_info=True)
         raise
@@ -315,7 +334,8 @@ def set_service1_done(task_id: str, compliance_score: Optional[int] = None):
 def set_service1_error(task_id: str, error_msg: str):
     """
     Service1 (TZ-PR) holatini 'error' ga o'zgartirish
-    
+    Service2 ham avtomatik bloklangan holatga o'tadi
+
     Args:
         task_id: JIRA task key
         error_msg: Xato xabari
@@ -323,6 +343,8 @@ def set_service1_error(task_id: str, error_msg: str):
     upsert_task(task_id, {
         'service1_status': 'error',
         'service1_error': error_msg,
+        'service2_status': 'error',
+        'service2_error': 'Blocked by Service1 failure',
         'task_status': 'error',
         'last_processed_at': datetime.now().isoformat()
     })
@@ -353,6 +375,25 @@ def set_service2_error(task_id: str, error_msg: str):
         'service2_status': 'error',
         'service2_error': error_msg,
         'task_status': 'error',
+        'last_processed_at': datetime.now().isoformat()
+    })
+
+
+def set_task_timeout_error(task_id: str, error_msg: str):
+    """
+    Task queue timeout xatosi - barcha servislar error holatga
+
+    Args:
+        task_id: JIRA task key
+        error_msg: Timeout xato xabari
+    """
+    upsert_task(task_id, {
+        'task_status': 'error',
+        'service1_status': 'error',
+        'service2_status': 'error',
+        'service1_error': error_msg,
+        'service2_error': 'Blocked by timeout',
+        'error_message': error_msg,
         'last_processed_at': datetime.now().isoformat()
     })
 
@@ -511,6 +552,43 @@ def update_task_metadata(
 
     except Exception as e:
         logger.error(f"[{task_id}] Metadata update error: {e}")
+
+
+def get_stuck_tasks(timeout_minutes: int = 30) -> List[Dict[str, Any]]:
+    """
+    'progressing' statusda timeout minutdan ortiq turgan tasklarni topish
+
+    Args:
+        timeout_minutes: Task stuck hisoblanadigan muddat (daqiqa)
+
+    Returns:
+        Stuck task'lar ro'yxati [{'task_id': 'DEV-123', 'stuck_minutes': 45, ...}, ...]
+    """
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        cutoff_time = (datetime.now() - timedelta(minutes=timeout_minutes)).isoformat()
+
+        cursor.execute("""
+            SELECT task_id, task_status, service1_status, service2_status,
+                   last_processed_at, updated_at,
+                   ROUND((julianday('now') - julianday(updated_at)) * 1440) as stuck_minutes
+            FROM task_processing
+            WHERE task_status = 'progressing'
+              AND updated_at < ?
+            ORDER BY updated_at ASC
+        """, (cutoff_time,))
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [dict(row) for row in rows]
+
+    except Exception as e:
+        logger.error(f"get_stuck_tasks error: {e}", exc_info=True)
+        return []
 
 
 # DB initialization on import

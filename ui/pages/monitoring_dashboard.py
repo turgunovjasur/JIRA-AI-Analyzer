@@ -30,12 +30,9 @@ def render_monitoring_dashboard():
 
     st.markdown("---")
 
-    # DB fayl yo'li
-    db_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-        'data',
-        'processing.db'
-    )
+    # DB fayl yo'li - project root/data papkasi
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    db_path = os.path.join(project_root, 'data', 'processing.db')
 
     # DB mavjudligini tekshirish
     if not os.path.exists(db_path):
@@ -98,11 +95,6 @@ def render_monitoring_dashboard():
 
         # 4. XATOLIKLAR (Error Log)
         _render_errors_log(conn)
-
-        st.markdown("---")
-
-        # 5. RETURN COUNT STATISTIKA
-        _render_return_count_stats(conn)
 
         conn.close()
 
@@ -299,31 +291,68 @@ def _render_service_status_chart(conn: sqlite3.Connection):
 
 
 def _render_recent_tasks_table(conn: sqlite3.Connection):
-    """So'nggi tasklar jadvali"""
+    """Barcha tasklar jadvali - task_status filter bilan"""
 
-    st.markdown("### 📋 So'nggi Tasklar (Top 20)")
+    st.markdown("### 📋 Barcha Tasklar")
 
-    query = """
-    SELECT
-        task_id,
-        task_status,
-        service1_status,
-        service2_status,
-        compliance_score,
-        return_count,
-        skip_detected,
-        last_processed_at,
-        updated_at
-    FROM task_processing
-    ORDER BY updated_at DESC
-    LIMIT 20
-    """
+    # Filter bo'yicha
+    col1, col2 = st.columns([3, 1])
+
+    with col1:
+        # Task status filter
+        status_options = ['Barchasi', 'completed', 'progressing', 'returned', 'error']
+        selected_status = st.selectbox(
+            "📊 Status bo'yicha filter:",
+            status_options,
+            index=0,
+            key='task_status_filter'
+        )
+
+    with col2:
+        st.write("")  # Spacing
+        st.write("")  # Spacing
+
+    # Query - filter asosida
+    if selected_status == 'Barchasi':
+        query = """
+        SELECT
+            task_id,
+            task_status,
+            service1_status,
+            service2_status,
+            compliance_score,
+            return_count,
+            skip_detected,
+            last_processed_at,
+            updated_at
+        FROM task_processing
+        ORDER BY updated_at DESC
+        """
+    else:
+        query = f"""
+        SELECT
+            task_id,
+            task_status,
+            service1_status,
+            service2_status,
+            compliance_score,
+            return_count,
+            skip_detected,
+            last_processed_at,
+            updated_at
+        FROM task_processing
+        WHERE task_status = '{selected_status}'
+        ORDER BY updated_at DESC
+        """
 
     df = pd.read_sql_query(query, conn)
 
     if df.empty:
-        st.info("📭 Hozircha task yo'q")
+        st.info(f"📭 {selected_status} statusda task yo'q")
         return
+
+    # Natija soni
+    st.caption(f"📊 Jami tasklar: **{len(df)}**")
 
     # Status color-coding
     def style_status(val):
@@ -346,7 +375,7 @@ def _render_recent_tasks_table(conn: sqlite3.Connection):
     st.dataframe(
         styled_df,
         use_container_width=True,
-        height=400
+        height=500
     )
 
     # Download button
@@ -354,7 +383,7 @@ def _render_recent_tasks_table(conn: sqlite3.Connection):
     st.download_button(
         "💾 CSV yuklab olish",
         csv,
-        "tasks_monitoring.csv",
+        f"tasks_{selected_status.lower()}.csv",
         "text/csv",
         key='download-csv'
     )
@@ -400,67 +429,3 @@ def _render_errors_log(conn: sqlite3.Connection):
 
             if row['service2_error']:
                 st.error(f"**Service2 Error:** {row['service2_error']}")
-
-
-def _render_return_count_stats(conn: sqlite3.Connection):
-    """Return count statistikasi"""
-
-    st.markdown("### 🔄 Return Count Statistikasi")
-
-    query = """
-    SELECT
-        return_count,
-        COUNT(*) as task_count
-    FROM task_processing
-    WHERE return_count > 0
-    GROUP BY return_count
-    ORDER BY return_count
-    """
-
-    df = pd.read_sql_query(query, conn)
-
-    if df.empty:
-        st.success("✅ Hech qanday task qaytarilmagan!")
-        return
-
-    # Bar chart
-    import plotly.express as px
-
-    fig = px.bar(
-        df,
-        x='return_count',
-        y='task_count',
-        labels={'return_count': 'Return Count', 'task_count': 'Task Count'},
-        color='task_count',
-        color_continuous_scale='Reds'
-    )
-
-    fig.update_layout(
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
-        font=dict(color='#8b949e'),
-        showlegend=False,
-        height=300
-    )
-
-    st.plotly_chart(fig, use_container_width=True)
-
-    # Top returned tasks
-    st.markdown("#### 🔝 Eng ko'p qaytarilgan tasklar")
-
-    query_top = """
-    SELECT
-        task_id,
-        return_count,
-        task_status,
-        compliance_score,
-        last_processed_at
-    FROM task_processing
-    WHERE return_count > 0
-    ORDER BY return_count DESC
-    LIMIT 5
-    """
-
-    df_top = pd.read_sql_query(query_top, conn)
-
-    st.dataframe(df_top, use_container_width=True)

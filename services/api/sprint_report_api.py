@@ -13,10 +13,9 @@ import os
 
 router = APIRouter(prefix="/api", tags=["sprint-report"])
 
-DB_FILE = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    'utils', 'data', 'processing.db'
-)
+# DB fayl yo'li - project root/data papkasi
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+DB_FILE = os.path.join(PROJECT_ROOT, 'data', 'processing.db')
 
 
 # Response models
