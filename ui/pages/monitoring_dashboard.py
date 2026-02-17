@@ -70,7 +70,11 @@ def render_monitoring_dashboard():
 
     # DB dan ma'lumotlar olish
     try:
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(db_path, timeout=30.0)
+
+        # WAL mode checkpoint - fresh data olish uchun
+        conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+        conn.execute("PRAGMA synchronous=FULL")
 
         # 1. UMUMIY STATISTIKA
         _render_overall_stats(conn)
@@ -555,6 +559,10 @@ def _render_task_delete(conn: sqlite3.Connection, db_path: str):
     with col2:
         delete_clicked = st.button("🗑️ O'chirish", type="primary", key="delete_task_btn")
 
+    # Delete confirmation state
+    if 'delete_confirm_task' not in st.session_state:
+        st.session_state.delete_confirm_task = None
+
     if delete_clicked and task_key_input:
         task_key = task_key_input.strip().upper()
 
@@ -572,70 +580,94 @@ def _render_task_delete(conn: sqlite3.Connection, db_path: str):
 
                 if not task:
                     st.warning(f"⚠️ Task `{task_key}` bazada topilmadi")
+                    st.session_state.delete_confirm_task = None
                 else:
-                    # Tasdiqlash
-                    st.warning(
-                        f"**{task_key}** o'chiriladi: "
-                        f"status={task['task_status']}, "
-                        f"s1={task['service1_status']}, "
-                        f"s2={task['service2_status']}"
-                    )
-
-                    if st.button(f"✅ Ha, {task_key} ni o'chirish", key="confirm_delete"):
-                        try:
-                            from utils.database.task_db import delete_task, DB_FILE
-                            import logging
-
-                            # Logger yaratish
-                            logger = logging.getLogger(__name__)
-
-                            # DB_FILE va db_path bir xil ekanligini tekshirish
-                            if DB_FILE != db_path:
-                                st.warning(f"⚠️ DB path mos kelmaydi: {DB_FILE} vs {db_path}")
-                                logger.warning(f"DB path mismatch: {DB_FILE} vs {db_path}")
-
-                            logger.info(f"[{task_key}] UI'dan delete qilish boshlandi...")
-
-                            # Delete qilish
-                            success = delete_task(task_key)
-                            logger.info(f"[{task_key}] delete_task result: {success}")
-
-                            if success:
-                                # Kichik kutish (DB commit uchun)
-                                import time
-                                time.sleep(0.2)  # 200ms kutish
-
-                                # Delete qilinganini tekshirish - yangi connection (fresh data uchun)
-                                verify_conn = sqlite3.connect(db_path, timeout=30.0)
-                                # WAL mode checkpoint (agar WAL mode bo'lsa)
-                                verify_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                                verify_cursor = verify_conn.cursor()
-                                verify_cursor.execute("SELECT task_id FROM task_processing WHERE task_id = ?", (task_key,))
-                                still_exists = verify_cursor.fetchone()
-                                verify_conn.close()
-
-                                logger.info(f"[{task_key}] Verification: still_exists={still_exists}")
-
-                                if still_exists:
-                                    st.error(f"❌ `{task_key}` o'chirilmadi - bazada hali ham mavjud! Qayta urinib ko'ring.")
-                                    logger.error(f"[{task_key}] Task hali ham DB da mavjud!")
-                                else:
-                                    st.session_state.delete_success = True
-                                    st.session_state.delete_task_key = task_key
-                                    # Input field'ni tozalash uchun counter'ni oshirish
-                                    if 'delete_task_key_input_counter' not in st.session_state:
-                                        st.session_state.delete_task_key_input_counter = 0
-                                    st.session_state.delete_task_key_input_counter += 1
-                                    logger.info(f"[{task_key}] ✅ UI'dan muvaffaqiyatli o'chirildi")
-                                    st.rerun()
-                            else:
-                                st.error(f"❌ `{task_key}` o'chirishda xato - funksiya False qaytardi")
-                                logger.error(f"[{task_key}] delete_task False qaytardi")
-                        except Exception as e:
-                            st.error(f"❌ Xato: {str(e)}")
-                            import traceback
-                            st.code(traceback.format_exc())
-                            logger.error(f"[{task_key}] Delete exception: {e}", exc_info=True)
+                    # Tasdiqlash state'ga saqlash
+                    st.session_state.delete_confirm_task = {
+                        'task_id': task_key,
+                        'task_status': task['task_status'],
+                        'service1_status': task['service1_status'],
+                        'service2_status': task['service2_status']
+                    }
+                    st.rerun()
             finally:
                 if check_conn:
                     check_conn.close()
+
+    # Tasdiqlash dialog (agar delete_confirm_task set bo'lsa)
+    if st.session_state.delete_confirm_task:
+        task_info = st.session_state.delete_confirm_task
+        task_key = task_info['task_id']
+
+        st.warning(
+            f"**{task_key}** o'chiriladi: "
+            f"status={task_info['task_status']}, "
+            f"s1={task_info['service1_status']}, "
+            f"s2={task_info['service2_status']}"
+        )
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if st.button(f"✅ Ha, o'chirish", type="primary", key="confirm_delete_yes"):
+                try:
+                    from utils.database.task_db import delete_task, DB_FILE
+                    import logging
+
+                    # Logger yaratish
+                    logger = logging.getLogger(__name__)
+
+                    # DB_FILE va db_path bir xil ekanligini tekshirish
+                    if DB_FILE != db_path:
+                        st.warning(f"⚠️ DB path mos kelmaydi: {DB_FILE} vs {db_path}")
+                        logger.warning(f"DB path mismatch: {DB_FILE} vs {db_path}")
+
+                    logger.info(f"[{task_key}] UI'dan delete qilish boshlandi...")
+
+                    # Delete qilish
+                    success = delete_task(task_key)
+                    logger.info(f"[{task_key}] delete_task result: {success}")
+
+                    if success:
+                        # Kichik kutish (DB commit uchun)
+                        import time
+                        time.sleep(0.2)  # 200ms kutish
+
+                        # Delete qilinganini tekshirish - yangi connection (fresh data uchun)
+                        verify_conn = sqlite3.connect(db_path, timeout=30.0)
+                        # WAL mode checkpoint (agar WAL mode bo'lsa)
+                        verify_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                        verify_cursor = verify_conn.cursor()
+                        verify_cursor.execute("SELECT task_id FROM task_processing WHERE task_id = ?", (task_key,))
+                        still_exists = verify_cursor.fetchone()
+                        verify_conn.close()
+
+                        logger.info(f"[{task_key}] Verification: still_exists={still_exists}")
+
+                        if still_exists:
+                            st.error(f"❌ `{task_key}` o'chirilmadi - bazada hali ham mavjud! Qayta urinib ko'ring.")
+                            logger.error(f"[{task_key}] Task hali ham DB da mavjud!")
+                        else:
+                            # Success state
+                            st.session_state.delete_success = True
+                            st.session_state.delete_task_key = task_key
+                            st.session_state.delete_confirm_task = None  # Confirmation dialog'ni yopish
+                            # Input field'ni tozalash uchun counter'ni oshirish
+                            if 'delete_task_key_input_counter' not in st.session_state:
+                                st.session_state.delete_task_key_input_counter = 0
+                            st.session_state.delete_task_key_input_counter += 1
+                            logger.info(f"[{task_key}] ✅ UI'dan muvaffaqiyatli o'chirildi")
+                            st.rerun()
+                    else:
+                        st.error(f"❌ `{task_key}` o'chirishda xato - funksiya False qaytardi")
+                        logger.error(f"[{task_key}] delete_task False qaytardi")
+                except Exception as e:
+                    st.error(f"❌ Xato: {str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc())
+                    logger.error(f"[{task_key}] Delete exception: {e}", exc_info=True)
+
+        with col2:
+            if st.button("❌ Yo'q, bekor qilish", key="confirm_delete_no"):
+                st.session_state.delete_confirm_task = None
+                st.rerun()
