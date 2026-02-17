@@ -10,12 +10,12 @@ Version: 1.0
 """
 import sqlite3
 import os
-import logging
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 from pathlib import Path
+from core.logger import get_logger
 
-logger = logging.getLogger(__name__)
+log = get_logger("database")
 
 # Settings import (lazy loading to avoid circular imports)
 _settings_cache = None
@@ -28,7 +28,7 @@ def _get_db_settings():
             from config.app_settings import get_app_settings
             _settings_cache = get_app_settings(force_reload=False).queue
         except Exception as e:
-            logger.warning(f"Settings yuklanmadi, default ishlatiladi: {e}")
+            log.warning(f"Settings yuklanmadi, default ishlatiladi: {e}")
             # Default values
             class DefaultSettings:
                 db_busy_timeout = 30000
@@ -109,11 +109,11 @@ def init_db():
         
         conn.commit()
         conn.close()
-        
-        logger.info(f"✅ DB initialized: {DB_FILE}")
+
+        log.info(f"DB initialized: {DB_FILE}")
 
     except Exception as e:
-        logger.error(f"❌ DB initialization error: {e}", exc_info=True)
+        log.warning(f"DB initialization error: {e}")
         raise
 
 
@@ -132,11 +132,11 @@ def migrate_db_v2():
         columns = [row[1] for row in cursor.fetchall()]
 
         if 'assignee' in columns:
-            logger.info("✅ DB already migrated to v2")
+            log.info("DB already migrated to v2")
             conn.close()
             return
 
-        logger.info("🔄 DB migration to v2...")
+        log.info("DB migration to v2...")
 
         # Add new columns
         cursor.execute("ALTER TABLE task_processing ADD COLUMN assignee TEXT NULL")
@@ -162,10 +162,10 @@ def migrate_db_v2():
 
         conn.commit()
         conn.close()
-        logger.info("✅ DB migration v2 completed!")
+        log.info("DB migration v2 completed!")
 
     except Exception as e:
-        logger.error(f"❌ DB migration error: {e}", exc_info=True)
+        log.warning(f"DB migration error: {e}")
         raise
 
 
@@ -183,11 +183,11 @@ def migrate_db_v3():
         columns = [row[1] for row in cursor.fetchall()]
 
         if 'blocked_at' in columns:
-            logger.info("✅ DB already migrated to v3")
+            log.info("DB already migrated to v3")
             conn.close()
             return
 
-        logger.info("🔄 DB migration to v3...")
+        log.info("DB migration to v3...")
 
         cursor.execute("ALTER TABLE task_processing ADD COLUMN blocked_at DATETIME NULL")
         cursor.execute("ALTER TABLE task_processing ADD COLUMN blocked_retry_at DATETIME NULL")
@@ -195,10 +195,10 @@ def migrate_db_v3():
 
         conn.commit()
         conn.close()
-        logger.info("✅ DB migration v3 completed!")
+        log.info("DB migration v3 completed!")
 
     except Exception as e:
-        logger.error(f"❌ DB migration v3 error: {e}", exc_info=True)
+        log.warning(f"DB migration v3 error: {e}")
         raise
 
 
@@ -234,7 +234,7 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
         return None
 
     except Exception as e:
-        logger.error(f"[{task_id}] get_task error: {e}", exc_info=True)
+        log.warning(f"[{task_id}] get_task error: {e}")
         return None
 
 
@@ -283,12 +283,12 @@ def upsert_task(task_id: str, fields: Dict[str, Any]):
         conn.close()
 
     except sqlite3.OperationalError as e:
-        logger.error(f"[{task_id}] SQLite lock error: {e}", exc_info=True)
+        log.warning(f"[{task_id}] SQLite lock error: {e}")
         if 'locked' in str(e).lower():
-            logger.error(f"[{task_id}] Database locked, retry recommended")
+            log.warning(f"[{task_id}] Database locked, retry recommended")
         raise
     except Exception as e:
-        logger.error(f"[{task_id}] upsert_task error: {e}", exc_info=True)
+        log.warning(f"[{task_id}] upsert_task error: {e}")
         raise
 
 
@@ -580,7 +580,7 @@ def get_blocked_tasks_ready_for_retry() -> List[Dict[str, Any]]:
         return [dict(row) for row in rows]
 
     except Exception as e:
-        logger.error(f"get_blocked_tasks_ready_for_retry error: {e}", exc_info=True)
+        log.warning(f"get_blocked_tasks_ready_for_retry error: {e}")
         return []
 
 
@@ -627,24 +627,24 @@ def delete_task(task_id: str) -> bool:
             if still_exists:
                 conn.close()
                 conn = None
-                logger.error(f"[{task_id}] ❌ Task o'chirilmadi - DELETE qilgandan keyin hali ham mavjud!")
+                log.warning(f"[{task_id}] Task o'chirilmadi - DELETE qilgandan keyin hali ham mavjud!")
                 return False
             else:
                 conn.close()
                 conn = None
-                logger.info(f"[{task_id}] ✅ Task DB dan to'liq o'chirildi (deleted_count={deleted_count}, WAL checkpoint done)")
+                log.info(f"[{task_id}] Task DB dan to'liq o'chirildi (deleted_count={deleted_count}, WAL checkpoint done)")
                 return True
         else:
             conn.commit()
             conn.close()
             conn = None
-            logger.warning(f"[{task_id}] ⚠️ Task DB da topilmadi (o'chirish kerak emas)")
+            log.warning(f"[{task_id}] Task DB da topilmadi (o'chirish kerak emas)")
             return False
 
     except sqlite3.OperationalError as e:
-        logger.error(f"[{task_id}] SQLite lock error: {e}", exc_info=True)
+        log.warning(f"[{task_id}] SQLite lock error: {e}")
         if 'locked' in str(e).lower():
-            logger.error(f"[{task_id}] Database locked, retry recommended")
+            log.warning(f"[{task_id}] Database locked, retry recommended")
         if conn:
             try:
                 conn.rollback()
@@ -653,7 +653,7 @@ def delete_task(task_id: str) -> bool:
                 pass
         return False
     except Exception as e:
-        logger.error(f"[{task_id}] delete_task error: {e}", exc_info=True)
+        log.warning(f"[{task_id}] delete_task error: {e}")
         if conn:
             try:
                 conn.rollback()
@@ -816,13 +816,13 @@ def update_task_metadata(
             'technology_stack': technology_stack
         })
 
-        logger.info(
+        log.info(
             f"[{task_id}] Metadata: {assignee}, {task_type}, "
             f"{feature_name or 'N/A'}, {technology_stack or 'N/A'}"
         )
 
     except Exception as e:
-        logger.error(f"[{task_id}] Metadata update error: {e}")
+        log.warning(f"[{task_id}] Metadata update error: {e}")
 
 
 def get_stuck_tasks(timeout_minutes: int = 30) -> List[Dict[str, Any]]:
@@ -858,14 +858,14 @@ def get_stuck_tasks(timeout_minutes: int = 30) -> List[Dict[str, Any]]:
         return [dict(row) for row in rows]
 
     except Exception as e:
-        logger.error(f"get_stuck_tasks error: {e}", exc_info=True)
+        log.warning(f"get_stuck_tasks error: {e}")
         return []
 
 
 # DB initialization on import
 try:
     init_db()
-    migrate_db_v2()  # ✅ Auto-migrate to v2
-    migrate_db_v3()  # ✅ Auto-migrate to v3 (blocked status)
+    migrate_db_v2()
+    migrate_db_v3()
 except Exception as e:
-    logger.warning(f"DB initialization warning: {e}")
+    log.warning(f"DB initialization warning: {e}")

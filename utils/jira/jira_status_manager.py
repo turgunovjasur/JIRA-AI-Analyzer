@@ -14,11 +14,11 @@ from jira import JIRA
 import os
 from typing import List, Dict, Optional, Tuple
 from dotenv import load_dotenv
-import logging
+from core.logger import get_logger
 
 load_dotenv()
 
-logger = logging.getLogger(__name__)
+log = get_logger("jira.status")
 
 
 class JiraStatusManager:
@@ -34,9 +34,9 @@ class JiraStatusManager:
                     os.getenv('JIRA_API_TOKEN')
                 )
             )
-            logger.info("✅ JIRA Status Manager connected")
+            log.jira_connected("status management")
         except Exception as e:
-            logger.error(f"❌ JIRA connection failed: {e}")
+            log.error("SYSTEM", "JIRA initialization", str(e))
             self.jira = None
 
     def get_available_transitions(self, task_key: str) -> List[Dict]:
@@ -54,7 +54,7 @@ class JiraStatusManager:
             ]
         """
         if not self.jira:
-            logger.error("❌ JIRA client not initialized")
+            log.error("SYSTEM", "get_available_transitions", "JIRA client not initialized")
             return []
 
         try:
@@ -66,11 +66,11 @@ class JiraStatusManager:
                     "name": t['name'],
                     "to": t.get('to', {}).get('name', '')
                 })
-            logger.info(f"📋 {task_key} uchun {len(result)} ta transition mavjud")
+            log.jira_transitions_available(task_key, len(result))
             return result
 
         except Exception as e:
-            logger.error(f"❌ Transitions olishda xato: {e}")
+            log.error(task_key, "get_transitions", str(e))
             return []
 
     def find_transition_by_name(
@@ -103,7 +103,7 @@ class JiraStatusManager:
             if target_lower in t['name'].lower() or target_lower in t['to'].lower():
                 return t['id']
 
-        logger.warning(f"⚠️ '{target_status}' transition topilmadi")
+        log.warning(f"[{task_key}] TRANSITION-NOT-FOUND -> '{target_status}'")
         return None
 
     def change_status(
@@ -145,12 +145,12 @@ class JiraStatusManager:
             else:
                 self.jira.transition_issue(task_key, transition_id)
 
-            logger.info(f"✅ {task_key} → {new_status}")
+            log.jira_transitioned(task_key, new_status)
             return True, f"Status o'zgartirildi: {new_status}"
 
         except Exception as e:
             error_msg = str(e)
-            logger.error(f"❌ Status o'zgartirishda xato: {error_msg}")
+            log.error(task_key, "change_status", error_msg)
             return False, f"Xato: {error_msg}"
 
     def get_current_status(self, task_key: str) -> Optional[str]:
@@ -171,7 +171,7 @@ class JiraStatusManager:
             return issue.fields.status.name
 
         except Exception as e:
-            logger.error(f"❌ Status olishda xato: {e}")
+            log.error(task_key, "get_current_status", str(e))
             return None
 
     def auto_return_if_needed(

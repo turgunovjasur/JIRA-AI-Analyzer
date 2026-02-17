@@ -13,11 +13,11 @@ import os
 import requests
 from typing import Dict, Optional
 from dotenv import load_dotenv
-import logging
+from core.logger import get_logger
 
 load_dotenv()
 
-logger = logging.getLogger(__name__)
+log = get_logger("jira.comment")
 
 
 class JiraCommentWriter:
@@ -35,9 +35,9 @@ class JiraCommentWriter:
                 server=self.server,
                 basic_auth=(self.email, self.api_token)
             )
-            logger.info("✅ JIRA connected for commenting")
+            log.jira_connected("commenting")
         except Exception as e:
-            logger.error(f"❌ JIRA connection failed: {e}")
+            log.error("INIT", "JIRA connection", f"Connection failed: {e}")
             self.jira = None
 
         # REST API session (ADF format uchun)
@@ -78,16 +78,17 @@ class JiraCommentWriter:
             response = self.session.post(url, json=payload)
 
             if response.status_code == 201:
-                logger.info(f"✅ ADF Comment added to {task_key}")
+                log.info(f"Comment added to {task_key}")
                 return True
             else:
-                logger.error(
-                    f"❌ ADF Comment failed: {response.status_code} - {response.text}"
+                log.error(
+                    task_key, "ADF comment",
+                    f"Failed: {response.status_code} - {response.text}"
                 )
                 return False
 
         except Exception as e:
-            logger.error(f"❌ ADF Comment error for {task_key}: {e}")
+            log.error(task_key, "ADF comment", str(e))
             return False
 
     def add_comment(self, task_key: str, comment_text: str) -> bool:
@@ -102,18 +103,18 @@ class JiraCommentWriter:
             True - success, False - failed
         """
         if not self.jira:
-            logger.error("❌ JIRA client not initialized")
+            log.error("UNKNOWN", "add_comment", "JIRA client not initialized")
             return False
 
         try:
             # Comment qo'shish
             self.jira.add_comment(task_key, comment_text)
 
-            logger.info(f"✅ Comment added to {task_key}")
+            log.info(f"Comment added to {task_key}")
             return True
 
         except Exception as e:
-            logger.error(f"❌ Failed to add comment to {task_key}: {e}")
+            log.error(task_key, "add_comment", str(e))
             return False
 
     def add_comment_with_visibility(
@@ -150,11 +151,11 @@ class JiraCommentWriter:
                 visibility=visibility
             )
 
-            logger.info(f"✅ Restricted comment added to {task_key}")
+            log.info(f"Restricted comment added to {task_key}")
             return True
 
         except Exception as e:
-            logger.error(f"❌ Failed to add restricted comment: {e}")
+            log.error(task_key, "restricted_comment", str(e))
             return False
 
     def update_comment(
@@ -176,9 +177,9 @@ class JiraCommentWriter:
             comment = self.jira.comment(comment_id)
             comment.update(body=new_text)
 
-            logger.info(f"✅ Comment {comment_id} updated")
+            log.info(f"Comment {comment_id} updated")
             return True
 
         except Exception as e:
-            logger.error(f"❌ Failed to update comment: {e}")
+            log.error("UNKNOWN", "update_comment", str(e))
             return False

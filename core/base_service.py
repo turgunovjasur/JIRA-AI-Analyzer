@@ -12,6 +12,10 @@ Xususiyatlari:
 """
 
 from typing import Optional, Callable
+from core.logger import get_logger
+
+# Logger instance
+log = get_logger("base.service")
 
 # Settings cache (lazy loading)
 _settings_cache = None
@@ -119,10 +123,15 @@ class BaseService:
         """
 
         def update_status(status_type: str, message: str):
-            """Status update with callback and console logging"""
+            """Status update with callback and logging"""
             if status_callback:
                 status_callback(status_type, message)
-            print(f"[{status_type.upper()}] {message}")
+
+            # Log based on status_type
+            if status_type.lower() == "error":
+                log.warning(message)
+            else:
+                log.info(message)
 
         return update_status
 
@@ -170,6 +179,6 @@ class BaseService:
 
         # Qisqartirish bilan warning
         truncated = text[:max_chars]
-        warning = f"\n\n⚠️ [TEXT TRUNCATED: {len(text)} -> {max_chars} chars]"
+        warning = f"\n\n[TEXT TRUNCATED: {len(text)} -> {max_chars} chars]"
 
         return truncated + warning

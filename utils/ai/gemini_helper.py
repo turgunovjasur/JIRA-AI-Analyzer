@@ -2,11 +2,11 @@ import google.generativeai as genai
 import os
 from dotenv import load_dotenv
 import time
-import logging
+from core.logger import get_logger
 
 load_dotenv()
 
-logger = logging.getLogger(__name__)
+log = get_logger("ai.gemini")
 
 # Settings cache (lazy loading)
 _settings_cache = None
@@ -19,7 +19,7 @@ def _get_gemini_settings():
             from config.app_settings import get_app_settings
             _settings_cache = get_app_settings(force_reload=False).queue
         except Exception as e:
-            logger.warning(f"Settings yuklanmadi, default ishlatiladi: {e}")
+            log.warning(f"Settings yuklanmadi, default ishlatiladi: {e}")
             # Default values
             class DefaultSettings:
                 gemini_min_interval = 6
@@ -67,11 +67,8 @@ class GeminiHelper:
         self.last_request_time = 0
 
         # Log
-        key_status = "1 ta key"
-        if self.api_key_2:
-            key_status = "2 ta key (fallback mavjud)"
-        logger.info(f"Gemini AI tayyor: {self.model_name} | {key_status}")
-        print(f"Gemini AI tayyor: {self.model_name} | {key_status}")
+        key_count = 2 if self.api_key_2 else 1
+        log.ai_ready(self.model_name, key_count)
 
     def _rate_limit(self):
         """Rate limiting: max 10 req/min (settings dan)"""
@@ -81,7 +78,8 @@ class GeminiHelper:
         elapsed = time.time() - self.last_request_time
         if elapsed < min_interval:
             wait_time = min_interval - elapsed
-            print(f"Kutish: {wait_time:.1f} sekund...")
+            key_name = "KEY_2" if self.using_fallback else "KEY_1"
+            log.ai_rate_limit(key_name, int(wait_time))
             time.sleep(wait_time)
 
         self.last_request_time = time.time()
@@ -103,9 +101,7 @@ class GeminiHelper:
         settings = _get_gemini_settings()
         freeze_duration = settings.key_freeze_duration
         self._key1_frozen_until = time.time() + freeze_duration
-        remaining_min = freeze_duration / 60
-        logger.warning(f"🔒 KEY_1 muzlatildi: {remaining_min:.0f} daqiqaga")
-        print(f"🔒 KEY_1 muzlatildi: {remaining_min:.0f} daqiqaga")
+        log.warning(f"KEY_1 muzlatildi: {int(freeze_duration / 60)} daqiqaga")
 
     def _unfreeze_key1(self):
         """KEY_1 ni qayta faollashtirish va primary key ga qaytish"""
@@ -114,8 +110,7 @@ class GeminiHelper:
         self.current_key = self.api_key_1
         genai.configure(api_key=self.current_key)
         self.model = genai.GenerativeModel(self.model_name)
-        logger.info("🔓 KEY_1 qayta faollashtirildi (muzlatish muddati tugadi)")
-        print("🔓 KEY_1 qayta faollashtirildi (muzlatish muddati tugadi)")
+        log.info("KEY_1 qayta faollashtirildi (muzlatish muddati tugadi)")
 
     def _switch_to_fallback(self) -> bool:
         """
@@ -125,8 +120,7 @@ class GeminiHelper:
             bool: True — muvaffaqiyatli o'tdi, False — imkonsiz
         """
         if not self.api_key_2:
-            logger.warning("❌ GOOGLE_API_KEY_2 .env da mavjud emas, fallback imkonsiz")
-            print("❌ GOOGLE_API_KEY_2 .env da mavjud emas, fallback imkonsiz")
+            log.warning("GOOGLE_API_KEY_2 .env da mavjud emas, fallback imkonsiz")
             return False
 
         if self.using_fallback:
@@ -139,8 +133,7 @@ class GeminiHelper:
         genai.configure(api_key=self.current_key)
         self.model = genai.GenerativeModel(self.model_name)
 
-        logger.info("🔄 GOOGLE_API_KEY_2 ga o'tildi (fallback)")
-        print("🔄 GOOGLE_API_KEY_2 ga o'tildi (fallback)")
+        log.ai_key_fallback("KEY_1", "KEY_2")
         return True
 
     def analyze(self, prompt, max_output_tokens=8192):
@@ -167,7 +160,7 @@ class GeminiHelper:
         # === 1. KEY_1 muzlatilgan — faqat KEY_2 bilan ishlash ===
         if self._is_key1_frozen():
             remaining = self._key1_frozen_until - time.time()
-            logger.info(f"🔒 KEY_1 muzlatilgan ({remaining:.0f}s qoldi), KEY_2 bilan ishlash")
+            log.info(f"KEY_1 muzlatilgan ({int(remaining)}s qoldi), KEY_2 bilan ishlash")
 
             # KEY_2 ga o'tish (agar hali o'tmagan bo'lsa)
             if not self.using_fallback:
@@ -180,7 +173,7 @@ class GeminiHelper:
                 response = self.model.generate_content(prompt, generation_config=generation_config)
                 return response.text
             except Exception as e:
-                logger.error(f"❌ KEY_2 xato (KEY_1 muzlatilgan): {e}")
+                log.warning(f"KEY_2 xato (KEY_1 muzlatilgan): {e}")
                 raise RuntimeError(
                     f"KEY_2 ham xato berdi (KEY_1 muzlatilgan): {str(e)}"
                 ) from e
@@ -200,25 +193,22 @@ class GeminiHelper:
         except Exception as e:
             # === 4. KEY_1 xato — muzlatish va KEY_2 ga o'tish ===
             if self._is_fallback_error(e):
-                logger.warning(f"⚠️ KEY_1 xato: {e}")
-                print(f"⚠️ KEY_1 xato: {e}")
+                log.warning(f"KEY_1 xato: {e}")
 
                 # KEY_1 ni muzlatish
                 self._freeze_key1()
 
                 if self._switch_to_fallback():
-                    logger.info("🔄 KEY_2 bilan qayta urinish...")
-                    print("🔄 KEY_2 bilan qayta urinish...")
+                    log.info("KEY_2 bilan qayta urinish...")
 
                     # KEY_2 bilan qayta urinish
                     self._rate_limit()
                     try:
                         response = self.model.generate_content(prompt, generation_config=generation_config)
-                        logger.info("✅ KEY_2 bilan muvaffaqiyatli!")
-                        print("✅ KEY_2 bilan muvaffaqiyatli!")
+                        log.info("KEY_2 bilan muvaffaqiyatli!")
                         return response.text
                     except Exception as e2:
-                        logger.error(f"❌ KEY_2 ham xato berdi: {e2}")
+                        log.warning(f"KEY_2 ham xato berdi: {e2}")
                         raise RuntimeError(
                             f"Gemini API xatosi (ikkala key ham ishlamadi): {str(e2)}"
                         ) from e2

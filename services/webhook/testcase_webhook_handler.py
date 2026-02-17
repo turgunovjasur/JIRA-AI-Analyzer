@@ -8,10 +8,10 @@ Ready to Test statusga tushganda ishga tushadi.
 Author: JASUR TURGUNOV
 Version: 1.0
 """
-import logging
 from typing import Optional, Tuple
+from core.logger import get_logger
 
-logger = logging.getLogger(__name__)
+log = get_logger("testcase.webhook")
 
 
 async def check_and_generate_testcases(
@@ -42,19 +42,19 @@ async def check_and_generate_testcases(
 
     # 1. Auto-comment yoqilganmi?
     if not tc_settings.auto_comment_enabled:
-        logger.info(f"[{task_key}] Testcase auto-comment disabled, skipping")
+        log.service_skipped(task_key, "TestCase", "auto-comment disabled")
         return False, "Auto-comment disabled"
 
     # 2. Trigger status tekshirish
     trigger_statuses = tc_settings.get_trigger_statuses()
     if new_status not in trigger_statuses:
-        logger.info(f"[{task_key}] Status '{new_status}' not in trigger list: {trigger_statuses}")
+        log.status_ignored(task_key, new_status, f"not in trigger list: {trigger_statuses}")
         return False, f"Status '{new_status}' is not a trigger"
 
     # include_pr: None → settingsdan, False → TZ-only
     use_pr = include_pr if include_pr is not None else tc_settings.default_include_pr
 
-    logger.info(f"[{task_key}] Generating testcases for status: {new_status} (include_pr={use_pr})")
+    log.service_started(task_key, f"TestCase | status={new_status} | include_pr={use_pr}")
 
     try:
         # 3. Test case'lar yaratish
@@ -68,25 +68,20 @@ async def check_and_generate_testcases(
             use_smart_patch=tc_settings.default_use_smart_patch,
             test_types=tc_settings.default_test_types,
             custom_context="",
-            status_callback=lambda t, m: logger.info(f"[{task_key}] {t}: {m}")
+            status_callback=lambda t, m: log.info(f"[{task_key}] {t}: {m}")
         )
 
         if not result.success:
             error_msg = f"Test case generation failed: {result.error_message}"
-            logger.error(f"[{task_key}] {error_msg}")
+            log.service_failed(task_key, "TestCase", error_msg)
             return False, error_msg
 
         if not result.test_cases:
-            logger.warning(
-                "[%s] No test cases generated | pr_count=%d | tz_content_len=%d | warnings=%s",
-                task_key,
-                result.pr_count,
-                len(result.tz_content) if result.tz_content else 0,
-                result.warnings
-            )
+            details = f"pr_count={result.pr_count} | tz_len={len(result.tz_content) if result.tz_content else 0} | warnings={result.warnings}"
+            log.warning(f"[{task_key}] No test cases generated | {details}")
             return False, "No test cases generated"
 
-        logger.info(f"[{task_key}] Generated {len(result.test_cases)} test cases")
+        log.service_completed(task_key, "TestCase", f"generated {len(result.test_cases)} test cases")
 
         # 4. JIRA ga yozish
         success, message = _write_testcases_comment(
@@ -99,7 +94,7 @@ async def check_and_generate_testcases(
 
     except Exception as e:
         error_msg = f"Testcase generation error: {str(e)}"
-        logger.exception(f"[{task_key}] {error_msg}")
+        log.error(task_key, "testcase generation", str(e))
         return False, error_msg
 
 
@@ -141,7 +136,7 @@ def _write_testcases_comment(
 
             if not success:
                 # Fallback to simple format
-                logger.warning(f"[{task_key}] ADF failed, falling back to simple format")
+                log.warning(f"[{task_key}] ADF failed, falling back to simple format")
                 simple_comment = formatter.build_simple_comment(
                     task_key=task_key,
                     test_cases=result.test_cases
@@ -157,16 +152,16 @@ def _write_testcases_comment(
 
         if success:
             message = f"Successfully wrote {len(result.test_cases)} test cases to JIRA"
-            logger.info(f"[{task_key}] {message}")
+            log.jira_comment_added(task_key, "TestCase ADF" if use_adf else "TestCase Simple")
             return True, message
         else:
             message = "Failed to write comment to JIRA"
-            logger.error(f"[{task_key}] {message}")
+            log.jira_comment_failed(task_key, message)
             return False, message
 
     except Exception as e:
         message = f"Error writing to JIRA: {str(e)}"
-        logger.exception(f"[{task_key}] {message}")
+        log.error(task_key, "JIRA comment write", str(e))
         return False, message
 
 
@@ -210,7 +205,7 @@ def generate_testcases_sync(
                 check_and_generate_testcases(task_key, new_status)
             )
     except Exception as e:
-        logger.exception(f"[{task_key}] Sync execution error: {str(e)}")
+        log.error(task_key, "sync execution", str(e))
         return False, f"Execution error: {str(e)}"
 
 

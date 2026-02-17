@@ -18,9 +18,9 @@ import json
 import os
 from dataclasses import dataclass, field, asdict
 from typing import Optional, List
-import logging
+from core.logger import get_logger
 
-logger = logging.getLogger(__name__)
+log = get_logger("config.settings")
 
 # Sozlamalar fayli joylashuvi
 SETTINGS_FILE = os.path.join(
@@ -427,7 +427,6 @@ class AppSettingsManager:
         """Eski TZ-PR sozlamalarini yangi formatga o'tkazish"""
         if os.path.exists(OLD_SETTINGS_FILE) and not os.path.exists(SETTINGS_FILE):
             try:
-                logger.info("Eski sozlamalarni yangi formatga o'tkazish...")
                 with open(OLD_SETTINGS_FILE, 'r', encoding='utf-8') as f:
                     old_data = json.load(f)
 
@@ -455,10 +454,10 @@ class AppSettingsManager:
                 # Yangi formatda saqlash
                 self._settings = new_settings
                 self.save_settings(new_settings)
-                logger.info("Migratsiya muvaffaqiyatli!")
+                log.info("Settings migration completed successfully")
 
             except Exception as e:
-                logger.warning(f"Migratsiyada xato: {e}")
+                log.warning(f"Settings migration failed: {e}")
 
     def _load_settings(self) -> AppSettings:
         """Sozlamalarni fayldan yuklash"""
@@ -481,7 +480,7 @@ class AppSettingsManager:
                         tc_data['read_comments_enabled'] = old_comment.get('read_comments_enabled', True)
                         tc_data['max_comments_to_read'] = old_comment.get('max_comments_to_read', 0)
                         data['testcase_generator'] = tc_data
-                    logger.info("Comment O'qish sozlamalari modullar ichiga migratsiya qilindi")
+                    log.info("Comment reading settings migrated to modules")
 
                 # Nested dataclass'larni yaratish
                 settings = AppSettings(
@@ -493,14 +492,11 @@ class AppSettingsManager:
                     queue=QueueSettings(**data.get('queue', {}))
                 )
 
-                # Log faqat DEBUG level'da (har safar log yozilmasligi uchun)
-                logger.debug(f"Sozlamalar yuklandi: {SETTINGS_FILE}")
                 return settings
             else:
-                logger.debug("Sozlamalar fayli topilmadi, default ishlatiladi")
                 return AppSettings()
         except Exception as e:
-            logger.warning(f"Sozlamalarni yuklashda xato: {e}, default ishlatiladi")
+            log.warning(f"Failed to load settings: {e}, using defaults")
             return AppSettings()
 
     def _settings_to_dict(self, settings: AppSettings) -> dict:
@@ -531,10 +527,10 @@ class AppSettingsManager:
 
             # Cache'ni yangilash (yoki tozalash - har safar fayldan o'qish uchun)
             self._settings = settings
-            logger.info(f"Sozlamalar saqlandi: {SETTINGS_FILE}")
+            log.info("Settings saved successfully")
             return True
         except Exception as e:
-            logger.error(f"Sozlamalarni saqlashda xato: {e}")
+            log.error(f"Failed to save settings: {e}")
             return False
 
     def get_settings(self, force_reload: bool = False) -> AppSettings:

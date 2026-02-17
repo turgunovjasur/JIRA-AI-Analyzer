@@ -2,7 +2,7 @@
 """
 GitHub API Client - PR va kod olish
 
-🔥 FIX: contents_url qo'shildi (Smart Patch uchun)
+FIX: contents_url qo'shildi (Smart Patch uchun)
 
 YANGI: Branch name bilan ham PR qidirish!
 """
@@ -11,6 +11,10 @@ import base64
 import re
 from typing import List, Dict, Optional, Tuple
 import time
+
+from core.logger import get_logger
+
+log = get_logger("github.client")
 
 
 class GitHubClient:
@@ -53,7 +57,7 @@ class GitHubClient:
         if self.rate_limit_remaining < 10:
             wait_time = self.rate_limit_reset - time.time()
             if wait_time > 0:
-                print(f"⏳ Rate limit kutish: {wait_time:.0f} sekund")
+                log.warning(f"Rate limit kutish: {wait_time:.0f} sekund")
                 time.sleep(wait_time + 1)
 
         # Get timeout from settings
@@ -101,7 +105,7 @@ class GitHubClient:
         response = self._make_request(url)
 
         if response.status_code != 200:
-            print(f"❌ PR info olishda xatolik: {response.status_code}")
+            log.error(f"PR info olishda xatolik: {response.status_code}")
             return None
 
         data = response.json()
@@ -127,7 +131,7 @@ class GitHubClient:
         """
         PR da o'zgargan fayllar ro'yxatini olish
 
-        🔥 FIX: contents_url qo'shildi - Smart Patch uchun kerak!
+        FIX: contents_url qo'shildi - Smart Patch uchun kerak!
         """
         url = f'{self.base_url}/repos/{owner}/{repo}/pulls/{pr_number}/files'
 
@@ -140,7 +144,7 @@ class GitHubClient:
             response = self._make_request(paginated_url)
 
             if response.status_code != 200:
-                print(f"❌ PR files olishda xatolik: {response.status_code}")
+                log.error(f"PR files olishda xatolik: {response.status_code}")
                 break
 
             files = response.json()
@@ -157,7 +161,7 @@ class GitHubClient:
                     'patch': f.get('patch', ''),
                     'blob_url': f.get('blob_url', ''),
                     'raw_url': f.get('raw_url', ''),
-                    'contents_url': f.get('contents_url', ''),  # 🔥 QO'SHILDI! Smart Patch uchun
+                    'contents_url': f.get('contents_url', ''),  # QO'SHILDI! Smart Patch uchun
                     'sha': f.get('sha', ''),
                     'previous_filename': f.get('previous_filename', '')
                 })
@@ -174,7 +178,7 @@ class GitHubClient:
         response = self._make_request(url)
 
         if response.status_code != 200:
-            print(f"❌ File content olishda xatolik: {response.status_code} - {path}")
+            log.error(f"File content olishda xatolik: {response.status_code} - {path}")
             return None
 
         data = response.json()
@@ -185,14 +189,14 @@ class GitHubClient:
             try:
                 return base64.b64decode(content).decode('utf-8')
             except Exception as e:
-                print(f"⚠️ Decode xatolik: {e}")
+                log.warning(f"Decode xatolik: {e}")
                 return None
 
         return None
 
     def get_file_content_by_sha(self, owner: str, repo: str, sha: str) -> Optional[str]:
         """
-        🔥 YANGI: Blob API orqali fayl content olish
+        YANGI: Blob API orqali fayl content olish
 
         Bu usul private repositorylar uchun ishlaydi!
         """
@@ -200,7 +204,7 @@ class GitHubClient:
         response = self._make_request(url)
 
         if response.status_code != 200:
-            print(f"❌ Blob olishda xatolik: {response.status_code}")
+            log.error(f"Blob olishda xatolik: {response.status_code}")
             return None
 
         data = response.json()
@@ -211,7 +215,7 @@ class GitHubClient:
                 try:
                     return base64.b64decode(content_b64).decode('utf-8', errors='ignore')
                 except Exception as e:
-                    print(f"⚠️ Blob decode xatolik: {e}")
+                    log.warning(f"Blob decode xatolik: {e}")
                     return None
 
         return None
@@ -267,11 +271,11 @@ class GitHubClient:
         try:
             rate_info = self.check_rate_limit()
             if rate_info:
-                print(f"✅ GitHub ulandi!")
-                print(f"   Rate limit: {rate_info['remaining']}/{rate_info['limit']}")
+                log.info(f"GitHub ulandi!")
+                log.info(f"Rate limit: {rate_info['remaining']}/{rate_info['limit']}")
                 return True
         except Exception as e:
-            print(f"❌ GitHub ulanish xatosi: {e}")
+            log.error(f"GitHub ulanish xatosi: {e}")
 
         return False
 
@@ -289,7 +293,7 @@ class GitHubClient:
 
         # Strategy 1: Search in title and body
         query1 = f'org:{self.org} "{jira_key}" is:pr'
-        print(f"   🔎 GitHub Search (title/body): {query1}")
+        log.info(f"GitHub Search (title/body): {query1}")
 
         try:
             response1 = self._make_request(url, params={'q': query1, 'sort': 'updated'})
@@ -305,15 +309,15 @@ class GitHubClient:
                     })
 
                 if items:
-                    print(f"   ✅ Title/body search: {len(items)} ta topildi!")
+                    log.info(f"Title/body search: {len(items)} ta topildi!")
             else:
-                print(f"   ⚠️ Title/body search error: {response1.status_code}")
+                log.warning(f"Title/body search error: {response1.status_code}")
         except Exception as e:
-            print(f"   ⚠️ Title/body search exception: {e}")
+            log.warning(f"Title/body search exception: {e}")
 
         # Strategy 2: Search in branch names (if not found in title/body)
         if not found_prs:
-            print(f"   🔎 Branch name search...")
+            log.info(f"Branch name search...")
 
             # Common branch patterns
             branch_patterns = [
@@ -346,10 +350,10 @@ class GitHubClient:
 
                         # If found, break
                         if items:
-                            print(f"   ✅ Branch search: {len(items)} ta topildi (pattern: {pattern})!")
+                            log.info(f"Branch search: {len(items)} ta topildi (pattern: {pattern})!")
                             break
                 except Exception as e:
-                    print(f"   ⚠️ Branch search exception ({pattern}): {e}")
+                    log.warning(f"Branch search exception ({pattern}): {e}")
                     continue
 
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -374,9 +378,9 @@ class GitHubClient:
 
         # Final result
         if found_prs:
-            print(f"   ✅ JAMI: {len(found_prs)} ta PR topildi!")
+            log.info(f"JAMI: {len(found_prs)} ta PR topildi!")
         else:
-            print(f"   ❌ Hech qanday PR topilmadi")
+            log.warning(f"Hech qanday PR topilmadi")
 
         return found_prs
 
@@ -416,7 +420,7 @@ class GitHubClient:
         if not all([owner, repo, pr_number]):
             return False, "URL parse failed"
 
-        print(f"   🔍 Verifying PR #{pr_number} ({owner}/{repo})...")
+        log.info(f"Verifying PR #{pr_number} ({owner}/{repo})...")
 
         pr_info = self.get_pr_info(owner, repo, pr_number)
         if not pr_info:
@@ -455,7 +459,7 @@ class GitHubClient:
         """
         found = []
         query = f'org:{self.org} {numeric_part} is:pr'
-        print(f"   🔎 Numeric search: {query} (from {jira_key})")
+        log.info(f"Numeric search: {query} (from {jira_key})")
 
         try:
             response = self._make_request(search_url, params={
@@ -465,11 +469,11 @@ class GitHubClient:
             })
 
             if response.status_code != 200:
-                print(f"   ⚠️ Numeric search error: {response.status_code}")
+                log.warning(f"Numeric search error: {response.status_code}")
                 return found
 
             items = response.json().get('items', [])
-            print(f"   🔎 Numeric search: {len(items)} candidate(s) found, verifying...")
+            log.info(f"Numeric search: {len(items)} candidate(s) found, verifying...")
 
             for item in items:
                 pr_url = item.get('html_url')
@@ -479,7 +483,7 @@ class GitHubClient:
                 is_match, reason = self._verify_pr_for_ticket(pr_url, numeric_part, jira_key)
 
                 if is_match:
-                    print(f"   ✅ PR matched: {reason}")
+                    log.info(f"PR matched: {reason}")
                     found.append({
                         'url': pr_url,
                         'title': item.get('title'),
@@ -488,13 +492,13 @@ class GitHubClient:
                     })
                     break  # First valid match is enough
                 else:
-                    print(f"   ⏭️  PR rejected: {reason}")
+                    log.info(f"PR rejected: {reason}")
 
             if not found:
-                print(f"   ⏭️  Numeric search: all candidates rejected")
+                log.info(f"Numeric search: all candidates rejected")
 
         except Exception as e:
-            print(f"   ⚠️ Numeric search exception: {e}")
+            log.warning(f"Numeric search exception: {e}")
 
         return found
 
@@ -540,7 +544,7 @@ class GitHubClient:
                 seen.add(p)
                 unique_patterns.append(p)
 
-        print(f"   🔎 Extended branch patterns (numeric): {len(unique_patterns)} patterns...")
+        log.info(f"Extended branch patterns (numeric): {len(unique_patterns)} patterns...")
 
         for pattern in unique_patterns:
             query = f'org:{self.org} head:{pattern} is:pr'
@@ -561,15 +565,15 @@ class GitHubClient:
                             })
 
                     if items:
-                        print(f"   ✅ Extended branch: {len(items)} ta topildi (pattern: {pattern})!")
+                        log.info(f"Extended branch: {len(items)} ta topildi (pattern: {pattern})!")
                         break  # Found — stop trying patterns
 
             except Exception as e:
-                print(f"   ⚠️ Extended branch exception ({pattern}): {e}")
+                log.warning(f"Extended branch exception ({pattern}): {e}")
                 continue
 
         if not found:
-            print(f"   ⏭️  Extended branch patterns: nothing found")
+            log.info(f"Extended branch patterns: nothing found")
 
         return found
 
@@ -588,7 +592,7 @@ class GitHubClient:
         if response.status_code == 200:
             return response.json()
 
-        print(f"   ⚠️ Org repos olishda xatolik: {response.status_code}")
+        log.warning(f"Org repos olishda xatolik: {response.status_code}")
         return []
 
     def _search_by_repo_listing(self, jira_key: str, numeric_part: str) -> List[Dict]:

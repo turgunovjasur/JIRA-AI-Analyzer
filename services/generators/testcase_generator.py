@@ -15,12 +15,12 @@ Version: 6.0 CUSTOM CONTEXT
 from typing import Dict, List, Optional, Callable
 from dataclasses import dataclass, field
 import json
-import logging
 
 # Core imports
 from core import BaseService, PRHelper, TZHelper
+from core.logger import get_logger
 
-logger = logging.getLogger(__name__)
+log = get_logger("testcase.gen")
 
 
 @dataclass
@@ -116,7 +116,7 @@ class TestCaseGeneratorService(BaseService):
             if not test_types:
                 test_types = ['positive', 'negative']
 
-            update_status("info", f"🔍 {task_key} tahlil qilinmoqda...")
+            update_status("info", f"{task_key} tahlil qilinmoqda...")
 
             # 1. JIRA dan task olish
             task_details = self.jira.get_task_details(task_key)
@@ -125,7 +125,7 @@ class TestCaseGeneratorService(BaseService):
                     task_key=task_key,
                     task_summary="",
                     success=False,
-                    error_message=f"❌ {task_key} topilmadi"
+                    error_message=f"{task_key} topilmadi"
                 )
 
             # 2. TZ va Comment tahlili (TZHelper ishlatamiz)
@@ -144,7 +144,7 @@ class TestCaseGeneratorService(BaseService):
                     task_details, max_comments=max_c
                 )
 
-            update_status("success", f"✅ TZ: {len(task_details.get('comments', []))} comment")
+            update_status("success", f"TZ: {len(task_details.get('comments', []))} comment")
 
             # 3. PR ma'lumotlari (PRHelper ishlatamiz - Smart Patch bilan)
             warnings = []
@@ -159,18 +159,18 @@ class TestCaseGeneratorService(BaseService):
                         use_smart_patch=use_smart_patch  # Smart Patch parametri
                     )
                 except Exception as pr_e:
-                    logger.warning(f"[{task_key}] PR fetch xatosi: {pr_e}")
+                    log.warning(f"[{task_key}] PR fetch xatosi: {pr_e}")
                     pr_info = None
 
                 if pr_info:
-                    update_status("success", f"✅ PR: {pr_info['pr_count']} ta")
+                    update_status("success", f"PR: {pr_info['pr_count']} ta")
                     pr_details_list = pr_info.get('pr_details', [])
                 else:
                     warnings.append(
-                        "⚠️ PR ma'lumoti topilmadi yoki olishda xato yuz berdi. "
+                        "PR ma'lumoti topilmadi yoki olishda xato yuz berdi. "
                         "Test case'lar faqat TZ asosida yaratilgan."
                     )
-                    update_status("warning", "⚠️ PR topilmadi, TZ asosida davom etilmoqda...")
+                    update_status("warning", "PR topilmadi, TZ asosida davom etilmoqda...")
 
             # 4. Overview yaratish (TZHelper ishlatamiz)
             overview = TZHelper.create_task_overview(
@@ -180,7 +180,7 @@ class TestCaseGeneratorService(BaseService):
             )
 
             # 5. AI bilan test case'lar yaratish (WITH CUSTOM CONTEXT)
-            update_status("progress", "🤖 AI test case'lar yaratmoqda...")
+            update_status("progress", "AI test case'lar yaratmoqda...")
 
             from config.app_settings import get_app_settings
             max_test_cases = get_app_settings().testcase_generator.max_test_cases
@@ -210,10 +210,8 @@ class TestCaseGeneratorService(BaseService):
             test_cases = self._parse_test_cases(ai_result['raw_response'])
 
             if not test_cases:
-                logger.warning(
-                    "[%s] AI javob parse'da 0 test case. Raw response (2000 char): %s",
-                    task_key,
-                    ai_result['raw_response'][:2000]
+                log.warning(
+                    f"[{task_key}] AI javob parse'da 0 test case. Raw response (2000 char): {ai_result['raw_response'][:2000]}"
                 )
 
             # Statistika
@@ -223,7 +221,7 @@ class TestCaseGeneratorService(BaseService):
                 by_type[tc.test_type] = by_type.get(tc.test_type, 0) + 1
                 by_priority[tc.priority] = by_priority.get(tc.priority, 0) + 1
 
-            update_status("success", f"✅ {len(test_cases)} ta test case yaratildi!")
+            update_status("success", f"{len(test_cases)} ta test case yaratildi!")
 
             return TestCaseGenerationResult(
                 task_key=task_key,
@@ -248,12 +246,12 @@ class TestCaseGeneratorService(BaseService):
 
         except Exception as e:
             import traceback
-            print(traceback.format_exc())
+            log.error(task_key, "generate_test_cases", traceback.format_exc())
             return TestCaseGenerationResult(
                 task_key=task_key,
                 task_summary="",
                 success=False,
-                error_message=f"❌ {str(e)}"
+                error_message=f"Error: {str(e)}"
             )
 
     def _generate_with_ai(
@@ -487,7 +485,7 @@ Endi {len(test_types)} xil test ({types_text}) uchun test case'lar yarating!
             json_end = raw_response.rfind('}') + 1
 
             if json_start == -1 or json_end == 0:
-                print("JSON topilmadi!")
+                log.warning("JSON topilmadi!")
                 return []
 
             json_str = raw_response[json_start:json_end]
@@ -505,11 +503,9 @@ Endi {len(test_types)} xil test ({types_text}) uchun test case'lar yarating!
             )
 
             if not tc_list:
-                logger.warning(
-                    "JSON parse OK, lekin test case kaidi topilmadi. "
-                    "Mavjud kaidlar: %s | Raw response (2000 char): %s",
-                    list(data.keys()),
-                    raw_response[:2000]
+                log.warning(
+                    f"JSON parse OK, lekin test case kaidi topilmadi. "
+                    f"Mavjud kaidlar: {list(data.keys())} | Raw response (2000 char): {raw_response[:2000]}"
                 )
 
             for tc_data in tc_list:
@@ -528,12 +524,12 @@ Endi {len(test_types)} xil test ({types_text}) uchun test case'lar yarating!
                     )
                     test_cases.append(test_case)
                 except Exception as e:
-                    print(f"Test case parse xatosi: {e}")
+                    log.warning(f"Test case parse xatosi: {e}")
                     continue
 
         except json.JSONDecodeError as e:
-            logger.warning(f"JSON parse xatosi: {e}")
-            logger.info("🔧 Truncated JSON tuzatishga urinish...")
+            log.json_parse_error("UNKNOWN", f"JSON parse xatosi: {e}")
+            log.json_repair_attempt("UNKNOWN")
 
             # Truncated JSON ni tuzatishga urinish
             repaired = self._try_repair_json(json_str)
@@ -563,18 +559,18 @@ Endi {len(test_types)} xil test ({types_text}) uchun test case'lar yarating!
                             )
                             test_cases.append(test_case)
                         except Exception as parse_err:
-                            logger.warning(f"Repaired test case parse xatosi: {parse_err}")
+                            log.warning(f"Repaired test case parse xatosi: {parse_err}")
                             continue
-                    logger.info(f"✅ Truncated JSON tuzatildi! {len(test_cases)} ta test case tiklandi")
+                    log.json_repair_success("UNKNOWN", f"{len(test_cases)} ta test case tiklandi")
                 except json.JSONDecodeError:
-                    logger.error("❌ Truncated JSON tuzatib bo'lmadi")
-                    print(f"Response: {raw_response[:500]}")
+                    log.json_parse_error("UNKNOWN", "Truncated JSON tuzatib bo'lmadi")
+                    log.warning(f"Response: {raw_response[:500]}")
             else:
-                logger.error("❌ JSON repair imkonsiz")
-                print(f"Response: {raw_response[:500]}")
+                log.json_parse_error("UNKNOWN", "JSON repair imkonsiz")
+                log.warning(f"Response: {raw_response[:500]}")
 
         except Exception as e:
-            print(f"Parse xatosi: {e}")
+            log.warning(f"Parse xatosi: {e}")
 
         return test_cases
 
@@ -610,7 +606,7 @@ Endi {len(test_types)} xil test ({types_text}) uchun test case'lar yarating!
 
                 try:
                     json.loads(fixed)
-                    logger.info(f"🔧 JSON repair: 1-urinish muvaffaqiyatli (rfind method)")
+                    log.info("JSON repair: 1-urinish muvaffaqiyatli (rfind method)")
                     return fixed
                 except json.JSONDecodeError:
                     pass
@@ -628,14 +624,14 @@ Endi {len(test_types)} xil test ({types_text}) uchun test case'lar yarating!
 
                 try:
                     json.loads(fixed)
-                    logger.info(f"🔧 JSON repair: 2-urinish muvaffaqiyatli (last brace method)")
+                    log.info("JSON repair: 2-urinish muvaffaqiyatli (last brace method)")
                     return fixed
                 except json.JSONDecodeError:
                     pass
 
-            logger.warning("🔧 JSON repair: barcha urinishlar muvaffaqiyatsiz")
+            log.warning("JSON repair: barcha urinishlar muvaffaqiyatsiz")
             return None
 
         except Exception as e:
-            logger.error(f"🔧 JSON repair xatosi: {e}")
+            log.error("UNKNOWN", "json_repair", str(e))
             return None

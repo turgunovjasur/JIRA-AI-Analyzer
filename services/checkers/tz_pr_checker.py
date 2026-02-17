@@ -2,7 +2,7 @@
 """
 TZ-PR Moslik Tekshirish Service - Refactored Version with Figma
 
-✅ YANGI: Figma dizayn tahlili qo'shildi (OPTIONAL, fail-safe)
+YANGI: Figma dizayn tahlili qo'shildi (OPTIONAL, fail-safe)
 
 Clean Code Principles:
 - Single Responsibility
@@ -20,6 +20,10 @@ import re
 
 # Core imports
 from core import BaseService, PRHelper, TZHelper
+from core.logger import get_logger
+
+# Initialize logger
+log = get_logger("tzpr.checker")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # CONSTANTS
@@ -204,13 +208,13 @@ class TZPRService(BaseService):
 
     @property
     def figma_client(self):
-        """✅ Lazy Figma Client (fail-safe)"""
+        """Lazy Figma Client (fail-safe)"""
         if self._figma_client is None:
             try:
                 from utils.figma.figma_client import FigmaClient
                 self._figma_client = FigmaClient()
             except Exception as e:
-                print(f"⚠️  Figma client init failed: {str(e)}")
+                log.warning(f"Figma client init failed: {str(e)}")
                 self._figma_client = None
         return self._figma_client
 
@@ -225,7 +229,7 @@ class TZPRService(BaseService):
         """Task ning TZ va PR mosligini to'liq tahlil qilish"""
 
         update_status = self._create_status_updater(status_callback)
-        update_status("info", f"🔍 {task_key} tahlil qilinmoqda...")
+        update_status("info", f"{task_key} tahlil qilinmoqda...")
 
         # Log Smart Patch status
         self._log_smart_patch_status(use_smart_patch, update_status)
@@ -250,13 +254,13 @@ class TZPRService(BaseService):
             if not pr_info:
                 return self._create_error_result(
                     task_key,
-                    "❌ Bu task uchun PR topilmadi (JIRA va GitHub'da)",
+                    "Bu task uchun PR topilmadi (JIRA va GitHub'da)",
                     tz_content=tz_content,
                     task_summary=task_details['summary'],
                     warnings=["JIRA da PR link yo'q", "GitHub search natija bermadi"]
                 )
 
-            # ✅ Step 3.5: Get Figma data (OPTIONAL, FAIL-SAFE)
+            # Step 3.5: Get Figma data (OPTIONAL, FAIL-SAFE)
             figma_data = self._get_figma_data(task_details, update_status)
 
             # Step 4: AI analysis (with Figma if available)
@@ -286,14 +290,14 @@ class TZPRService(BaseService):
             # Step 5: Extract compliance score
             compliance_score = self._extract_compliance_score(ai_result['analysis'])
 
-            update_status("success", f"✅ Tahlil tugadi! Moslik: {compliance_score}%")
+            update_status("success", f"Tahlil tugadi! Moslik: {compliance_score}%")
 
             # Step 6: Update metadata (assignee, task_type, features)
             try:
                 from utils.database.task_db import update_task_metadata
                 update_task_metadata(task_key, task_details, pr_info)
             except Exception as e:
-                logger.warning(f"[{task_key}] Metadata update failed: {e}")
+                log.warning(f"[{task_key}] Metadata update failed: {e}")
 
             # Step 7: Return result
             return TZPRAnalysisResult(
@@ -319,7 +323,7 @@ class TZPRService(BaseService):
         except Exception as e:
             return self._create_error_result(
                 task_key,
-                f"❌ Kutilmagan xatolik: {str(e)}"
+                f"Kutilmagan xatolik: {str(e)}"
             )
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -340,11 +344,11 @@ class TZPRService(BaseService):
                 # No Figma links - bu normal holat, xatolik emas
                 return None
 
-            update_status("progress", f"🎨 Figma: {len(figma_links)} ta dizayn topildi")
+            update_status("progress", f"Figma: {len(figma_links)} ta dizayn topildi")
 
             # Get Figma client (might be None if token missing)
             if not self.figma_client:
-                update_status("warning", "⚠️  Figma: Token topilmadi, dizayn tahlil qilinmaydi")
+                update_status("warning", "Figma: Token topilmadi, dizayn tahlil qilinmaydi")
                 return {
                     'links': figma_links,
                     'summaries': [],
@@ -364,7 +368,7 @@ class TZPRService(BaseService):
                     })
                 except Exception as e:
                     # Individual file error - skip but continue
-                    update_status("warning", f"⚠️  Figma: {link['name']} olinmadi")
+                    update_status("warning", f"Figma: {link['name']} olinmadi")
                     summaries.append({
                         'file_key': link['file_key'],
                         'name': link['name'],
@@ -372,7 +376,7 @@ class TZPRService(BaseService):
                         'summary': f"Error: {str(e)}"
                     })
 
-            update_status("success", f"✅ Figma: {len(summaries)} ta dizayn tahlil qilindi")
+            update_status("success", f"Figma: {len(summaries)} ta dizayn tahlil qilindi")
 
             return {
                 'links': figma_links,
@@ -382,7 +386,7 @@ class TZPRService(BaseService):
 
         except Exception as e:
             # Global Figma error - log but don't fail
-            update_status("warning", f"⚠️  Figma xatolik: {str(e)}")
+            update_status("warning", f"Figma xatolik: {str(e)}")
             return None
 
     def _build_figma_prompt_section(self, figma_data: Optional[Dict]) -> tuple:
@@ -433,7 +437,7 @@ class TZPRService(BaseService):
 
     def _get_task_details(self, task_key: str, update_status):
         """JIRA dan task ma'lumotlarini olish"""
-        update_status("progress", "📋 JIRA dan TZ olinmoqda...")
+        update_status("progress", "JIRA dan TZ olinmoqda...")
         return self.jira.get_task_details(task_key)
 
     def _get_tz_content(self, task_details: Dict, update_status):
@@ -454,10 +458,10 @@ class TZPRService(BaseService):
                 task_details, max_comments=max_c
             )
 
-        update_status("success", f"✅ TZ olindi: {len(tz_content)} chars")
+        update_status("success", f"TZ olindi: {len(tz_content)} chars")
 
         if comment_analysis['has_changes']:
-            update_status("warning", f"⚠️ {comment_analysis['summary']}")
+            update_status("warning", comment_analysis['summary'])
 
         return tz_content, comment_analysis
 
@@ -514,7 +518,7 @@ class TZPRService(BaseService):
 
     def _get_pr_info(self, task_key: str, task_details: Dict, update_status, use_smart_patch):
         """PR ma'lumotlarini olish"""
-        update_status("progress", "🔗 PR'lar qidirilmoqda...")
+        update_status("progress", "PR'lar qidirilmoqda...")
 
         pr_info = self.pr_helper.get_pr_full_info(
             task_key,
@@ -526,7 +530,7 @@ class TZPRService(BaseService):
         if pr_info:
             update_status(
                 "success",
-                f"✅ {pr_info['pr_count']} ta PR, {pr_info['files_changed']} fayl tahlil qilinadi"
+                f"{pr_info['pr_count']} ta PR, {pr_info['files_changed']} fayl tahlil qilinadi"
             )
 
         return pr_info
@@ -537,16 +541,16 @@ class TZPRService(BaseService):
             task_details: Dict,
             tz_content: str,
             pr_info: Dict,
-            figma_data: Optional[Dict],  # ✅ NEW PARAMETER
+            figma_data: Optional[Dict],  # NEW PARAMETER
             max_files: Optional[int],
             show_full_diff: bool,
             use_smart_patch: bool,
             update_status
     ) -> Dict:
         """AI tahlil qilish (with Figma and DEV comments support)"""
-        update_status("progress", "🤖 AI tahlil qilmoqda...")
+        update_status("progress", "AI tahlil qilmoqda...")
 
-        # ✅ Build DEV comments section
+        # Build DEV comments section
         dev_comments_section = self._build_dev_comments_section(task_details)
 
         return self._analyze_with_retry(
@@ -572,8 +576,8 @@ class TZPRService(BaseService):
             task_details: Dict,
             tz_content: str,
             pr_info: Dict,
-            figma_data: Optional[Dict],  # ✅ NEW
-            dev_comments_section: str,  # ✅ NEW
+            figma_data: Optional[Dict],  # NEW
+            dev_comments_section: str,  # NEW
             max_files: Optional[int],
             show_full_diff: bool,
             use_smart_patch: bool,
@@ -601,7 +605,7 @@ class TZPRService(BaseService):
             pr_info=pr_info,
             figma_section=figma_section,
             figma_analysis=figma_analysis,
-            dev_comments_section=dev_comments_section,  # ✅ NEW
+            dev_comments_section=dev_comments_section,  # NEW
             response_format_sections=response_format_sections,
             max_files=max_files,
             show_full_diff=show_full_diff,
@@ -614,7 +618,7 @@ class TZPRService(BaseService):
 
         # Strategy 2: Reduce files if overload
         if "overloaded" in result['error'].lower() or "rate" in result['error'].lower():
-            status_callback("warning", "⚠️  AI overloaded, reducing file count...")
+            status_callback("warning", "AI overloaded, reducing file count...")
 
             reduced_files = max(1, (max_files or pr_info['files_changed']) // 2)
 
@@ -625,7 +629,7 @@ class TZPRService(BaseService):
                 pr_info=pr_info,
                 figma_section=figma_section,
                 figma_analysis=figma_analysis,
-                dev_comments_section=dev_comments_section,  # ✅ NEW
+                dev_comments_section=dev_comments_section,  # NEW
                 response_format_sections=response_format_sections,
                 max_files=reduced_files,
                 show_full_diff=show_full_diff,
@@ -634,12 +638,12 @@ class TZPRService(BaseService):
             )
 
             if result['success']:
-                result['warnings'].append(f"⚠️  Faqat {reduced_files} ta fayl tahlil qilindi (overload)")
+                result['warnings'].append(f"Faqat {reduced_files} ta fayl tahlil qilindi (overload)")
                 return result
 
         # Strategy 3: Without full diff
         if show_full_diff:
-            status_callback("warning", "⚠️  Trying without full diff...")
+            status_callback("warning", "Trying without full diff...")
 
             result = self._try_ai_analysis(
                 task_key=task_key,
@@ -648,7 +652,7 @@ class TZPRService(BaseService):
                 pr_info=pr_info,
                 figma_section=figma_section,
                 figma_analysis=figma_analysis,
-                dev_comments_section=dev_comments_section,  # ✅ NEW
+                dev_comments_section=dev_comments_section,  # NEW
                 response_format_sections=response_format_sections,
                 max_files=3,  # Very limited
                 show_full_diff=False,
@@ -657,7 +661,7 @@ class TZPRService(BaseService):
             )
 
             if result['success']:
-                result['warnings'].append("⚠️  Limited analysis (faqat 3 ta fayl, diff yo'q)")
+                result['warnings'].append("Limited analysis (faqat 3 ta fayl, diff yo'q)")
                 return result
 
         # All strategies failed
@@ -671,7 +675,7 @@ class TZPRService(BaseService):
             pr_info: Dict,
             figma_section: str,
             figma_analysis: str,
-            dev_comments_section: str,  # ✅ NEW
+            dev_comments_section: str,  # NEW
             response_format_sections: str,
             max_files: Optional[int],
             show_full_diff: bool,
@@ -789,7 +793,7 @@ class TZPRService(BaseService):
                 return int(match.group(1))
 
             # Try to find "MOSLIK BALI" section with score
-            match = re.search(r'(?:MOSLIK BALI|📊 MOSLIK BALI)[\s\S]*?(\d+)%', analysis, re.IGNORECASE)
+            match = re.search(r'(?:MOSLIK BALI|MOSLIK BALI)[\s\S]*?(\d+)%', analysis, re.IGNORECASE)
             if match:
                 return int(match.group(1))
 
@@ -799,13 +803,11 @@ class TZPRService(BaseService):
             if match:
                 return int(match.group(1))
         except Exception as e:
-            import logging
-            logging.error(f"Score extraction error: {e}")
+            log.error("UNKNOWN", "Score extraction", str(e))
 
         # If not found, log warning
-        import logging
-        logging.warning("⚠️ COMPLIANCE_SCORE not found in AI response!")
-        logging.debug(f"AI Response preview: {analysis[:500]}...")
+        log.warning("COMPLIANCE_SCORE not found in AI response!")
+        log.debug(f"AI Response preview: {analysis[:500]}...")
 
         return None
 
