@@ -56,13 +56,19 @@ from utils.database.task_db import (
     mark_completed,
     mark_returned,
     mark_error,
+    mark_blocked,
     increment_return_count,
     set_skip_detected,
     set_service1_done,
     set_service1_error,
+    set_service1_skip,
+    set_service1_blocked,
     set_service2_done,
     set_service2_error,
-    reset_service_statuses
+    set_service2_blocked,
+    set_task_timeout_error,
+    reset_service_statuses,
+    get_blocked_tasks_ready_for_retry
 )
 
 # ============================================================================
@@ -153,6 +159,47 @@ def get_adf_formatter():
     if _adf_formatter is None:
         _adf_formatter = JiraADFFormatter()
     return _adf_formatter
+
+
+# ============================================================================
+# ERROR CLASSIFICATION (v6.0)
+# ============================================================================
+
+def _classify_error(error_msg: str) -> str:
+    """
+    Xato xabarini turlariga ajratish
+
+    Returns:
+        'pr_not_found' — PR topilmadi
+        'ai_timeout' — AI timeout yoki 429 rate limit (ikkala key ham ishlamadi)
+        'ai_rate_limit' — 429 rate limit (alohida kategoriya)
+        'unknown' — boshqa xatoliklar
+    """
+    if not error_msg:
+        return 'unknown'
+    msg_lower = error_msg.lower()
+
+    # PR topilmadi
+    pr_keywords = ['pr topilmadi', 'pr not found', 'no pr found', 'pull request not found']
+    if any(kw in msg_lower for kw in pr_keywords):
+        return 'pr_not_found'
+
+    # AI timeout / rate limit / 429 (ikkala key ham ishlamadi ham kiradi)
+    ai_timeout_keywords = [
+        'timeout', '429', 'rate limit', 'rate_limit',
+        'overloaded', 'quota', 'resource exhausted',
+        'resource_exhausted', 'too many requests',
+        'ikkala key ham ishlamadi', 'both keys failed',
+        'gemini api xatosi'
+    ]
+    if any(kw in msg_lower for kw in ai_timeout_keywords):
+        return 'ai_timeout'
+
+    return 'unknown'
+
+
+# Blocked retry scheduler o'zgaruvchisi
+_blocked_retry_task: Optional[asyncio.Task] = None
 
 
 # ============================================================================
@@ -254,43 +301,66 @@ async def jira_webhook(
         # DB HOLAT TEKSHIRISH (v4.0)
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         task_db = get_task(task_key)
-        task_status = task_db.get('task_status') if task_db else 'none'
-        return_count = task_db.get('return_count', 0) if task_db else 0
-        last_jira_status = task_db.get('last_jira_status') if task_db else None
-        last_processed_at = task_db.get('last_processed_at') if task_db else None
-        
-        logger.info(f"[{task_key}] 📊 DB holat tekshirildi:")
-        logger.info(f"[{task_key}]   - task_status: {task_status}")
-        logger.info(f"[{task_key}]   - return_count: {return_count}")
-        logger.info(f"[{task_key}]   - last_jira_status: {last_jira_status}")
-        logger.info(f"[{task_key}]   - last_processed_at: {last_processed_at}")
-        
-        # Dublikat event tekshirish
-        if last_jira_status == new_status and task_status == 'progressing':
-            logger.info(f"[{task_key}] ⏭️ Dublikat event: {new_status} allaqachon ishlanmoqda")
-            return {
-                "status": "ignored",
-                "reason": f"Duplicate event: {new_status} already processing",
-                "task_status": task_status
-            }
-        
-        # Task holatini yangilash
-        if task_status == 'none' or task_status == 'error':
+
+        # Task DB da yo'q bo'lsa - yangi task (yoki o'chirilgan task), to'g'ridan-to'g'ri ishlash
+        if not task_db:
+            logger.info(f"[{task_key}] 📊 Task DB da yo'q - yangi task (yoki manual delete qilingan), to'g'ridan-to'g'ri ishlash")
             mark_progressing(task_key, new_status, datetime.now())
-            logger.info(f"[{task_key}] ✅ DB: mark_progressing (status: {task_status} → progressing)")
-        elif task_status == 'returned':
-            increment_return_count(task_key)
-            reset_service_statuses(task_key)  # ✅ Service statuslarni qayta boshlash
-            mark_progressing(task_key, new_status, datetime.now())
-            new_return_count = get_task(task_key).get('return_count', 0) if get_task(task_key) else 0
-            logger.info(f"[{task_key}] ✅ DB: returned → progressing, return_count: {return_count} → {new_return_count}, services reset")
-        elif task_status == 'progressing':
-            logger.info(f"[{task_key}] ⏭️ Task allaqachon progressing, skip")
-            return {
-                "status": "ignored",
-                "reason": "Task already in progressing state",
-                "task_status": task_status
-            }
+            logger.info(f"[{task_key}] ✅ DB: yangi task mark_progressing")
+        else:
+            task_status = task_db.get('task_status', 'none')
+            return_count = task_db.get('return_count', 0)
+            last_jira_status = task_db.get('last_jira_status')
+            last_processed_at = task_db.get('last_processed_at')
+
+            logger.info(f"[{task_key}] 📊 DB holat tekshirildi:")
+            logger.info(f"[{task_key}]   - task_status: {task_status}")
+            logger.info(f"[{task_key}]   - return_count: {return_count}")
+            logger.info(f"[{task_key}]   - last_jira_status: {last_jira_status}")
+            logger.info(f"[{task_key}]   - last_processed_at: {last_processed_at}")
+
+            # Dublikat event tekshirish - faqat task DB da bo'lsa va progressing bo'lsa
+            # ✅ COMPLETED holatida emas - chunki task ishlanib bo'lgan bo'lsa qayta ishlanmasligi kerak
+            if last_jira_status == new_status and task_status in ('progressing', 'completed'):
+                logger.info(f"[{task_key}] ⏭️ Dublikat event: {new_status} allaqachon ishlanmoqda/ishlanib bo'lgan (task_status={task_status})")
+                return {
+                    "status": "ignored",
+                    "reason": f"Duplicate event: {new_status} already processing or completed",
+                    "task_status": task_status
+                }
+
+            # Task holatini yangilash
+            if task_status == 'none':
+                mark_progressing(task_key, new_status, datetime.now())
+                logger.info(f"[{task_key}] ✅ DB: mark_progressing (status: {task_status} → progressing)")
+            elif task_status == 'completed':
+                # ✅ Completed taskni qayta ishlash uchun reset qilish
+                logger.info(f"[{task_key}] 🔄 Completed taskni qayta ishlash - services reset")
+                reset_service_statuses(task_key)
+                mark_progressing(task_key, new_status, datetime.now())
+            elif task_status == 'error':
+                # Error holatida service statuslarni reset qilish kerak (oldingi ishlashda error bo'lgan bo'lishi mumkin)
+                reset_service_statuses(task_key)
+                mark_progressing(task_key, new_status, datetime.now())
+                logger.info(f"[{task_key}] ✅ DB: error → progressing, services reset")
+            elif task_status == 'returned':
+                increment_return_count(task_key)
+                reset_service_statuses(task_key)  # ✅ Service statuslarni qayta boshlash
+                mark_progressing(task_key, new_status, datetime.now())
+                new_return_count = get_task(task_key).get('return_count', 0) if get_task(task_key) else 0
+                logger.info(f"[{task_key}] ✅ DB: returned → progressing, return_count: {return_count} → {new_return_count}, services reset")
+            elif task_status == 'blocked':
+                # Blocked task qayta kelsa — reset va progressing
+                reset_service_statuses(task_key)
+                mark_progressing(task_key, new_status, datetime.now())
+                logger.info(f"[{task_key}] ✅ DB: blocked → progressing, services reset")
+            elif task_status == 'progressing':
+                logger.info(f"[{task_key}] ⏭️ Task allaqachon progressing, skip")
+                return {
+                    "status": "ignored",
+                    "reason": "Task already in progressing state",
+                    "task_status": task_status
+                }
 
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         # AI_SKIP SHARTI (v5.0 - birinchi urinishda ham ishlaydi)
@@ -301,11 +371,10 @@ async def jira_webhook(
             comment_writer = get_comment_writer()
             skip_detected = await _check_skip_code(task_key, skip_code, comment_writer)
             if skip_detected:
-                logger.info(f"[{task_key}] ⏭️ Skip code '{skip_code}' topildi, Service1 bekor, Service2 run")
+                logger.info(f"[{task_key}] ⏭️ Skip code '{skip_code}' topildi, Service1 skip, Service2 run")
 
-                # Mark Service1 as done (100% to skip compliance check)
-                set_service1_done(task_key, compliance_score=100)
-                set_skip_detected(task_key)
+                # Mark Service1 as skip (score=100 threshold check o'tishi uchun)
+                set_service1_skip(task_key)
 
                 # Write skip notification
                 adf_formatter = get_adf_formatter()
@@ -435,8 +504,23 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str):
 
         if not result.success:
             error_msg = result.error_message
-            logger.error(f"[{task_key}] ❌ Service1 Analysis failed: {error_msg}")
-            set_service1_error(task_key, error_msg)
+            error_type = _classify_error(error_msg)
+            logger.error(f"[{task_key}] ❌ Service1 Analysis failed: {error_msg} (type: {error_type})")
+
+            if error_type == 'ai_timeout':
+                # AI timeout/429 → blocked status
+                app_settings_reload = get_app_settings(force_reload=True)
+                retry_minutes = app_settings_reload.queue.blocked_retry_delay
+                set_service1_blocked(task_key, error_msg, retry_minutes)
+                logger.info(f"[{task_key}] 🔒 Service1 BLOCKED: {retry_minutes} daqiqadan keyin qayta urinadi")
+            elif error_type == 'pr_not_found':
+                # PR topilmadi → error, lekin service2 pending qoladi
+                set_service1_error(task_key, error_msg, keep_service2_pending=True)
+                logger.info(f"[{task_key}] ⚠️ PR topilmadi: service2 pending qoladi")
+            else:
+                # Boshqa xatolar → oddiy error
+                set_service1_error(task_key, error_msg)
+
             await _write_error_comment(
                 task_key, error_msg, new_status,
                 settings, comment_writer, adf_formatter
@@ -471,15 +555,26 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str):
                 logger.info(f"[{task_key}] ✅ Score OK: {compliance_score}% >= {threshold}%, Service2 ishlaydi")
 
     except Exception as e:
-        logger.error(f"[{task_key}] ❌ Service1 Background task error: {e}", exc_info=True)
-        set_service1_error(task_key, str(e))
+        error_msg = str(e)
+        error_type = _classify_error(error_msg)
+        logger.error(f"[{task_key}] ❌ Service1 Background task error: {e} (type: {error_type})", exc_info=True)
+
+        if error_type == 'ai_timeout':
+            app_settings_reload = get_app_settings(force_reload=True)
+            retry_minutes = app_settings_reload.queue.blocked_retry_delay
+            set_service1_blocked(task_key, error_msg, retry_minutes)
+            logger.info(f"[{task_key}] 🔒 Service1 BLOCKED (exception): {retry_minutes} daqiqadan keyin")
+        elif error_type == 'pr_not_found':
+            set_service1_error(task_key, error_msg, keep_service2_pending=True)
+        else:
+            set_service1_error(task_key, error_msg)
 
         # Critical error ham yoziladi
         try:
             app_settings = get_app_settings(force_reload=True)
             settings = app_settings.tz_pr_checker
             await _write_critical_error(
-                task_key, str(e), new_status,
+                task_key, error_msg, new_status,
                 settings, get_comment_writer(), get_adf_formatter()
             )
         except:
@@ -663,8 +758,12 @@ async def _check_skip_code(
         issue = comment_writer.jira.issue(task_key)
         comments = sorted(issue.fields.comment.comments, key=lambda c: c.created, reverse=True)
 
-        # Faqat so'nggi 5 comment tekshirish (performance)
-        for comment in comments[:5]:
+        # Settings dan nechta comment tekshirish
+        app_settings = get_app_settings(force_reload=True)
+        max_comments = app_settings.tz_pr_checker.max_skip_check_comments
+        
+        # Faqat so'nggi N comment tekshirish (performance)
+        for comment in comments[:max_comments]:
             comment_body = comment.body if comment.body else ""
             # Case-insensitive tekshirish
             if skip_code.upper() in comment_body.upper():
@@ -805,12 +904,13 @@ async def _write_skip_notification(
 
 async def _run_testcase_generation(task_key: str, new_status: str):
     """
-    Background task: Testcase yaratish va JIRA ga yozish (Service2) (v4.0)
+    Background task: Testcase yaratish va JIRA ga yozish (Service2) (v6.0)
 
-    Yangi funksionalliklar:
+    Funksionalliklar:
     - DB orqali Service2 holatini boshqarish
-    - Service1 done va score threshold tekshiruvi
-    - Xatolarda DB holatini yangilash
+    - Service1 done/skip va score threshold tekshiruvi
+    - Xato turlariga qarab blocked/error
+    - PR topilmasa TZ-only fallback
     """
     try:
         logger.info(f"[{task_key}] 🟢 Service2 (Testcase) boshlandi...")
@@ -820,34 +920,43 @@ async def _run_testcase_generation(task_key: str, new_status: str):
         if not task_db:
             logger.warning(f"[{task_key}] ⚠️ Task DB'da topilmadi, Service2 skip")
             return
-        
+
         service1_status = task_db.get('service1_status', 'pending')
         service2_status = task_db.get('service2_status', 'pending')
         compliance_score = task_db.get('compliance_score')
         task_status = task_db.get('task_status', 'none')
-        
+
         logger.info(f"[{task_key}] DB holat: service1={service1_status}, service2={service2_status}, "
                    f"score={compliance_score}, task_status={task_status}")
-        
-        # Service1 done bo'lishi kerak
-        if service1_status != 'done':
-            logger.warning(f"[{task_key}] ⚠️ Service1 hali done emas ({service1_status}), Service2 skip")
+
+        # Service1 done/skip yoki error (PR topilmadi) bo'lishi kerak
+        # Service1=error bo'lsa Service2 TZ-only bilan ishlaydi
+        if service1_status not in ('done', 'skip', 'error'):
+            logger.warning(f"[{task_key}] ⚠️ Service1 hali done/skip/error emas ({service1_status}), Service2 skip")
             return
         
+        # Service1=error bo'lsa faqat service2=pending bo'lsa ishlaydi (TZ-only)
+        if service1_status == 'error':
+            if service2_status != 'pending':
+                logger.warning(f"[{task_key}] ⚠️ Service1=error, service2={service2_status} (pending emas), Service2 skip")
+                return
+            logger.info(f"[{task_key}] 🟡 Service1=error, service2=pending → TZ-only Service2")
+
         # Service2 allaqachon done bo'lsa skip
         if service2_status == 'done':
             logger.info(f"[{task_key}] ⏭️ Service2 allaqachon done, skip")
             return
-        
-        # Score threshold tekshiruvi (force_reload=True - har safar fayldan o'qish)
+
+        # Score threshold tekshiruvi
         app_settings = get_app_settings(force_reload=True)
         settings = app_settings.tz_pr_checker
+        tc_settings = app_settings.testcase_generator
         threshold = settings.return_threshold
-        
+
         if compliance_score is not None and compliance_score < threshold:
             logger.warning(f"[{task_key}] ⚠️ Score past: {compliance_score}% < {threshold}%, Service2 bloklangan")
             return
-        
+
         # Task returned bo'lsa Service2 ishlamaydi
         if task_status == 'returned':
             logger.warning(f"[{task_key}] ⚠️ Task returned, Service2 bloklangan")
@@ -859,17 +968,49 @@ async def _run_testcase_generation(task_key: str, new_status: str):
 
         if success:
             set_service2_done(task_key)
-            mark_completed(task_key)
             logger.info(f"[{task_key}] ✅ Service2 done: {message}")
         else:
             error_msg = f"Testcase generation failed: {message}"
-            set_service2_error(task_key, error_msg)
-            logger.warning(f"[{task_key}] ❌ Service2 error: {error_msg}")
+            error_type = _classify_error(error_msg)
+            logger.warning(f"[{task_key}] ❌ Service2 error: {error_msg} (type: {error_type})")
+
+            if error_type == 'ai_timeout':
+                # AI timeout/429 → Service2 blocked
+                retry_minutes = app_settings.queue.blocked_retry_delay
+                set_service2_blocked(task_key, error_msg, retry_minutes)
+                logger.info(f"[{task_key}] 🔒 Service2 BLOCKED: {retry_minutes} daqiqadan keyin qayta urinadi")
+            elif error_type == 'pr_not_found' and tc_settings.default_include_pr:
+                # PR topilmadi + PR hisobga olish yoqiq → TZ-only fallback
+                logger.info(f"[{task_key}] 🔄 PR topilmadi, TZ-only fallback bilan qayta urinish...")
+                success2, message2 = await check_and_generate_testcases(
+                    task_key, new_status, include_pr=False
+                )
+                if success2:
+                    set_service2_done(task_key)
+                    logger.info(f"[{task_key}] ✅ Service2 done (TZ-only): {message2}")
+                else:
+                    error_msg2 = f"Testcase TZ-only fallback failed: {message2}"
+                    error_type2 = _classify_error(error_msg2)
+                    if error_type2 == 'ai_timeout':
+                        retry_minutes = app_settings.queue.blocked_retry_delay
+                        set_service2_blocked(task_key, error_msg2, retry_minutes)
+                    else:
+                        set_service2_error(task_key, error_msg2)
+                    logger.warning(f"[{task_key}] ❌ Service2 TZ-only fallback error: {error_msg2}")
+            else:
+                set_service2_error(task_key, error_msg)
 
     except Exception as e:
         error_msg = f"Testcase generation error: {str(e)}"
-        logger.error(f"[{task_key}] ❌ Service2 error: {e}", exc_info=True)
-        set_service2_error(task_key, error_msg)
+        error_type = _classify_error(error_msg)
+        logger.error(f"[{task_key}] ❌ Service2 error: {e} (type: {error_type})", exc_info=True)
+
+        if error_type == 'ai_timeout':
+            app_settings_reload = get_app_settings(force_reload=True)
+            retry_minutes = app_settings_reload.queue.blocked_retry_delay
+            set_service2_blocked(task_key, error_msg, retry_minutes)
+        else:
+            set_service2_error(task_key, error_msg)
 
 
 # ============================================================================
@@ -878,16 +1019,18 @@ async def _run_testcase_generation(task_key: str, new_status: str):
 
 async def _wait_for_ai_slot(task_key: str):
     """
-    Global AI interval kutish (hardcoded 6s — Google rate limit: 10 req/min).
+    Global AI interval kutish (settings dan — Google rate limit: 10 req/min).
     Foydalanuvchi sozlamasiz ichki himoya.
     """
     global _ai_last_call_time
     import time
-    _GEMINI_MIN_INTERVAL = 6  # Google: 10 req/min = 6 sek/req
+    
+    app_settings = get_app_settings(force_reload=True)
+    min_interval = app_settings.queue.gemini_min_interval
 
     elapsed = time.time() - _ai_last_call_time
-    if elapsed < _GEMINI_MIN_INTERVAL:
-        wait_time = _GEMINI_MIN_INTERVAL - elapsed
+    if elapsed < min_interval:
+        wait_time = min_interval - elapsed
         logger.info(f"[{task_key}] AI queue: {wait_time:.1f}s kutiladi (Gemini rate limit)...")
         await asyncio.sleep(wait_time)
 
@@ -935,14 +1078,36 @@ async def _run_task_group(task_key: str, new_status: str):
     if not queue_settings.queue_enabled:
         # Queue o'chirilgan: ikkalasi birma-bir lekin lock siz
         await check_tz_pr_and_comment(task_key=task_key, new_status=new_status)
-        
-        # Service1 done bo'lgandan keyin Service2
-        delay = queue_settings.checker_testcase_delay
-        if delay > 0:
-            logger.info(f"[{task_key}] Service1→Service2 delay: {delay}s kutiladi...")
-            await asyncio.sleep(delay)
-        
-        await _run_testcase_generation(task_key=task_key, new_status=new_status)
+
+        # Service1 natijasini tekshirish
+        task_db = get_task(task_key)
+        if task_db:
+            service1_status = task_db.get('service1_status', 'pending')
+            task_status = task_db.get('task_status', 'none')
+            compliance_score = task_db.get('compliance_score')
+            settings = app_settings.tz_pr_checker
+            threshold = settings.return_threshold
+
+            can_run_service2 = False
+            if service1_status in ('done', 'skip'):
+                if compliance_score is None or compliance_score >= threshold:
+                    if task_status not in ('returned', 'blocked'):
+                        can_run_service2 = True
+            elif service1_status == 'error':
+                # PR topilmadi holati — Service2 TZ-only bilan ishlashi mumkin
+                s2_status = task_db.get('service2_status', 'pending')
+                if s2_status == 'pending':
+                    can_run_service2 = True
+                    logger.info(f"[{task_key}] 🟡 Service1=error, service2=pending → TZ-only Service2")
+
+            if can_run_service2:
+                delay = queue_settings.checker_testcase_delay
+                if delay > 0:
+                    logger.info(f"[{task_key}] Service1→Service2 delay: {delay}s kutiladi...")
+                    await asyncio.sleep(delay)
+                await _run_testcase_generation(task_key=task_key, new_status=new_status)
+            else:
+                logger.info(f"[{task_key}] ⏭️ Service2 skip (s1={service1_status}, task={task_status})")
         return
 
     lock = _get_ai_queue_lock()
@@ -968,7 +1133,7 @@ async def _run_task_group(task_key: str, new_status: str):
             logger.info(f"[{task_key}] Service1→Service2 delay: {delay}s kutiladi...")
             await asyncio.sleep(delay)
 
-        # Service2 (Testcase) - faqat Service1 done bo'lsa va score OK bo'lsa
+        # Service2 (Testcase) - faqat Service1 done/skip bo'lsa va score OK bo'lsa
         task_db = get_task(task_key)
         if task_db:
             service1_status = task_db.get('service1_status', 'pending')
@@ -976,19 +1141,28 @@ async def _run_task_group(task_key: str, new_status: str):
             task_status = task_db.get('task_status', 'none')
             settings = app_settings.tz_pr_checker
             threshold = settings.return_threshold
-            
-            if service1_status == 'done':
+
+            if service1_status in ('done', 'skip'):
                 if compliance_score is None or compliance_score >= threshold:
-                    if task_status != 'returned':
+                    if task_status not in ('returned', 'blocked'):
                         logger.info(f"[{task_key}] 🟢 Service2 boshlandi (queue lock ichida)...")
                         await _wait_for_ai_slot(task_key)
                         await _run_testcase_generation(task_key=task_key, new_status=new_status)
                     else:
-                        logger.info(f"[{task_key}] ⏭️ Task returned, Service2 skip")
+                        logger.info(f"[{task_key}] ⏭️ Task {task_status}, Service2 skip")
                 else:
                     logger.info(f"[{task_key}] ⏭️ Score past ({compliance_score}% < {threshold}%), Service2 skip")
+            elif service1_status == 'error':
+                # Service1 error — service2 pending bo'lsa TZ-only bilan ishlashi mumkin
+                s2_status = task_db.get('service2_status', 'pending')
+                if s2_status == 'pending':
+                    logger.info(f"[{task_key}] 🟡 Service1=error, service2=pending → TZ-only Service2 boshlandi...")
+                    await _wait_for_ai_slot(task_key)
+                    await _run_testcase_generation(task_key=task_key, new_status=new_status)
+                else:
+                    logger.info(f"[{task_key}] ⏭️ Service1=error, service2={s2_status} → Service2 skip")
             else:
-                logger.warning(f"[{task_key}] ⚠️ Service1 hali done emas ({service1_status}), Service2 skip")
+                logger.warning(f"[{task_key}] ⚠️ Service1 hali done/skip emas ({service1_status}), Service2 skip")
     finally:
         lock.release()
 
@@ -1051,16 +1225,40 @@ async def _run_sequential_tasks(
             except Exception as e:
                 logger.error(f"[{task_key}] Sequential Service1 error: {e}", exc_info=True)
                 set_service1_error(task_key, str(e))
-                return
             if run_testcase:
-                if delay > 0:
-                    logger.info(f"[{task_key}] Service1→Service2 delay: {delay}s kutiladi...")
-                    await asyncio.sleep(delay)
-                try:
-                    await _run_testcase_generation(task_key=task_key, new_status=new_status)
-                except Exception as e:
-                    logger.error(f"[{task_key}] Sequential Service2 error: {e}", exc_info=True)
-                    set_service2_error(task_key, str(e))
+                # Service1 natijasini tekshirish
+                task_db_seq = get_task(task_key)
+                can_run = False
+                if task_db_seq:
+                    s1 = task_db_seq.get('service1_status', 'pending')
+                    ts = task_db_seq.get('task_status', 'none')
+                    score = task_db_seq.get('compliance_score')
+                    th = app_settings.tz_pr_checker.return_threshold
+
+                    if s1 in ('done', 'skip'):
+                        if score is None or score >= th:
+                            if ts not in ('returned', 'blocked'):
+                                can_run = True
+                    elif s1 == 'error':
+                        s2 = task_db_seq.get('service2_status', 'pending')
+                        if s2 == 'pending':
+                            can_run = True
+                            logger.info(f"[{task_key}] 🟡 Service1=error, service2=pending → TZ-only Service2")
+
+                if can_run:
+                    if delay > 0:
+                        logger.info(f"[{task_key}] Service1→Service2 delay: {delay}s kutiladi...")
+                        await asyncio.sleep(delay)
+                    try:
+                        await _run_testcase_generation(task_key=task_key, new_status=new_status)
+                    except Exception as e:
+                        logger.error(f"[{task_key}] Sequential Service2 error: {e}", exc_info=True)
+                        set_service2_error(task_key, str(e))
+                else:
+                    if task_db_seq:
+                        s1 = task_db_seq.get('service1_status', 'pending')
+                        ts = task_db_seq.get('task_status', 'none')
+                        logger.info(f"[{task_key}] ⏭️ Service2 skip (s1={s1}, task={ts})")
         else:  # testcase_first (kam ishlatiladi)
             if run_testcase:
                 try:
@@ -1107,7 +1305,7 @@ async def _run_sequential_tasks(
                     logger.info(f"[{task_key}] Service1→Service2 delay: {delay}s kutiladi...")
                     await asyncio.sleep(delay)
                 
-                # Service1 done va score OK tekshiruvi
+                # Service1 done/skip va score OK tekshiruvi
                 task_db = get_task(task_key)
                 if task_db:
                     service1_status = task_db.get('service1_status', 'pending')
@@ -1115,21 +1313,33 @@ async def _run_sequential_tasks(
                     task_status = task_db.get('task_status', 'none')
                     settings = app_settings.tz_pr_checker
                     threshold = settings.return_threshold
-                    
-                    if service1_status == 'done':
+
+                    if service1_status in ('done', 'skip'):
                         if compliance_score is None or compliance_score >= threshold:
-                            if task_status != 'returned':
+                            if task_status not in ('returned', 'blocked'):
                                 await _wait_for_ai_slot(task_key)
                                 try:
                                     await _run_testcase_generation(task_key=task_key, new_status=new_status)
                                 except Exception as e:
                                     logger.error(f"[{task_key}] Sequential Service2 error: {e}", exc_info=True)
                             else:
-                                logger.info(f"[{task_key}] ⏭️ Task returned, Service2 skip")
+                                logger.info(f"[{task_key}] ⏭️ Task {task_status}, Service2 skip")
                         else:
                             logger.info(f"[{task_key}] ⏭️ Score past ({compliance_score}% < {threshold}%), Service2 skip")
+                    elif service1_status == 'error':
+                        # Service1 error — service2 pending bo'lsa TZ-only bilan ishlashi mumkin
+                        s2_status = task_db.get('service2_status', 'pending')
+                        if s2_status == 'pending':
+                            logger.info(f"[{task_key}] 🟡 Service1=error, service2=pending → TZ-only Service2 boshlandi...")
+                            await _wait_for_ai_slot(task_key)
+                            try:
+                                await _run_testcase_generation(task_key=task_key, new_status=new_status)
+                            except Exception as e:
+                                logger.error(f"[{task_key}] Sequential Service2 TZ-only error: {e}", exc_info=True)
+                        else:
+                            logger.info(f"[{task_key}] ⏭️ Service1=error, service2={s2_status} → Service2 skip")
                     else:
-                        logger.warning(f"[{task_key}] ⚠️ Service1 hali done emas ({service1_status}), Service2 skip")
+                        logger.warning(f"[{task_key}] ⚠️ Service1 hali done/skip emas ({service1_status}), Service2 skip")
         else:  # testcase_first (kam ishlatiladi)
             # 1) Service2 (Testcase)
             if run_testcase:
@@ -1370,17 +1580,173 @@ async def manual_testcase(task_key: str, background_tasks: BackgroundTasks):
 
 
 # ============================================================================
+# BLOCKED RETRY SCHEDULER (v6.0)
+# ============================================================================
+
+async def _retry_blocked_task(task_id: str):
+    """
+    Blocked taskni qayta ishlash.
+    - service1=done/skip → o'tkazib yuborish
+    - service1=blocked → qayta run
+    - service2=done → o'tkazib yuborish
+    - service2=blocked/pending → service1 tugagandan keyin run
+    """
+    try:
+        task_data = get_task(task_id)
+        if not task_data:
+            logger.warning(f"[{task_id}] Retry: task DB da topilmadi")
+            return
+
+        service1_status = task_data.get('service1_status', 'pending')
+        service2_status = task_data.get('service2_status', 'pending')
+        last_jira_status = task_data.get('last_jira_status', 'READY TO TEST')
+
+        logger.info(f"[{task_id}] 🔄 Blocked task retry: s1={service1_status}, s2={service2_status}")
+
+        # Progressing ga o'tkazish
+        mark_progressing(task_id, last_jira_status, datetime.now())
+
+        # Service1 ni qayta run qilish kerakmi?
+        need_service1 = service1_status == 'blocked'
+        need_service2 = service2_status in ('blocked', 'pending')
+
+        if need_service1:
+            # Service1 blocked → pending + run
+            from utils.database.task_db import upsert_task
+            upsert_task(task_id, {
+                'service1_status': 'pending',
+                'service1_error': None,
+                'blocked_at': None,
+                'blocked_retry_at': None,
+                'block_reason': None
+            })
+
+            logger.info(f"[{task_id}] 🔵 Service1 qayta run qilinmoqda...")
+            await _wait_for_ai_slot(task_id)
+            await check_tz_pr_and_comment(task_key=task_id, new_status=last_jira_status)
+
+            # Service1 natijasini tekshirish
+            task_data = get_task(task_id)
+            if not task_data:
+                return
+            service1_status = task_data.get('service1_status', 'pending')
+            task_status = task_data.get('task_status', 'none')
+
+            # Agar service1 yana blocked/error bo'lsa — to'xtash
+            if service1_status not in ('done', 'skip'):
+                logger.info(f"[{task_id}] Service1 retry natijasi: {service1_status}, to'xtash")
+                return
+            if task_status in ('returned', 'blocked'):
+                logger.info(f"[{task_id}] Task {task_status} holati, Service2 skip")
+                return
+
+        if need_service2:
+            # Service2 blocked/pending → run
+            task_data = get_task(task_id)
+            if task_data and task_data.get('service2_status') != 'done':
+                from utils.database.task_db import upsert_task
+                upsert_task(task_id, {
+                    'service2_status': 'pending',
+                    'service2_error': None,
+                    'blocked_at': None,
+                    'blocked_retry_at': None,
+                    'block_reason': None
+                })
+
+                # Delay between services
+                app_settings = get_app_settings(force_reload=True)
+                delay = app_settings.queue.checker_testcase_delay
+                if delay > 0 and need_service1:
+                    logger.info(f"[{task_id}] Service1→Service2 delay: {delay}s...")
+                    await asyncio.sleep(delay)
+
+                logger.info(f"[{task_id}] 🟢 Service2 qayta run qilinmoqda...")
+                await _wait_for_ai_slot(task_id)
+                await _run_testcase_generation(task_key=task_id, new_status=last_jira_status)
+
+        # Done servislar tashlab ketildi (o'tkazib yuborildi)
+        if not need_service1 and not need_service2:
+            logger.info(f"[{task_id}] Barcha servislar done, retry kerak emas")
+
+    except Exception as e:
+        logger.error(f"[{task_id}] Blocked task retry error: {e}", exc_info=True)
+        mark_error(task_id, f"Retry error: {str(e)}")
+
+
+async def _blocked_retry_scheduler():
+    """
+    Background scheduler: har N sekundda blocked tasklarni tekshiradi.
+    Retry vaqti kelgan tasklarni navbatga qo'yadi.
+    
+    Note: Settings har safar reload qilinadi (force_reload=True) - UI'dan o'zgarishlarni
+    darhol ko'rish uchun. Log'lar DEBUG level'da yoziladi (log spam'ni oldini olish uchun).
+    """
+    logger.info("🔄 Blocked retry scheduler boshlandi")
+
+    # Birinchi marta sozlamalarni yuklash
+    app_settings = get_app_settings(force_reload=True)
+    check_interval = app_settings.queue.blocked_check_interval
+
+    while True:
+        try:
+            await asyncio.sleep(check_interval)
+
+            # Settings har safar reload qilinadi (UI'dan o'zgarishlarni ko'rish uchun)
+            # Log DEBUG level'da yoziladi (log spam'ni oldini olish uchun)
+            app_settings = get_app_settings(force_reload=True)
+            check_interval = app_settings.queue.blocked_check_interval
+
+            blocked_tasks = get_blocked_tasks_ready_for_retry()
+            if not blocked_tasks:
+                continue
+
+            logger.info(f"🔄 {len(blocked_tasks)} ta blocked task retry uchun tayyor")
+
+            for task_data in blocked_tasks:
+                task_id = task_data['task_id']
+
+                # Boshqa task progressing bo'lsa — kutish (lock bilan)
+                lock = _get_ai_queue_lock()
+                # Settings reload qilinadi (yangilangan qiymatlarni olish uchun)
+                app_settings = get_app_settings(force_reload=True)
+                timeout = app_settings.queue.task_wait_timeout
+
+                try:
+                    await asyncio.wait_for(lock.acquire(), timeout=timeout)
+                except asyncio.TimeoutError:
+                    logger.warning(f"[{task_id}] Retry: queue timeout, keyingi tsiklda urinadi")
+                    continue
+
+                try:
+                    await _retry_blocked_task(task_id)
+                finally:
+                    lock.release()
+
+        except asyncio.CancelledError:
+            logger.info("🔄 Blocked retry scheduler to'xtatildi")
+            break
+        except Exception as e:
+            logger.error(f"Blocked retry scheduler error: {e}", exc_info=True)
+            # Xato bo'lganda ham reload qilish
+            app_settings = get_app_settings(force_reload=True)
+            check_interval = app_settings.queue.blocked_check_interval
+            await asyncio.sleep(check_interval)
+
+
+# ============================================================================
 # STARTUP EVENT
 # ============================================================================
 
 @app.on_event("startup")
 async def startup_event():
     """Service boshlanganda"""
+    global _blocked_retry_task
+
     app_settings = get_app_settings(force_reload=True)
     settings = app_settings.tz_pr_checker
 
     logger.info("=" * 80)
-    logger.info("JIRA TZ-PR Auto Checker v2.0 Started")
+    logger.info("JIRA TZ-PR Auto Checker v6.0 Started")
     logger.info("=" * 80)
     logger.info(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info(f"Listening on: http://0.0.0.0:8000")
@@ -1391,7 +1757,11 @@ async def startup_event():
     logger.info(f"  - Auto Return: {settings.auto_return_enabled}")
     logger.info(f"  - Threshold: {settings.return_threshold}%")
     logger.info(f"  - Trigger Status: {settings.trigger_status}")
+    logger.info(f"  - Blocked Retry Delay: {app_settings.queue.blocked_retry_delay} min")
     logger.info("=" * 80)
+
+    # Blocked retry scheduler ni ishga tushirish
+    _blocked_retry_task = asyncio.create_task(_blocked_retry_scheduler())
 
 
 # ============================================================================

@@ -17,6 +17,25 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Settings import (lazy loading to avoid circular imports)
+_settings_cache = None
+
+def _get_db_settings():
+    """Get DB settings from app_settings (cached)"""
+    global _settings_cache
+    if _settings_cache is None:
+        try:
+            from config.app_settings import get_app_settings
+            _settings_cache = get_app_settings(force_reload=False).queue
+        except Exception as e:
+            logger.warning(f"Settings yuklanmadi, default ishlatiladi: {e}")
+            # Default values
+            class DefaultSettings:
+                db_busy_timeout = 30000
+                db_connection_timeout = 30.0
+            _settings_cache = DefaultSettings()
+    return _settings_cache
+
 # DB fayl joylashuvi - loyiha root/data papkasi
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DB_DIR = os.path.join(PROJECT_ROOT, 'data')
@@ -35,13 +54,14 @@ def init_db():
     """
     try:
         _ensure_db_dir()
+        settings = _get_db_settings()
 
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
 
         # SQLite optimizatsiyalar concurrent access uchun
         cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA busy_timeout=30000")  # 30s
+        cursor.execute(f"PRAGMA busy_timeout={settings.db_busy_timeout}")
         cursor.execute("PRAGMA foreign_keys=ON")
 
         # task_processing jadvali
@@ -149,33 +169,70 @@ def migrate_db_v2():
         raise
 
 
+def migrate_db_v3():
+    """
+    Migrate DB to v3: add blocked_at, blocked_retry_at, block_reason
+    Idempotent - safe to run multiple times
+    """
+    try:
+        _ensure_db_dir()
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+
+        cursor.execute("PRAGMA table_info(task_processing)")
+        columns = [row[1] for row in cursor.fetchall()]
+
+        if 'blocked_at' in columns:
+            logger.info("✅ DB already migrated to v3")
+            conn.close()
+            return
+
+        logger.info("🔄 DB migration to v3...")
+
+        cursor.execute("ALTER TABLE task_processing ADD COLUMN blocked_at DATETIME NULL")
+        cursor.execute("ALTER TABLE task_processing ADD COLUMN blocked_retry_at DATETIME NULL")
+        cursor.execute("ALTER TABLE task_processing ADD COLUMN block_reason TEXT NULL")
+
+        conn.commit()
+        conn.close()
+        logger.info("✅ DB migration v3 completed!")
+
+    except Exception as e:
+        logger.error(f"❌ DB migration v3 error: {e}", exc_info=True)
+        raise
+
+
 def get_task(task_id: str) -> Optional[Dict[str, Any]]:
     """
     Task ma'lumotlarini olish
-    
+
     Args:
         task_id: JIRA task key (masalan: DEV-1234)
-        
+
     Returns:
         dict yoki None
     """
     try:
-        conn = sqlite3.connect(DB_FILE)
+        settings = _get_db_settings()
+        conn = sqlite3.connect(DB_FILE, timeout=settings.db_connection_timeout)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        
+
+        # WAL mode'da fresh data o'qish uchun
+        cursor.execute("PRAGMA synchronous=FULL")
+
         cursor.execute("""
-            SELECT * FROM task_processing 
+            SELECT * FROM task_processing
             WHERE task_id = ?
         """, (task_id,))
-        
+
         row = cursor.fetchone()
         conn.close()
-        
+
         if row:
             return dict(row)
         return None
-        
+
     except Exception as e:
         logger.error(f"[{task_id}] get_task error: {e}", exc_info=True)
         return None
@@ -190,12 +247,13 @@ def upsert_task(task_id: str, fields: Dict[str, Any]):
         fields: Yangilash kerak bo'lgan maydonlar
     """
     try:
-        conn = sqlite3.connect(DB_FILE, timeout=30.0)
+        settings = _get_db_settings()
+        conn = sqlite3.connect(DB_FILE, timeout=settings.db_connection_timeout)
         cursor = conn.cursor()
 
         # SQLite optimizatsiyalar
         cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.execute(f"PRAGMA busy_timeout={settings.db_busy_timeout}")
 
         # IMMEDIATE transaction - lock olish
         cursor.execute("BEGIN IMMEDIATE")
@@ -267,9 +325,13 @@ def mark_completed(task_id: str):
 def mark_returned(task_id: str):
     """
     Task holatini 'returned' ga o'zgartirish
+    service1=done (o'zgarmaydi), service2=pending (run bo'lmasligi uchun, error emas)
     """
     upsert_task(task_id, {
         'task_status': 'returned',
+        'service1_status': 'done',  # Service1 done bo'lishi kerak (score past bo'lganda ham)
+        'service2_status': 'pending',  # Service2 pending (error emas)
+        'service2_error': None,
         'last_processed_at': datetime.now().isoformat()
     })
 
@@ -331,23 +393,31 @@ def set_service1_done(task_id: str, compliance_score: Optional[int] = None):
     upsert_task(task_id, fields)
 
 
-def set_service1_error(task_id: str, error_msg: str):
+def set_service1_error(task_id: str, error_msg: str, keep_service2_pending: bool = False):
     """
     Service1 (TZ-PR) holatini 'error' ga o'zgartirish
-    Service2 ham avtomatik bloklangan holatga o'tadi
 
     Args:
         task_id: JIRA task key
         error_msg: Xato xabari
+        keep_service2_pending: True bo'lsa service2 'pending' ga o'rnatiladi
+                               (masalan: PR topilmadi xatosida Service2 TZ-only bilan ishlaydi)
     """
-    upsert_task(task_id, {
+    fields = {
         'service1_status': 'error',
         'service1_error': error_msg,
-        'service2_status': 'error',
-        'service2_error': 'Blocked by Service1 failure',
         'task_status': 'error',
         'last_processed_at': datetime.now().isoformat()
-    })
+    }
+    if keep_service2_pending:
+        # Service2 ni pending ga o'rnatish (oldingi error holatini tozalash)
+        fields['service2_status'] = 'pending'
+        fields['service2_error'] = None
+    else:
+        fields['service2_status'] = 'error'
+        fields['service2_error'] = 'Blocked by Service1 failure'
+
+    upsert_task(task_id, fields)
 
 
 def set_service2_done(task_id: str):
@@ -396,6 +466,207 @@ def set_task_timeout_error(task_id: str, error_msg: str):
         'error_message': error_msg,
         'last_processed_at': datetime.now().isoformat()
     })
+
+
+def mark_blocked(task_id: str, reason: str, retry_minutes: int = 5):
+    """
+    Task holatini 'blocked' ga o'zgartirish (AI timeout/429 limit)
+
+    Args:
+        task_id: JIRA task key
+        reason: Bloklash sababi
+        retry_minutes: Necha daqiqadan keyin qayta ishlash
+    """
+    now = datetime.now()
+    retry_at = now + timedelta(minutes=retry_minutes)
+    upsert_task(task_id, {
+        'task_status': 'blocked',
+        'error_message': reason,
+        'blocked_at': now.isoformat(),
+        'blocked_retry_at': retry_at.isoformat(),
+        'block_reason': reason,
+        'last_processed_at': now.isoformat()
+    })
+
+
+def set_service1_blocked(task_id: str, reason: str, retry_minutes: int = 5):
+    """
+    Service1 ni 'blocked' va task ni 'blocked' ga o'zgartirish
+    Service2 'pending' qoladi
+
+    Args:
+        task_id: JIRA task key
+        reason: Bloklash sababi
+        retry_minutes: Necha daqiqadan keyin qayta ishlash
+    """
+    now = datetime.now()
+    retry_at = now + timedelta(minutes=retry_minutes)
+    upsert_task(task_id, {
+        'service1_status': 'blocked',
+        'service1_error': reason,
+        'service2_status': 'pending',
+        'task_status': 'blocked',
+        'error_message': reason,
+        'blocked_at': now.isoformat(),
+        'blocked_retry_at': retry_at.isoformat(),
+        'block_reason': reason,
+        'last_processed_at': now.isoformat()
+    })
+
+
+def set_service2_blocked(task_id: str, reason: str, retry_minutes: int = 5):
+    """
+    Service2 ni 'blocked' va task ni 'blocked' ga o'zgartirish
+    Service1 o'zgarmaydi (done yoki skip)
+
+    Args:
+        task_id: JIRA task key
+        reason: Bloklash sababi
+        retry_minutes: Necha daqiqadan keyin qayta ishlash
+    """
+    now = datetime.now()
+    retry_at = now + timedelta(minutes=retry_minutes)
+    upsert_task(task_id, {
+        'service2_status': 'blocked',
+        'service2_error': reason,
+        'task_status': 'blocked',
+        'error_message': reason,
+        'blocked_at': now.isoformat(),
+        'blocked_retry_at': retry_at.isoformat(),
+        'block_reason': reason,
+        'last_processed_at': now.isoformat()
+    })
+
+
+def set_service1_skip(task_id: str):
+    """
+    Service1 ni 'skip' ga o'zgartirish (AI_SKIP code topilganda)
+    Score 100 qo'yiladi (threshold check o'tishi uchun)
+    """
+    upsert_task(task_id, {
+        'service1_status': 'skip',
+        'service1_done_at': datetime.now().isoformat(),
+        'service1_error': None,
+        'compliance_score': 100,
+        'skip_detected': 1
+    })
+
+
+def get_blocked_tasks_ready_for_retry() -> List[Dict[str, Any]]:
+    """
+    Retry vaqti kelgan blocked tasklarni olish
+
+    Returns:
+        blocked_retry_at <= now bo'lgan tasklar ro'yxati
+    """
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        now = datetime.now().isoformat()
+
+        cursor.execute("""
+            SELECT * FROM task_processing
+            WHERE task_status = 'blocked'
+              AND blocked_retry_at IS NOT NULL
+              AND blocked_retry_at <= ?
+            ORDER BY blocked_retry_at ASC
+        """, (now,))
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [dict(row) for row in rows]
+
+    except Exception as e:
+        logger.error(f"get_blocked_tasks_ready_for_retry error: {e}", exc_info=True)
+        return []
+
+
+def delete_task(task_id: str) -> bool:
+    """
+    Taskni DB dan to'liq o'chirish (transaction-safe)
+
+    Args:
+        task_id: JIRA task key
+
+    Returns:
+        True agar o'chirilsa, False agar topilmasa
+    """
+    conn = None
+    try:
+        settings = _get_db_settings()
+        conn = sqlite3.connect(DB_FILE, timeout=settings.db_connection_timeout)
+        cursor = conn.cursor()
+
+        # SQLite optimizatsiyalar
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute(f"PRAGMA busy_timeout={settings.db_busy_timeout}")
+
+        # IMMEDIATE transaction - lock olish va to'liq o'chirishni ta'minlash
+        cursor.execute("BEGIN IMMEDIATE")
+
+        # Avval taskni tekshirish
+        cursor.execute("SELECT task_id FROM task_processing WHERE task_id = ?", (task_id,))
+        exists = cursor.fetchone()
+
+        if exists:
+            # Taskni o'chirish
+            cursor.execute("DELETE FROM task_processing WHERE task_id = ?", (task_id,))
+            deleted_count = cursor.rowcount
+            conn.commit()
+
+            # WAL mode checkpoint (to'liq yozish)
+            cursor.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+            # O'chirilganini tekshirish (verification)
+            cursor.execute("SELECT task_id FROM task_processing WHERE task_id = ?", (task_id,))
+            still_exists = cursor.fetchone()
+
+            if still_exists:
+                conn.close()
+                conn = None
+                logger.error(f"[{task_id}] ❌ Task o'chirilmadi - DELETE qilgandan keyin hali ham mavjud!")
+                return False
+            else:
+                conn.close()
+                conn = None
+                logger.info(f"[{task_id}] ✅ Task DB dan to'liq o'chirildi (deleted_count={deleted_count}, WAL checkpoint done)")
+                return True
+        else:
+            conn.commit()
+            conn.close()
+            conn = None
+            logger.warning(f"[{task_id}] ⚠️ Task DB da topilmadi (o'chirish kerak emas)")
+            return False
+
+    except sqlite3.OperationalError as e:
+        logger.error(f"[{task_id}] SQLite lock error: {e}", exc_info=True)
+        if 'locked' in str(e).lower():
+            logger.error(f"[{task_id}] Database locked, retry recommended")
+        if conn:
+            try:
+                conn.rollback()
+                conn.close()
+            except:
+                pass
+        return False
+    except Exception as e:
+        logger.error(f"[{task_id}] delete_task error: {e}", exc_info=True)
+        if conn:
+            try:
+                conn.rollback()
+                conn.close()
+            except:
+                pass
+        return False
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 
 def reset_service_statuses(task_id: str):
@@ -595,5 +866,6 @@ def get_stuck_tasks(timeout_minutes: int = 30) -> List[Dict[str, Any]]:
 try:
     init_db()
     migrate_db_v2()  # ✅ Auto-migrate to v2
+    migrate_db_v3()  # ✅ Auto-migrate to v3 (blocked status)
 except Exception as e:
     logger.warning(f"DB initialization warning: {e}")
