@@ -217,7 +217,14 @@ class SmartPatchHelper:
         if not contents_url:
             return None
 
-        response = session.get(contents_url, timeout=30)
+        # Get timeout from settings
+        try:
+            from config.app_settings import get_app_settings
+            timeout = get_app_settings(force_reload=False).queue.http_timeout
+        except Exception:
+            timeout = 30  # Default fallback
+
+        response = session.get(contents_url, timeout=timeout)
 
         if response.status_code == 200:
             content_data = response.json()
@@ -239,8 +246,15 @@ class SmartPatchHelper:
         if not (file_sha and owner and repo):
             return None
 
+        # Get timeout from settings
+        try:
+            from config.app_settings import get_app_settings
+            timeout = get_app_settings(force_reload=False).queue.http_timeout
+        except Exception:
+            timeout = 30  # Default fallback
+
         blob_url = f"https://api.github.com/repos/{owner}/{repo}/git/blobs/{file_sha}"
-        response = session.get(blob_url, timeout=30)
+        response = session.get(blob_url, timeout=timeout)
 
         if response.status_code == 200:
             blob_data = response.json()
@@ -260,7 +274,14 @@ class SmartPatchHelper:
         if not raw_url:
             return None
 
-        response = session.get(raw_url, timeout=30)
+        # Get timeout from settings
+        try:
+            from config.app_settings import get_app_settings
+            timeout = get_app_settings(force_reload=False).queue.http_timeout
+        except Exception:
+            timeout = 30  # Default fallback
+
+        response = session.get(raw_url, timeout=timeout)
 
         if response.status_code == 200:
             return response.text

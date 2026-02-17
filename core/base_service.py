@@ -13,6 +13,25 @@ Xususiyatlari:
 
 from typing import Optional, Callable
 
+# Settings cache (lazy loading)
+_settings_cache = None
+
+def _get_base_settings():
+    """Get base service settings from app_settings (cached)"""
+    global _settings_cache
+    if _settings_cache is None:
+        try:
+            from config.app_settings import get_app_settings
+            _settings_cache = get_app_settings(force_reload=False).queue
+        except Exception as e:
+            # Default values
+            class DefaultSettings:
+                ai_max_input_tokens = 900000
+                chars_per_token = 4
+                ai_max_retries = 3
+            _settings_cache = DefaultSettings()
+    return _settings_cache
+
 
 class BaseService:
     """
@@ -31,10 +50,11 @@ class BaseService:
         self._github_client = None
         self._gemini_helper = None
 
-        # AI Configuration
-        self.MAX_TOKENS = 900000  # Gemini 2.5 Flash limit (1M dan kam)
-        self.CHARS_PER_TOKEN = 4  # Taxminan token o'lchami
-        self.MAX_RETRIES = 3  # API retry limiti
+        # AI Configuration (settings dan)
+        settings = _get_base_settings()
+        self.MAX_TOKENS = settings.ai_max_input_tokens
+        self.CHARS_PER_TOKEN = settings.chars_per_token
+        self.MAX_RETRIES = settings.ai_max_retries
 
     @property
     def jira(self):

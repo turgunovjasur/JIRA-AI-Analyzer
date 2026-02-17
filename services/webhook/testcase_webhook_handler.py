@@ -16,7 +16,8 @@ logger = logging.getLogger(__name__)
 
 async def check_and_generate_testcases(
         task_key: str,
-        new_status: str
+        new_status: str,
+        include_pr: Optional[bool] = None
 ) -> Tuple[bool, str]:
     """
     Status o'zgarganda avtomatik test case yaratish va comment yozish
@@ -24,6 +25,7 @@ async def check_and_generate_testcases(
     Args:
         task_key: JIRA task key (masalan: DEV-1234)
         new_status: Yangi status nomi
+        include_pr: PR ni hisobga olish (None = settingsdan, False = TZ-only)
 
     Returns:
         Tuple[bool, str]: (success, message)
@@ -49,7 +51,10 @@ async def check_and_generate_testcases(
         logger.info(f"[{task_key}] Status '{new_status}' not in trigger list: {trigger_statuses}")
         return False, f"Status '{new_status}' is not a trigger"
 
-    logger.info(f"[{task_key}] Generating testcases for status: {new_status}")
+    # include_pr: None → settingsdan, False → TZ-only
+    use_pr = include_pr if include_pr is not None else tc_settings.default_include_pr
+
+    logger.info(f"[{task_key}] Generating testcases for status: {new_status} (include_pr={use_pr})")
 
     try:
         # 3. Test case'lar yaratish
@@ -59,7 +64,7 @@ async def check_and_generate_testcases(
 
         result = service.generate_test_cases(
             task_key=task_key,
-            include_pr=tc_settings.default_include_pr,
+            include_pr=use_pr,
             use_smart_patch=tc_settings.default_use_smart_patch,
             test_types=tc_settings.default_test_types,
             custom_context="",
@@ -192,7 +197,14 @@ def generate_testcases_sync(
                     asyncio.run,
                     check_and_generate_testcases(task_key, new_status)
                 )
-                return future.result(timeout=120)  # 2 daqiqa timeout
+                # Get timeout from settings
+                try:
+                    from config.app_settings import get_app_settings
+                    executor_timeout = get_app_settings(force_reload=False).queue.executor_timeout
+                except Exception:
+                    executor_timeout = 120  # Default fallback (2 daqiqa)
+                
+                return future.result(timeout=executor_timeout)
         else:
             return loop.run_until_complete(
                 check_and_generate_testcases(task_key, new_status)

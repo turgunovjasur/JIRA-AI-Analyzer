@@ -56,7 +56,14 @@ class GitHubClient:
                 print(f"⏳ Rate limit kutish: {wait_time:.0f} sekund")
                 time.sleep(wait_time + 1)
 
-        response = requests.get(url, headers=headers, params=params, timeout=30)
+        # Get timeout from settings
+        try:
+            from config.app_settings import get_app_settings
+            timeout = get_app_settings(force_reload=False).queue.http_timeout
+        except Exception:
+            timeout = 30  # Default fallback
+        
+        response = requests.get(url, headers=headers, params=params, timeout=timeout)
 
         # Rate limit yangilash
         self.rate_limit_remaining = int(response.headers.get('X-RateLimit-Remaining', 5000))

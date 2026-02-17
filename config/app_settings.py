@@ -177,6 +177,10 @@ class TZPRCheckerSettings:
         'completed', 'partial', 'failed', 'issues', 'figma'
     ])
 
+    # ━━━ Skip Code ━━━
+    # AI_SKIP tekshirish uchun nechta oxirgi comment ko'riladi
+    max_skip_check_comments: int = 5   # DEFAULT 5 ta comment
+
     # Yordam matnlari
     return_threshold_help: str = "Moslik bali shu foizdan past bo'lsa task qaytariladi (0-100)"
     auto_return_help: str = "Moslik past bo'lganda avtomatik Return statusga o'tkazish"
@@ -203,6 +207,10 @@ class TZPRCheckerSettings:
     visible_sections_help: str = (
         "JIRA comment'ga yoziladigan bo'limlar. "
         "O'chirilgan bo'limlar comment'ga kiritmaydi (token tejash)."
+    )
+    max_skip_check_comments_help: str = (
+        "AI_SKIP kodi qidirilayotganda JIRA ning oxirgi nechta commenti tekshiriladi. "
+        "5 = oxirgi 5 ta comment. Oshirsangiz eski commentlardan ham topadi."
     )
 
     def get_trigger_statuses(self) -> List[str]:
@@ -288,6 +296,31 @@ class QueueSettings:
     # Checker → Testcase delay (sekunda):
     # Bitta task ichida checker comment yozgandan so'ng testcasegacha kutish
     checker_testcase_delay: int = 15    # DEFAULT 15 sek
+    # Blocked task qayta ishlash vaqti (daqiqa):
+    # AI timeout/429 sabab blocked bo'lgan task necha daqiqadan keyin qayta run
+    blocked_retry_delay: int = 5        # DEFAULT 5 daqiqa
+
+    # ━━━ AI va Tizim Sozlamalari ━━━
+    # Gemini so'rovlar orasidagi min kutish vaqti (sekund)
+    gemini_min_interval: int = 6        # DEFAULT 6 sek (10 req/min = 60/10)
+    # Blocked task scheduler tekshirish oraligi (sekund)
+    blocked_check_interval: int = 30   # DEFAULT 30 sek
+    # API KEY muzlatish muddati — limit xatosida (sekund)
+    key_freeze_duration: int = 600     # DEFAULT 600 sek (10 daqiqa)
+    # AI so'rov muvaffaqiyatsiz bo'lsa qayta urinish limiti
+    ai_max_retries: int = 3            # DEFAULT 3 marta
+    # Gemini ga yuboriladigan max input token soni
+    ai_max_input_tokens: int = 900000  # DEFAULT 900K (Gemini 2.5 Flash limit 1M)
+    # Token hisoblash koeffitsiyenti (1 token ≈ nechta belgi)
+    chars_per_token: int = 4           # DEFAULT 4 belgi
+    # SQLite bloklanganda kutish (millisekund)
+    db_busy_timeout: int = 30000       # DEFAULT 30000 ms (30 sek)
+    # SQLite ulanish timeout (sekund)
+    db_connection_timeout: int = 30    # DEFAULT 30 sek
+    # GitHub/API so'rov timeout (sekund)
+    http_timeout: int = 30             # DEFAULT 30 sek
+    # Testcase executor yakunlash timeout (sekund)
+    executor_timeout: int = 120        # DEFAULT 120 sek (2 daqiqa)
 
     # Yordam matnlari
     queue_enabled_help: str = "Ko'p task birdan kelgan bo'lsa queue ile birma-bir tekshirish (AI rate limit himoya)"
@@ -298,6 +331,52 @@ class QueueSettings:
     checker_testcase_delay_help: str = (
         "Bitta task ichida checker comment yozgandan so'ng, testcase commentgacha "
         "qancha sekunda kutiladi? Bu AI rate limit'dan himoya qiladi."
+    )
+    blocked_retry_delay_help: str = (
+        "AI timeout yoki 429 limit sabab blocked bo'lgan task necha daqiqadan keyin "
+        "qayta ishga tushiriladi. Masalan: 5 daqiqa = 5 daqiqadan keyin qayta urinadi."
+    )
+    gemini_min_interval_help: str = (
+        "Gemini AI ga ketma-ket so'rov yuborishda min kutish vaqti (sekund). "
+        "Google rate limit: 10 so'rov/daqiqa = 6 sekund. "
+        "Agar limitga tushsangiz bu qiymatni oshiring."
+    )
+    blocked_check_interval_help: str = (
+        "Blocked bo'lgan tasklar uchun scheduler har necha sekundda DB ni tekshiradi. "
+        "Kichik qiymat — tezroq retry, katta qiymat — kamroq DB yuklanma."
+    )
+    key_freeze_duration_help: str = (
+        "Gemini API KEY_1 limit xatosi bo'lganda, KEY_1 necha sekundga muzlatiladi. "
+        "Bu vaqt ichida faqat KEY_2 ishlatiladi. Muddat tugagach KEY_1 ga qaytiladi."
+    )
+    ai_max_retries_help: str = (
+        "AI so'rov muvaffaqiyatsiz bo'lganda necha marta qayta urinish. "
+        "Har bir urinish orasida kutish bo'ladi."
+    )
+    ai_max_input_tokens_help: str = (
+        "Gemini AI ga yuboriladigan max input token soni. "
+        "Gemini 2.5 Flash limiti 1M token. 900000 xavfsiz chegaradir. "
+        "Katta TZ+PR lar uchun oshirish mumkin."
+    )
+    chars_per_token_help: str = (
+        "Token hisoblash koeffitsiyenti — 1 token taxminan nechta belgiga teng. "
+        "4 standart qiymat. O'zgartirish tavsiya etilmaydi."
+    )
+    db_busy_timeout_help: str = (
+        "SQLite boshqa jarayon tomonidan bloklanganda qancha vaqt kutadi (millisekund). "
+        "30000 = 30 sekund. Concurrent access muammosi bo'lsa oshiring."
+    )
+    db_connection_timeout_help: str = (
+        "SQLite ga ulanish ochish timeout (sekund). "
+        "Normal sharoitda 30 sekund yetarli."
+    )
+    http_timeout_help: str = (
+        "GitHub API va boshqa HTTP so'rovlar uchun timeout (sekund). "
+        "Sekin internet yoki katta repository bo'lsa oshiring."
+    )
+    executor_timeout_help: str = (
+        "Testcase generation executor yakunlash timeout (sekund). "
+        "Katta task bo'lsa va AI javob sekin bo'lsa oshiring. 120 = 2 daqiqa."
     )
 
 
@@ -414,10 +493,11 @@ class AppSettingsManager:
                     queue=QueueSettings(**data.get('queue', {}))
                 )
 
-                logger.info(f"Sozlamalar yuklandi: {SETTINGS_FILE}")
+                # Log faqat DEBUG level'da (har safar log yozilmasligi uchun)
+                logger.debug(f"Sozlamalar yuklandi: {SETTINGS_FILE}")
                 return settings
             else:
-                logger.info("Sozlamalar fayli topilmadi, default ishlatiladi")
+                logger.debug("Sozlamalar fayli topilmadi, default ishlatiladi")
                 return AppSettings()
         except Exception as e:
             logger.warning(f"Sozlamalarni yuklashda xato: {e}, default ishlatiladi")

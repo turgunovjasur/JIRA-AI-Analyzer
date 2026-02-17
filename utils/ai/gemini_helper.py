@@ -8,13 +8,34 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+# Settings cache (lazy loading)
+_settings_cache = None
+
+def _get_gemini_settings():
+    """Get Gemini settings from app_settings (cached)"""
+    global _settings_cache
+    if _settings_cache is None:
+        try:
+            from config.app_settings import get_app_settings
+            _settings_cache = get_app_settings(force_reload=False).queue
+        except Exception as e:
+            logger.warning(f"Settings yuklanmadi, default ishlatiladi: {e}")
+            # Default values
+            class DefaultSettings:
+                gemini_min_interval = 6
+                key_freeze_duration = 600
+            _settings_cache = DefaultSettings()
+    return _settings_cache
+
 
 class GeminiHelper:
     """
-    Gemini AI Helper - API Key Fallback bilan
+    Gemini AI Helper - API Key Fallback + Freeze bilan
 
     Agar GOOGLE_API_KEY bilan xatolik bo'lsa (limit, quota, invalid),
-    avtomatik GOOGLE_API_KEY_2 ga o'tadi (agar mavjud bo'lsa).
+    KEY_1 10 daqiqaga muzlatiladi va KEY_2 ga o'tiladi.
+    10 daqiqa o'tgach KEY_1 ga qaytiladi.
+    Agar KEY_2 ham xato bersa — xatolik raise qilinadi.
     """
 
     # Fallback tetiklaydigan xatolik kalit so'zlari
@@ -30,6 +51,9 @@ class GeminiHelper:
         self.api_key_2 = os.getenv('GOOGLE_API_KEY_2')
         self.current_key = self.api_key_1
         self.using_fallback = False
+
+        # KEY_1 muzlatish holati
+        self._key1_frozen_until = None  # timestamp — qachon muzlatish tugaydi
 
         # Model nomi
         self.model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
@@ -50,8 +74,9 @@ class GeminiHelper:
         print(f"Gemini AI tayyor: {self.model_name} | {key_status}")
 
     def _rate_limit(self):
-        """Rate limiting: max 10 req/min"""
-        min_interval = 6  # 60/10 = 6 sekund
+        """Rate limiting: max 10 req/min (settings dan)"""
+        settings = _get_gemini_settings()
+        min_interval = settings.gemini_min_interval
 
         elapsed = time.time() - self.last_request_time
         if elapsed < min_interval:
@@ -66,6 +91,31 @@ class GeminiHelper:
         """Xatolik fallback talab qiladimi tekshirish"""
         error_msg = str(error).lower()
         return any(kw in error_msg for kw in self.FALLBACK_ERROR_KEYWORDS)
+
+    def _is_key1_frozen(self) -> bool:
+        """KEY_1 hali muzlatilganmi?"""
+        if self._key1_frozen_until is None:
+            return False
+        return time.time() < self._key1_frozen_until
+
+    def _freeze_key1(self):
+        """KEY_1 ni N daqiqaga muzlatish — bu vaqt ichida faqat KEY_2 ishlatiladi"""
+        settings = _get_gemini_settings()
+        freeze_duration = settings.key_freeze_duration
+        self._key1_frozen_until = time.time() + freeze_duration
+        remaining_min = freeze_duration / 60
+        logger.warning(f"🔒 KEY_1 muzlatildi: {remaining_min:.0f} daqiqaga")
+        print(f"🔒 KEY_1 muzlatildi: {remaining_min:.0f} daqiqaga")
+
+    def _unfreeze_key1(self):
+        """KEY_1 ni qayta faollashtirish va primary key ga qaytish"""
+        self._key1_frozen_until = None
+        self.using_fallback = False
+        self.current_key = self.api_key_1
+        genai.configure(api_key=self.current_key)
+        self.model = genai.GenerativeModel(self.model_name)
+        logger.info("🔓 KEY_1 qayta faollashtirildi (muzlatish muddati tugadi)")
+        print("🔓 KEY_1 qayta faollashtirildi (muzlatish muddati tugadi)")
 
     def _switch_to_fallback(self) -> bool:
         """
@@ -95,11 +145,14 @@ class GeminiHelper:
 
     def analyze(self, prompt, max_output_tokens=8192):
         """
-        Gemini bilan tahlil — API Key Fallback bilan
+        Gemini bilan tahlil — API Key Freeze + Fallback bilan
 
-        1. Asosiy key bilan so'rov yuboriladi
-        2. Xatolik bo'lsa va fallback mumkin bo'lsa — KEY_2 bilan qayta urinadi
-        3. Ikkinchi key ham xato bersa — xatolik raise qilinadi
+        Logika:
+        1. KEY_1 muzlatilgan bo'lsa → KEY_2 bilan ishlash
+        2. KEY_1 muzlatish muddati o'tgan bo'lsa → KEY_1 ga qaytish
+        3. KEY_1 bilan so'rov yuborish
+        4. KEY_1 xato → KEY_1 ni 10 daqiqaga muzlatish → KEY_2 bilan qayta urinish
+        5. KEY_2 ham xato → RuntimeError raise
 
         Args:
             prompt: AI ga yuboriladigan prompt
@@ -111,29 +164,64 @@ class GeminiHelper:
             max_output_tokens=max_output_tokens,
         )
 
+        # === 1. KEY_1 muzlatilgan — faqat KEY_2 bilan ishlash ===
+        if self._is_key1_frozen():
+            remaining = self._key1_frozen_until - time.time()
+            logger.info(f"🔒 KEY_1 muzlatilgan ({remaining:.0f}s qoldi), KEY_2 bilan ishlash")
+
+            # KEY_2 ga o'tish (agar hali o'tmagan bo'lsa)
+            if not self.using_fallback:
+                if not self._switch_to_fallback():
+                    raise RuntimeError(
+                        "KEY_1 muzlatilgan, KEY_2 mavjud emas — so'rov yuborib bo'lmaydi"
+                    )
+
+            try:
+                response = self.model.generate_content(prompt, generation_config=generation_config)
+                return response.text
+            except Exception as e:
+                logger.error(f"❌ KEY_2 xato (KEY_1 muzlatilgan): {e}")
+                raise RuntimeError(
+                    f"KEY_2 ham xato berdi (KEY_1 muzlatilgan): {str(e)}"
+                ) from e
+
+        # === 2. KEY_1 muzlatish muddati tugagan — qaytish ===
+        if self._key1_frozen_until is not None and not self._is_key1_frozen():
+            self._unfreeze_key1()
+
+        # === 3. KEY_1 bilan normal ishlash ===
+        # Agar hali fallback da bo'lsa (bu bo'lmasligi kerak, lekin himoya uchun)
+        if self.using_fallback and not self._is_key1_frozen():
+            self._unfreeze_key1()
+
         try:
             response = self.model.generate_content(prompt, generation_config=generation_config)
             return response.text
         except Exception as e:
-            # Fallback kerakmi tekshirish
-            if self._is_fallback_error(e) and self._switch_to_fallback():
-                logger.warning(f"⚠️ Asosiy API key xato: {e}")
-                logger.info("🔄 Fallback key bilan qayta urinish...")
-                print(f"⚠️ Asosiy API key xato: {e}")
-                print("🔄 Fallback key bilan qayta urinish...")
+            # === 4. KEY_1 xato — muzlatish va KEY_2 ga o'tish ===
+            if self._is_fallback_error(e):
+                logger.warning(f"⚠️ KEY_1 xato: {e}")
+                print(f"⚠️ KEY_1 xato: {e}")
 
-                # Fallback key bilan qayta urinish
-                self._rate_limit()
-                try:
-                    response = self.model.generate_content(prompt, generation_config=generation_config)
-                    logger.info("✅ Fallback key bilan muvaffaqiyatli!")
-                    print("✅ Fallback key bilan muvaffaqiyatli!")
-                    return response.text
-                except Exception as e2:
-                    logger.error(f"❌ Fallback key ham xato berdi: {e2}")
-                    raise RuntimeError(
-                        f"Gemini API xatosi (ikkala key ham ishlamadi): {str(e2)}"
-                    ) from e2
+                # KEY_1 ni muzlatish
+                self._freeze_key1()
 
-            # Fallback imkonsiz yoki xatolik turi boshqa
+                if self._switch_to_fallback():
+                    logger.info("🔄 KEY_2 bilan qayta urinish...")
+                    print("🔄 KEY_2 bilan qayta urinish...")
+
+                    # KEY_2 bilan qayta urinish
+                    self._rate_limit()
+                    try:
+                        response = self.model.generate_content(prompt, generation_config=generation_config)
+                        logger.info("✅ KEY_2 bilan muvaffaqiyatli!")
+                        print("✅ KEY_2 bilan muvaffaqiyatli!")
+                        return response.text
+                    except Exception as e2:
+                        logger.error(f"❌ KEY_2 ham xato berdi: {e2}")
+                        raise RuntimeError(
+                            f"Gemini API xatosi (ikkala key ham ishlamadi): {str(e2)}"
+                        ) from e2
+
+            # === 5. Fallback imkonsiz yoki xatolik turi boshqa ===
             raise RuntimeError(f"Gemini API xatosi: {str(e)}") from e

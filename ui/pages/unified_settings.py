@@ -540,7 +540,44 @@ def _render_tz_pr_settings(settings: AppSettings) -> TZPRCheckerSettings:
 
     st.markdown("---")
 
-    # ━━━ 7. TZ-PR Comment Footer ━━━
+    # ━━━ 7. Comment Format va Ko'rsatish ━━━
+    st.markdown("#### 🎨 Comment Format va Ko'rsatish")
+
+    use_adf_format = st.checkbox(
+        "ADF Format (Dropdown Panellar)",
+        value=settings.tz_pr_checker.use_adf_format,
+        help=settings.tz_pr_checker.use_adf_help,
+        key="tzpr_use_adf"
+    )
+
+    show_statistics = st.checkbox(
+        "PR Statistika Ko'rsatish",
+        value=settings.tz_pr_checker.show_statistics,
+        help=settings.tz_pr_checker.show_statistics_help,
+        key="tzpr_show_statistics"
+    )
+
+    show_compliance_score = st.checkbox(
+        "Moslik Bali Ko'rsatish",
+        value=settings.tz_pr_checker.show_compliance_score,
+        help=settings.tz_pr_checker.show_compliance_help,
+        key="tzpr_show_compliance"
+    )
+
+    max_skip_check_comments = st.slider(
+        "Skip Code Tekshirish (nechta comment)",
+        min_value=3,
+        max_value=50,
+        value=settings.tz_pr_checker.max_skip_check_comments,
+        step=1,
+        help=settings.tz_pr_checker.max_skip_check_comments_help,
+        key="tzpr_max_skip_check"
+    )
+    st.caption(f"AI_SKIP kodi qidirilganda oxirgi {max_skip_check_comments} ta comment tekshiriladi")
+
+    st.markdown("---")
+
+    # ━━━ 8. TZ-PR Comment Footer ━━━
     st.markdown("#### 📝 Comment Footer")
 
     tz_pr_footer_text = st.text_area(
@@ -557,11 +594,12 @@ def _render_tz_pr_settings(settings: AppSettings) -> TZPRCheckerSettings:
         trigger_status=trigger_status,
         trigger_status_aliases=trigger_aliases,
         return_status=return_status,
-        use_adf_format=True,
-        show_statistics=True,
-        show_compliance_score=True,
+        use_adf_format=use_adf_format,
+        show_statistics=show_statistics,
+        show_compliance_score=show_compliance_score,
         read_comments_enabled=tzpr_read_comments,
         max_comments_to_read=tzpr_max_comments,
+        max_skip_check_comments=max_skip_check_comments,
         tz_pr_footer_text=tz_pr_footer_text,
         return_notification_text=return_notification_text,
         skip_code=skip_code,
@@ -809,16 +847,193 @@ def _render_system_settings(settings: AppSettings) -> QueueSettings:
 
         st.caption(f"Checker comment yozgandan so'ng {checker_testcase_delay}s kutiladi")
 
+        st.markdown("---")
+
+        # ━━━ Blocked Task Qayta Ishlash ━━━
+        st.markdown("#### 🔒 Blocked Task Qayta Ishlash")
+        st.markdown("""
+        <div style="background: rgba(76, 154, 255, 0.08); padding: 0.7rem; border-radius: 8px; margin-bottom: 0.7rem;">
+            <p style="color: #8b949e; margin: 0; font-size: 0.85rem;">
+                💡 AI timeout yoki 429 rate limit sabab blocked bo'lgan task
+                belgilangan vaqtdan keyin avtomatik qayta ishga tushiriladi.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        blocked_retry_delay = _render_setting_with_help(
+            "Blocked Task Qayta Ishlash Vaqti (daqiqa)",
+            settings.queue.blocked_retry_delay,
+            settings.queue.blocked_retry_delay_help,
+            "slider",
+            "sys_blocked_retry_delay",
+            min_value=1,
+            max_value=60,
+            step=1
+        )
+
+        st.caption(f"Blocked task {blocked_retry_delay} daqiqadan keyin qayta urinadi")
+
+        st.markdown("---")
+
+        # ━━━ AI va Tizim Sozlamalari ━━━
+        st.markdown("#### 🔧 AI va Tizim Sozlamalari")
+        st.markdown("""
+        <div style="background: rgba(88, 166, 255, 0.08); padding: 0.7rem; border-radius: 8px; margin-bottom: 0.7rem;">
+            <p style="color: #8b949e; margin: 0; font-size: 0.85rem;">
+                💡 AI so'rovlar, DB va HTTP so'rovlar uchun ichki sozlamalar.
+                O'zgartirish faqat muammo bo'lganda tavsiya etiladi.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        gemini_min_interval = _render_setting_with_help(
+            "Gemini So'rov Intervali (sek)",
+            settings.queue.gemini_min_interval,
+            settings.queue.gemini_min_interval_help,
+            "slider",
+            "sys_gemini_min_interval",
+            min_value=3,
+            max_value=15,
+            step=1
+        )
+
+        blocked_check_interval = _render_setting_with_help(
+            "Blocked Tekshirish Oraligi (sek)",
+            settings.queue.blocked_check_interval,
+            settings.queue.blocked_check_interval_help,
+            "slider",
+            "sys_blocked_check_interval",
+            min_value=10,
+            max_value=120,
+            step=10
+        )
+
+        key_freeze_duration = _render_setting_with_help(
+            "KEY Muzlatish Muddati (daqiqa)",
+            settings.queue.key_freeze_duration // 60,
+            settings.queue.key_freeze_duration_help,
+            "slider",
+            "sys_key_freeze_duration",
+            min_value=1,
+            max_value=30,
+            step=1
+        )
+        # Convert back to seconds for storage
+        key_freeze_duration_seconds = key_freeze_duration * 60
+
+        ai_max_retries = _render_setting_with_help(
+            "AI Qayta Urinish Limiti",
+            settings.queue.ai_max_retries,
+            settings.queue.ai_max_retries_help,
+            "slider",
+            "sys_ai_max_retries",
+            min_value=1,
+            max_value=10,
+            step=1
+        )
+
+        ai_max_input_tokens = _render_setting_with_help(
+            "AI Max Input Token (K)",
+            settings.queue.ai_max_input_tokens // 1000,
+            settings.queue.ai_max_input_tokens_help,
+            "slider",
+            "sys_ai_max_input_tokens",
+            min_value=500,
+            max_value=1500,
+            step=50
+        )
+        # Convert back to tokens for storage
+        ai_max_input_tokens_value = ai_max_input_tokens * 1000
+
+        chars_per_token = _render_setting_with_help(
+            "Token Koeffitsiyenti (belgi/token)",
+            settings.queue.chars_per_token,
+            settings.queue.chars_per_token_help,
+            "slider",
+            "sys_chars_per_token",
+            min_value=2,
+            max_value=8,
+            step=1
+        )
+
+        db_busy_timeout = _render_setting_with_help(
+            "DB Busy Timeout (sek)",
+            settings.queue.db_busy_timeout // 1000,
+            settings.queue.db_busy_timeout_help,
+            "slider",
+            "sys_db_busy_timeout",
+            min_value=5,
+            max_value=60,
+            step=5
+        )
+        # Convert back to milliseconds for storage
+        db_busy_timeout_ms = db_busy_timeout * 1000
+
+        db_connection_timeout = _render_setting_with_help(
+            "DB Connection Timeout (sek)",
+            settings.queue.db_connection_timeout,
+            settings.queue.db_connection_timeout_help,
+            "slider",
+            "sys_db_connection_timeout",
+            min_value=5,
+            max_value=60,
+            step=5
+        )
+
+        http_timeout = _render_setting_with_help(
+            "HTTP So'rov Timeout (sek)",
+            settings.queue.http_timeout,
+            settings.queue.http_timeout_help,
+            "slider",
+            "sys_http_timeout",
+            min_value=10,
+            max_value=120,
+            step=10
+        )
+
+        executor_timeout = _render_setting_with_help(
+            "Executor Timeout (sek)",
+            settings.queue.executor_timeout,
+            settings.queue.executor_timeout_help,
+            "slider",
+            "sys_executor_timeout",
+            min_value=60,
+            max_value=600,
+            step=30
+        )
+
     else:
         st.warning("⚠️ Queue o'chirilgan — ko'p task birdan kelgan bo'lsa API limit mumkin")
         # Qiymatlar saqlash (UI ko'rsatilmasa da o'zgartirilmaydi)
         task_wait_timeout = settings.queue.task_wait_timeout
         checker_testcase_delay = settings.queue.checker_testcase_delay
+        blocked_retry_delay = settings.queue.blocked_retry_delay
+        gemini_min_interval = settings.queue.gemini_min_interval
+        blocked_check_interval = settings.queue.blocked_check_interval
+        key_freeze_duration_seconds = settings.queue.key_freeze_duration
+        ai_max_retries = settings.queue.ai_max_retries
+        ai_max_input_tokens_value = settings.queue.ai_max_input_tokens
+        chars_per_token = settings.queue.chars_per_token
+        db_busy_timeout_ms = settings.queue.db_busy_timeout
+        db_connection_timeout = settings.queue.db_connection_timeout
+        http_timeout = settings.queue.http_timeout
+        executor_timeout = settings.queue.executor_timeout
 
     return QueueSettings(
         queue_enabled=queue_enabled,
         task_wait_timeout=task_wait_timeout,
-        checker_testcase_delay=checker_testcase_delay
+        checker_testcase_delay=checker_testcase_delay,
+        blocked_retry_delay=blocked_retry_delay,
+        gemini_min_interval=gemini_min_interval,
+        blocked_check_interval=blocked_check_interval,
+        key_freeze_duration=key_freeze_duration_seconds,
+        ai_max_retries=ai_max_retries,
+        ai_max_input_tokens=ai_max_input_tokens_value,
+        chars_per_token=chars_per_token,
+        db_busy_timeout=db_busy_timeout_ms,
+        db_connection_timeout=db_connection_timeout,
+        http_timeout=http_timeout,
+        executor_timeout=executor_timeout
     )
 
 

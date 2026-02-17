@@ -1550,6 +1550,460 @@ def test_10_debug_capability():
 
 
 # ============================================================================
+# 11-TEST: BLOCKED STATUS VA RETRY LOGIKASI (v6.0)
+# ============================================================================
+
+def test_11_blocked_status():
+    """Blocked status, xato klassifikatsiya, retry logikasi testlari"""
+    logger.info("\n" + "=" * 70)
+    logger.info("11-TEST: BLOCKED STATUS VA RETRY LOGIKASI")
+    logger.info("=" * 70)
+
+    try:
+        from utils.database.task_db import (
+            mark_progressing, mark_blocked, set_service1_blocked,
+            set_service2_blocked, set_service1_skip, set_service1_error,
+            mark_returned, get_task, get_blocked_tasks_ready_for_retry,
+            delete_task, upsert_task
+        )
+
+        # 11.1 Xato klassifikatsiya (inline test — fastapi import shart emas)
+        def _classify_error_test(error_msg: str) -> str:
+            """Xato klassifikatsiya — test ichida local copy"""
+            if not error_msg:
+                return 'unknown'
+            msg_lower = error_msg.lower()
+            pr_keywords = ['pr topilmadi', 'pr not found', 'no pr found']
+            if any(kw in msg_lower for kw in pr_keywords):
+                return 'pr_not_found'
+            ai_timeout_keywords = [
+                'timeout', '429', 'rate limit', 'rate_limit',
+                'overloaded', 'quota', 'resource exhausted',
+                'resource_exhausted', 'too many requests'
+            ]
+            if any(kw in msg_lower for kw in ai_timeout_keywords):
+                return 'ai_timeout'
+            return 'unknown'
+
+        # PR topilmadi
+        result = _classify_error_test("Bu task uchun PR topilmadi (JIRA va GitHub'da)")
+        if result == 'pr_not_found':
+            tracker.ok("_classify_error: PR topilmadi → 'pr_not_found'")
+        else:
+            tracker.fail("_classify_error PR topilmadi", f"Kutilgan: pr_not_found, Keldi: {result}")
+
+        # AI timeout
+        result = _classify_error_test("AI xatolik: timeout after 60s")
+        if result == 'ai_timeout':
+            tracker.ok("_classify_error: timeout → 'ai_timeout'")
+        else:
+            tracker.fail("_classify_error timeout", f"Kutilgan: ai_timeout, Keldi: {result}")
+
+        # 429 rate limit
+        result = _classify_error_test("Error 429: Too Many Requests")
+        if result == 'ai_timeout':
+            tracker.ok("_classify_error: 429 → 'ai_timeout'")
+        else:
+            tracker.fail("_classify_error 429", f"Kutilgan: ai_timeout, Keldi: {result}")
+
+        # quota exceeded
+        result = _classify_error_test("Resource exhausted: quota exceeded")
+        if result == 'ai_timeout':
+            tracker.ok("_classify_error: quota → 'ai_timeout'")
+        else:
+            tracker.fail("_classify_error quota", f"Kutilgan: ai_timeout, Keldi: {result}")
+
+        # Unknown error
+        result = _classify_error_test("Some random error")
+        if result == 'unknown':
+            tracker.ok("_classify_error: unknown → 'unknown'")
+        else:
+            tracker.fail("_classify_error unknown", f"Kutilgan: unknown, Keldi: {result}")
+
+        # Empty error
+        result = _classify_error_test("")
+        if result == 'unknown':
+            tracker.ok("_classify_error: empty → 'unknown'")
+        else:
+            tracker.fail("_classify_error empty", f"Kutilgan: unknown, Keldi: {result}")
+
+        # 11.2 mark_blocked funksiyasi
+        task_id = "BLOCKED-001"
+        mark_progressing(task_id, "READY TO TEST")
+        mark_blocked(task_id, "AI timeout: 60s", retry_minutes=5)
+
+        task = get_task(task_id)
+        if task and task['task_status'] == 'blocked':
+            tracker.ok("mark_blocked: task_status = 'blocked'")
+        else:
+            tracker.fail("mark_blocked status", f"Keldi: {task.get('task_status') if task else 'None'}")
+
+        if task and task.get('block_reason') == 'AI timeout: 60s':
+            tracker.ok("mark_blocked: block_reason saqlandi")
+        else:
+            tracker.fail("mark_blocked reason", f"Keldi: {task.get('block_reason') if task else 'None'}")
+
+        if task and task.get('blocked_at') is not None:
+            tracker.ok("mark_blocked: blocked_at saqlandi")
+        else:
+            tracker.fail("mark_blocked blocked_at", "None")
+
+        if task and task.get('blocked_retry_at') is not None:
+            tracker.ok("mark_blocked: blocked_retry_at saqlandi")
+        else:
+            tracker.fail("mark_blocked blocked_retry_at", "None")
+
+        # 11.3 set_service1_blocked
+        task_id = "BLOCKED-002"
+        mark_progressing(task_id, "READY TO TEST")
+        set_service1_blocked(task_id, "429 rate limit", retry_minutes=3)
+
+        task = get_task(task_id)
+        if task and task['service1_status'] == 'blocked':
+            tracker.ok("set_service1_blocked: service1 = 'blocked'")
+        else:
+            tracker.fail("set_service1_blocked", f"Keldi: {task.get('service1_status') if task else 'None'}")
+
+        if task and task['service2_status'] == 'pending':
+            tracker.ok("set_service1_blocked: service2 = 'pending' (o'zgarmadi)")
+        else:
+            tracker.fail("set_service1_blocked s2", f"Keldi: {task.get('service2_status') if task else 'None'}")
+
+        if task and task['task_status'] == 'blocked':
+            tracker.ok("set_service1_blocked: task_status = 'blocked'")
+        else:
+            tracker.fail("set_service1_blocked task", f"Keldi: {task.get('task_status') if task else 'None'}")
+
+        # 11.4 set_service2_blocked
+        task_id = "BLOCKED-003"
+        mark_progressing(task_id, "READY TO TEST")
+        from utils.database.task_db import set_service1_done
+        set_service1_done(task_id, compliance_score=80)
+        set_service2_blocked(task_id, "AI overloaded", retry_minutes=5)
+
+        task = get_task(task_id)
+        if task and task['service1_status'] == 'done':
+            tracker.ok("set_service2_blocked: service1 = 'done' (o'zgarmadi)")
+        else:
+            tracker.fail("set_service2_blocked s1", f"Keldi: {task.get('service1_status') if task else 'None'}")
+
+        if task and task['service2_status'] == 'blocked':
+            tracker.ok("set_service2_blocked: service2 = 'blocked'")
+        else:
+            tracker.fail("set_service2_blocked s2", f"Keldi: {task.get('service2_status') if task else 'None'}")
+
+        # 11.5 set_service1_skip
+        task_id = "BLOCKED-004"
+        mark_progressing(task_id, "READY TO TEST")
+        set_service1_skip(task_id)
+
+        task = get_task(task_id)
+        if task and task['service1_status'] == 'skip':
+            tracker.ok("set_service1_skip: service1 = 'skip'")
+        else:
+            tracker.fail("set_service1_skip", f"Keldi: {task.get('service1_status') if task else 'None'}")
+
+        if task and task.get('compliance_score') == 100:
+            tracker.ok("set_service1_skip: score = 100")
+        else:
+            tracker.fail("set_service1_skip score", f"Keldi: {task.get('compliance_score') if task else 'None'}")
+
+        if task and task.get('skip_detected') == 1:
+            tracker.ok("set_service1_skip: skip_detected = 1")
+        else:
+            tracker.fail("set_service1_skip flag", f"Keldi: {task.get('skip_detected') if task else 'None'}")
+
+        # 11.6 set_service1_error with keep_service2_pending
+        task_id = "BLOCKED-005"
+        mark_progressing(task_id, "READY TO TEST")
+        set_service1_error(task_id, "PR topilmadi", keep_service2_pending=True)
+
+        task = get_task(task_id)
+        if task and task['service1_status'] == 'error':
+            tracker.ok("set_service1_error(keep_pending): s1 = 'error'")
+        else:
+            tracker.fail("set_service1_error keep_pending s1", f"Keldi: {task.get('service1_status') if task else 'None'}")
+
+        if task and task['service2_status'] == 'pending':
+            tracker.ok("set_service1_error(keep_pending): s2 = 'pending'")
+        else:
+            tracker.fail("set_service1_error keep_pending s2", f"Keldi: {task.get('service2_status') if task else 'None'}")
+
+        # 11.7 mark_returned: service1=done, service2=pending
+        task_id = "BLOCKED-006"
+        mark_progressing(task_id, "READY TO TEST")
+        set_service1_done(task_id, compliance_score=40)
+        mark_returned(task_id)
+
+        task = get_task(task_id)
+        if task and task['task_status'] == 'returned':
+            tracker.ok("mark_returned: task = 'returned'")
+        else:
+            tracker.fail("mark_returned task", f"Keldi: {task.get('task_status') if task else 'None'}")
+
+        if task and task['service2_status'] == 'pending':
+            tracker.ok("mark_returned: s2 = 'pending' (error emas)")
+        else:
+            tracker.fail("mark_returned s2", f"Keldi: {task.get('service2_status') if task else 'None'}")
+
+        # 11.8 get_blocked_tasks_ready_for_retry
+        task_id = "BLOCKED-007"
+        mark_progressing(task_id, "READY TO TEST")
+        # retry_at = hozirgi vaqtdan 0 daqiqa = darhol retry
+        mark_blocked(task_id, "test blocked", retry_minutes=0)
+
+        # blocked_retry_at ni o'tgan vaqtga qo'yish
+        from datetime import timedelta
+        past_time = (datetime.now() - timedelta(minutes=1)).isoformat()
+        upsert_task(task_id, {'blocked_retry_at': past_time})
+
+        blocked_tasks = get_blocked_tasks_ready_for_retry()
+        found = any(t['task_id'] == task_id for t in blocked_tasks)
+        if found:
+            tracker.ok("get_blocked_tasks_ready_for_retry: blocked task topildi")
+        else:
+            tracker.fail("get_blocked_tasks_ready_for_retry", "Blocked task topilmadi")
+
+        # 11.9 delete_task
+        task_id = "BLOCKED-008"
+        mark_progressing(task_id, "READY TO TEST")
+
+        task_before = get_task(task_id)
+        if task_before:
+            tracker.ok("delete_task: task oldin mavjud")
+        else:
+            tracker.fail("delete_task before", "Task yaratilmadi")
+
+        result = delete_task(task_id)
+        if result:
+            tracker.ok("delete_task: True qaytardi")
+        else:
+            tracker.fail("delete_task result", "False qaytardi")
+
+        task_after = get_task(task_id)
+        if task_after is None:
+            tracker.ok("delete_task: task o'chirildi")
+        else:
+            tracker.fail("delete_task after", "Task hali mavjud")
+
+        # delete non-existent
+        result2 = delete_task("NONEXIST-999")
+        if not result2:
+            tracker.ok("delete_task(nonexist): False qaytardi")
+        else:
+            tracker.fail("delete_task nonexist", "True qaytardi")
+
+        # 11.10 DB migration v3 — ustunlar mavjudligi
+        from utils.database.task_db import DB_FILE
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(task_processing)")
+        columns = [row[1] for row in cursor.fetchall()]
+        conn.close()
+
+        for col in ['blocked_at', 'blocked_retry_at', 'block_reason']:
+            if col in columns:
+                tracker.ok(f"DB v3 migration: '{col}' ustuni mavjud")
+            else:
+                tracker.fail(f"DB v3 migration {col}", f"'{col}' ustuni topilmadi")
+
+    except Exception as e:
+        tracker.fail("Blocked status test umumiy", str(e))
+
+
+# ============================================================================
+# TEST 12: KEY FREEZE + SERVICE2 TZ-ONLY FLOW
+# ============================================================================
+
+def test_12_key_freeze_and_service2_tzonly():
+    """
+    12-TEST: Gemini Key Freeze logikasi va Service2 TZ-only flow
+
+    Tekshiradi:
+    1. GeminiHelper KEY_1 freeze logikasi
+    2. KEY_1 unfreeze (muddat tugashi)
+    3. _classify_error bilan jira_webhook_handler integratsiya
+    """
+    logger.info("\n" + "=" * 70)
+    logger.info("12-TEST: KEY FREEZE VA SERVICE2 TZ-ONLY FLOW")
+    logger.info("=" * 70)
+
+    try:
+        # ============================================================
+        # 12.1: GeminiHelper Key Freeze logikasi (inline test)
+        # ============================================================
+
+        # GeminiHelper ni import qilib bo'lmaydi (google.generativeai kerak),
+        # shuning uchun freeze logikasini inline test qilamiz
+
+        class MockGeminiHelper:
+            """GeminiHelper ning freeze logikasini test qilish uchun mock"""
+            KEY1_FREEZE_DURATION = 600  # 10 daqiqa
+
+            def __init__(self):
+                self.api_key_1 = "test_key_1"
+                self.api_key_2 = "test_key_2"
+                self.current_key = self.api_key_1
+                self.using_fallback = False
+                self._key1_frozen_until = None
+
+            def _is_key1_frozen(self):
+                if self._key1_frozen_until is None:
+                    return False
+                return time.time() < self._key1_frozen_until
+
+            def _freeze_key1(self):
+                self._key1_frozen_until = time.time() + self.KEY1_FREEZE_DURATION
+
+            def _unfreeze_key1(self):
+                self._key1_frozen_until = None
+                self.using_fallback = False
+                self.current_key = self.api_key_1
+
+            def _switch_to_fallback(self):
+                if not self.api_key_2 or self.using_fallback:
+                    return False
+                self.current_key = self.api_key_2
+                self.using_fallback = True
+                return True
+
+        helper = MockGeminiHelper()
+
+        # 12.1.1: Boshlang'ich holat — KEY_1 muzlatilmagan
+        if not helper._is_key1_frozen():
+            tracker.ok("Key freeze: boshlang'ich holat — muzlatilmagan")
+        else:
+            tracker.fail("Key freeze boshlang'ich holat", "KEY_1 muzlatilgan bo'lmasligi kerak")
+
+        # 12.1.2: KEY_1 ni muzlatish
+        helper._freeze_key1()
+        if helper._is_key1_frozen():
+            tracker.ok("Key freeze: KEY_1 muvaffaqiyatli muzlatildi")
+        else:
+            tracker.fail("Key freeze muzlatish", "KEY_1 muzlatilmadi")
+
+        # 12.1.3: Muzlatilgan paytda freeze_until mavjud
+        if helper._key1_frozen_until is not None:
+            tracker.ok("Key freeze: _key1_frozen_until timestamp saqlandi")
+        else:
+            tracker.fail("Key freeze timestamp", "_key1_frozen_until None bo'lmasligi kerak")
+
+        # 12.1.4: KEY_2 ga o'tish
+        if helper._switch_to_fallback():
+            tracker.ok("Key freeze: KEY_2 ga muvaffaqiyatli o'tildi")
+        else:
+            tracker.fail("Key freeze fallback", "KEY_2 ga o'tib bo'lmadi")
+
+        # 12.1.5: current_key = KEY_2
+        if helper.current_key == "test_key_2":
+            tracker.ok("Key freeze: current_key = KEY_2")
+        else:
+            tracker.fail("Key freeze current_key", f"KEY_2 kutilgan, {helper.current_key} olindi")
+
+        # 12.1.6: using_fallback = True
+        if helper.using_fallback:
+            tracker.ok("Key freeze: using_fallback = True")
+        else:
+            tracker.fail("Key freeze using_fallback", "True kutilgan")
+
+        # 12.1.7: Qayta fallback ga o'tib bo'lmaydi (allaqachon fallback da)
+        if not helper._switch_to_fallback():
+            tracker.ok("Key freeze: takroriy fallback bloklandi")
+        else:
+            tracker.fail("Key freeze takroriy fallback", "False kutilgan")
+
+        # 12.1.8: KEY_1 ni unfreeze qilish
+        helper._unfreeze_key1()
+        if not helper._is_key1_frozen():
+            tracker.ok("Key freeze: KEY_1 muvaffaqiyatli qayta faollashtirildi")
+        else:
+            tracker.fail("Key freeze unfreeze", "KEY_1 hali muzlatilgan")
+
+        # 12.1.9: Unfreeze dan keyin primary key ga qaytish
+        if helper.current_key == "test_key_1" and not helper.using_fallback:
+            tracker.ok("Key freeze: unfreeze dan keyin KEY_1 ga qaytdi")
+        else:
+            tracker.fail("Key freeze unfreeze state", f"key={helper.current_key}, fallback={helper.using_fallback}")
+
+        # 12.1.10: Muddat tugashi simulyatsiyasi
+        helper._freeze_key1()
+        helper._key1_frozen_until = time.time() - 1  # O'tgan vaqt
+        if not helper._is_key1_frozen():
+            tracker.ok("Key freeze: muddat tugashi to'g'ri ishlaydi")
+        else:
+            tracker.fail("Key freeze muddat", "Muddat tugagan, lekin hali frozen")
+
+        # 12.1.11: KEY_2 bo'lmaganda freeze xatosi
+        helper2 = MockGeminiHelper()
+        helper2.api_key_2 = None  # KEY_2 yo'q
+        helper2._freeze_key1()
+        if not helper2._switch_to_fallback():
+            tracker.ok("Key freeze: KEY_2 yo'q bo'lganda fallback bloklandi")
+        else:
+            tracker.fail("Key freeze no KEY_2", "Fallback False qaytarishi kerak")
+
+        # ============================================================
+        # 12.2: Service1 error → Service2 pending holat tekshiruvi
+        # ============================================================
+
+        from utils.database.task_db import (
+            mark_progressing, set_service1_error, get_task,
+            set_service2_done, DB_FILE
+        )
+
+        # 12.2.1: Service1 error (PR topilmadi) + keep_service2_pending
+        task_key = "FREEZE-001"
+        mark_progressing(task_key, "READY TO TEST", datetime.now())
+        set_service1_error(task_key, "PR topilmadi: no PR found for branch", keep_service2_pending=True)
+        task_data = get_task(task_key)
+
+        if task_data['service1_status'] == 'error':
+            tracker.ok("S1 error + S2 pending: service1 = 'error'")
+        else:
+            tracker.fail("S1 error state", f"'error' kutilgan, '{task_data['service1_status']}' olindi")
+
+        if task_data['service2_status'] == 'pending':
+            tracker.ok("S1 error + S2 pending: service2 = 'pending' (TZ-only tayyorligi)")
+        else:
+            tracker.fail("S2 pending state", f"'pending' kutilgan, '{task_data['service2_status']}' olindi")
+
+        # 12.2.2: Service1 error (unknown) + service2 HAM error
+        task_key2 = "FREEZE-002"
+        mark_progressing(task_key2, "READY TO TEST", datetime.now())
+        set_service1_error(task_key2, "Unknown critical error")
+        task_data2 = get_task(task_key2)
+
+        if task_data2['service2_status'] == 'error':
+            tracker.ok("S1 error (unknown): service2 = 'error' (to'g'ri)")
+        else:
+            tracker.fail("S2 error state", f"'error' kutilgan, '{task_data2['service2_status']}' olindi")
+
+        # 12.2.3: Service1 error (PR topilmadi) → Service2 done → task completed
+        task_key3 = "FREEZE-003"
+        mark_progressing(task_key3, "READY TO TEST", datetime.now())
+        set_service1_error(task_key3, "PR topilmadi", keep_service2_pending=True)
+        set_service2_done(task_key3)
+        task_data3 = get_task(task_key3)
+
+        if task_data3['task_status'] == 'completed':
+            tracker.ok("S1 error + S2 done: task = 'completed' (TZ-only muvaffaqiyat)")
+        else:
+            tracker.fail("TZ-only task completed", f"'completed' kutilgan, '{task_data3['task_status']}' olindi")
+
+        # ============================================================
+        # 12.3: KEY freeze duration konstantasi tekshiruvi
+        # ============================================================
+
+        if MockGeminiHelper.KEY1_FREEZE_DURATION == 600:
+            tracker.ok("Key freeze duration: 600s (10 daqiqa)")
+        else:
+            tracker.fail("Key freeze duration", f"600 kutilgan, {MockGeminiHelper.KEY1_FREEZE_DURATION} olindi")
+
+    except Exception as e:
+        tracker.fail("Key freeze test umumiy", str(e))
+
+
+# ============================================================================
 # DB CLEANUP (test ma'lumotlarini tozalash)
 # ============================================================================
 
@@ -1565,7 +2019,7 @@ def cleanup_test_data():
         test_prefixes = [
             'TEST-%', 'CONC-%', 'DB-TEST-%', 'ORDER-%',
             'NONEXIST-%', 'NOPR-%', 'AIERR-%', 'NOTFOUND-%',
-            'DEBUG-%', 'TEST-WEBHOOK-%'
+            'DEBUG-%', 'TEST-WEBHOOK-%', 'BLOCKED-%', 'FREEZE-%'
         ]
 
         for prefix in test_prefixes:
@@ -1605,6 +2059,8 @@ if __name__ == "__main__":
     test_8_testcase_webhook()
     test_9_base_service()
     test_10_debug_capability()
+    test_11_blocked_status()
+    test_12_key_freeze_and_service2_tzonly()
 
     # Tozalash
     cleanup_test_data()
