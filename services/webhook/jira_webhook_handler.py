@@ -269,7 +269,7 @@ async def jira_webhook(
         # DINAMIK STATUS TEKSHIRISH (Admin sozlamalaridan)
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         # force_reload=True - har safar fayldan o'qish (UI'da o'zgartirilgan sozlamalar uchun)
-        app_settings = get_app_settings(force_reload=True)
+        app_settings = get_app_settings(force_reload=False)
         settings = app_settings.tz_pr_checker
         target_statuses = settings.get_trigger_statuses()
 
@@ -356,7 +356,7 @@ async def jira_webhook(
             comment_writer = get_comment_writer()
             skip_detected = await _check_skip_code(task_key, skip_code, comment_writer)
             if skip_detected:
-                log.info(f"[{task_key}] Skip code '{skip_code}' topildi, Service1 skip, Service2 run")
+                log.service_skip(task_key, "service_1", f"skip_code='{skip_code}'")
 
                 # Mark Service1 as skip (score=100 threshold check o'tishi uchun)
                 set_service1_skip(task_key)
@@ -369,7 +369,7 @@ async def jira_webhook(
                 testcase_should_run = is_testcase_trigger_status(new_status)
                 if testcase_should_run:
                     background_tasks.add_task(_run_testcase_generation, task_key=task_key, new_status=new_status)
-                    log.service_started(task_key, "Testcase-Generator")
+                    log.service_running(task_key, "service_2")
 
                 return {
                     "status": "skipped_service1",
@@ -381,7 +381,6 @@ async def jira_webhook(
 
         # Queue sozlamalari
         queue_settings = app_settings.queue
-        log.info(f"[{task_key}] Queue sozlamalari: enabled={queue_settings.queue_enabled}, timeout={queue_settings.task_wait_timeout}s, delay={queue_settings.checker_testcase_delay}s")
 
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         # BACKGROUND TASKS (checker + testcase)
@@ -407,7 +406,6 @@ async def jira_webhook(
                 )
         else:
             # Sequential mode: bitta background task, ichida order
-            log.info(f"[{task_key}] Sequential mode: {comment_order}")
             background_tasks.add_task(
                 _run_sequential_tasks,
                 task_key=task_key,
@@ -452,7 +450,7 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str):
     - Xatolarda DB holatini yangilash
     """
     try:
-        log.service_started(task_key, "TZ-PR-Checker")
+        log.service_running(task_key, "service_1")
 
         # DB holatini tekshirish
         task_db = get_task(task_key)
@@ -462,14 +460,9 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str):
             log.info(f"[{task_key}] Service1 allaqachon done, skip")
             return
 
-        # Settings yuklash (force_reload=True - har safar fayldan o'qish)
-        app_settings = get_app_settings(force_reload=True)
+        # Settings yuklash (force_reload=False - singleton cache)
+        app_settings = get_app_settings(force_reload=False)
         settings = app_settings.tz_pr_checker
-        log.settings_loaded(
-            adf=settings.use_adf_format,
-            auto_return=settings.auto_return_enabled,
-            threshold=settings.return_threshold
-        )
 
         # Services
         tz_pr_service = get_tz_pr_service()
@@ -483,17 +476,16 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str):
             log.info(f"[{task_key}] Re-check detected (task qaytarildigan so'ng)")
 
         # 1. TZ-PR tahlil qilish
-        log.ai_analyzing(task_key, "gemini-2.5-flash")
         result = tz_pr_service.analyze_task(task_key)
 
         if not result.success:
             error_msg = result.error_message
             error_type = _classify_error(error_msg)
-            log.service_failed(task_key, "TZ-PR-Checker", f"{error_msg} (type: {error_type})")
+            log.service_error(task_key, "service_1", f"{error_msg} (type: {error_type})")
 
             if error_type == 'ai_timeout':
                 # AI timeout/429 → blocked status
-                app_settings_reload = get_app_settings(force_reload=True)
+                app_settings_reload = get_app_settings(force_reload=False)
                 retry_minutes = app_settings_reload.queue.blocked_retry_delay
                 set_service1_blocked(task_key, error_msg, retry_minutes)
                 log.info(f"[{task_key}] Service1 BLOCKED: {retry_minutes} daqiqadan keyin qayta urinadi")
@@ -512,7 +504,6 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str):
             return
 
         # 2. Comment yozish (ADF yoki oddiy format)
-        log.info(f"[{task_key}] Writing comment to JIRA...")
         await _write_success_comment(
             task_key, result, new_status,
             settings, comment_writer, adf_formatter,
@@ -522,7 +513,7 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str):
         # 3. Service1 holatini 'done' ga o'zgartirish
         compliance_score = result.compliance_score
         set_service1_done(task_key, compliance_score)
-        log.service_completed(task_key, "TZ-PR-Checker", f"score={compliance_score}%")
+        log.service_done(task_key, "service_1", score=f"{compliance_score}%")
 
         # 4. Score threshold tekshiruvi va avtomatik Return
         if settings.auto_return_enabled and compliance_score is not None:
@@ -542,11 +533,11 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str):
     except Exception as e:
         error_msg = str(e)
         error_type = _classify_error(error_msg)
-        log.service_failed(task_key, "TZ-PR-Checker", f"{e} (type: {error_type})")
+        log.service_error(task_key, "service_1", f"{e} (type: {error_type})")
         log.error(f"[{task_key}] Service1 Background task error details", exc_info=True)
 
         if error_type == 'ai_timeout':
-            app_settings_reload = get_app_settings(force_reload=True)
+            app_settings_reload = get_app_settings(force_reload=False)
             retry_minutes = app_settings_reload.queue.blocked_retry_delay
             set_service1_blocked(task_key, error_msg, retry_minutes)
             log.info(f"[{task_key}] Service1 BLOCKED (exception): {retry_minutes} daqiqadan keyin")
@@ -557,7 +548,7 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str):
 
         # Critical error ham yoziladi
         try:
-            app_settings = get_app_settings(force_reload=True)
+            app_settings = get_app_settings(force_reload=False)
             settings = app_settings.tz_pr_checker
             await _write_critical_error(
                 task_key, error_msg, new_status,
@@ -747,7 +738,7 @@ async def _check_skip_code(
         comments = sorted(issue.fields.comment.comments, key=lambda c: c.created, reverse=True)
 
         # Settings dan nechta comment tekshirish
-        app_settings = get_app_settings(force_reload=True)
+        app_settings = get_app_settings(force_reload=False)
         max_comments = app_settings.tz_pr_checker.max_skip_check_comments
 
         # Faqat so'nggi N comment tekshirish (performance)
@@ -902,7 +893,7 @@ async def _run_testcase_generation(task_key: str, new_status: str):
     - PR topilmasa TZ-only fallback
     """
     try:
-        log.service_started(task_key, "Testcase-Generator")
+        log.service_running(task_key, "service_2")
 
         # DB holatini tekshirish
         task_db = get_task(task_key)
@@ -937,7 +928,7 @@ async def _run_testcase_generation(task_key: str, new_status: str):
             return
 
         # Score threshold tekshiruvi
-        app_settings = get_app_settings(force_reload=True)
+        app_settings = get_app_settings(force_reload=False)
         settings = app_settings.tz_pr_checker
         tc_settings = app_settings.testcase_generator
         threshold = settings.return_threshold
@@ -952,16 +943,15 @@ async def _run_testcase_generation(task_key: str, new_status: str):
             return
 
         # Testcase generation
-        log.info(f"[{task_key}] Generating testcases...")
         success, message = await check_and_generate_testcases(task_key, new_status)
 
         if success:
             set_service2_done(task_key)
-            log.service_completed(task_key, "Testcase-Generator", message)
+            log.service_done(task_key, "service_2", result=message)
         else:
             error_msg = f"Testcase generation failed: {message}"
             error_type = _classify_error(error_msg)
-            log.service_failed(task_key, "Testcase-Generator", f"{error_msg} (type: {error_type})")
+            log.service_error(task_key, "service_2", f"{error_msg} (type: {error_type})")
 
             if error_type == 'ai_timeout':
                 # AI timeout/429 → Service2 blocked
@@ -976,7 +966,7 @@ async def _run_testcase_generation(task_key: str, new_status: str):
                 )
                 if success2:
                     set_service2_done(task_key)
-                    log.service_completed(task_key, "Testcase-Generator", f"{message2} (TZ-only)")
+                    log.service_done(task_key, "service_2", result=f"{message2} (TZ-only)")
                 else:
                     error_msg2 = f"Testcase TZ-only fallback failed: {message2}"
                     error_type2 = _classify_error(error_msg2)
@@ -985,18 +975,18 @@ async def _run_testcase_generation(task_key: str, new_status: str):
                         set_service2_blocked(task_key, error_msg2, retry_minutes)
                     else:
                         set_service2_error(task_key, error_msg2)
-                    log.service_failed(task_key, "Testcase-Generator", f"{error_msg2} (TZ-only fallback)")
+                    log.service_error(task_key, "service_2", f"{error_msg2} (TZ-only fallback)")
             else:
                 set_service2_error(task_key, error_msg)
 
     except Exception as e:
         error_msg = f"Testcase generation error: {str(e)}"
         error_type = _classify_error(error_msg)
-        log.service_failed(task_key, "Testcase-Generator", f"{e} (type: {error_type})")
+        log.service_error(task_key, "service_2", f"{e} (type: {error_type})")
         log.error(f"[{task_key}] Service2 error details", exc_info=True)
 
         if error_type == 'ai_timeout':
-            app_settings_reload = get_app_settings(force_reload=True)
+            app_settings_reload = get_app_settings(force_reload=False)
             retry_minutes = app_settings_reload.queue.blocked_retry_delay
             set_service2_blocked(task_key, error_msg, retry_minutes)
         else:
@@ -1015,7 +1005,7 @@ async def _wait_for_ai_slot(task_key: str):
     global _ai_last_call_time
     import time
     
-    app_settings = get_app_settings(force_reload=True)
+    app_settings = get_app_settings(force_reload=False)
     min_interval = app_settings.queue.gemini_min_interval
 
     elapsed = time.time() - _ai_last_call_time
@@ -1062,7 +1052,7 @@ async def _run_task_group(task_key: str, new_status: str):
     - Service1 done bo'lgandan keyin Service2 ishlaydi
     - Score threshold tekshiruvi Service2 ni bloklaydi
     """
-    app_settings = get_app_settings(force_reload=True)
+    app_settings = get_app_settings(force_reload=False)
     queue_settings = app_settings.queue
 
     if not queue_settings.queue_enabled:
@@ -1114,7 +1104,7 @@ async def _run_task_group(task_key: str, new_status: str):
 
     try:
         # Service1 (Checker)
-        log.service_started(task_key, "TZ-PR-Checker (queue lock)")
+        log.service_running(task_key, "service_1")
         await _wait_for_ai_slot(task_key)
         await check_tz_pr_and_comment(task_key=task_key, new_status=new_status)
 
@@ -1135,7 +1125,7 @@ async def _run_task_group(task_key: str, new_status: str):
             if service1_status in ('done', 'skip'):
                 if compliance_score is None or compliance_score >= threshold:
                     if task_status not in ('returned', 'blocked'):
-                        log.service_started(task_key, "Testcase-Generator (queue lock)")
+                        log.service_running(task_key, "service_2")
                         await _wait_for_ai_slot(task_key)
                         await _run_testcase_generation(task_key=task_key, new_status=new_status)
                     else:
@@ -1146,7 +1136,7 @@ async def _run_task_group(task_key: str, new_status: str):
                 # Service1 error — service2 pending bo'lsa TZ-only bilan ishlashi mumkin
                 s2_status = task_db.get('service2_status', 'pending')
                 if s2_status == 'pending':
-                    log.service_started(task_key, "Testcase-Generator (TZ-only, queue lock)")
+                    log.service_running(task_key, "service_2")
                     await _wait_for_ai_slot(task_key)
                     await _run_testcase_generation(task_key=task_key, new_status=new_status)
                 else:
@@ -1159,7 +1149,7 @@ async def _run_task_group(task_key: str, new_status: str):
 
 async def _queued_check_tz_pr(task_key: str, new_status: str):
     """Queue wrapper: faqat checker (testcase_should_run = False bo'lgan holat)"""
-    app_settings = get_app_settings(force_reload=True)
+    app_settings = get_app_settings(force_reload=False)
     queue_settings = app_settings.queue
 
     if not queue_settings.queue_enabled:
@@ -1203,7 +1193,7 @@ async def _run_sequential_tasks(
         first: "checker" yoki "testcase"
         run_testcase: testcase yashlanishi kerak ekanmi
     """
-    app_settings = get_app_settings(force_reload=True)
+    app_settings = get_app_settings(force_reload=False)
     queue_settings = app_settings.queue
     delay = queue_settings.checker_testcase_delay
 
@@ -1319,7 +1309,7 @@ async def _run_sequential_tasks(
                         # Service1 error — service2 pending bo'lsa TZ-only bilan ishlashi mumkin
                         s2_status = task_db.get('service2_status', 'pending')
                         if s2_status == 'pending':
-                            log.service_started(task_key, "Testcase-Generator (TZ-only)")
+                            log.service_running(task_key, "service_2")
                             await _wait_for_ai_slot(task_key)
                             try:
                                 await _run_testcase_generation(task_key=task_key, new_status=new_status)
@@ -1417,7 +1407,7 @@ _System administrator'ga xabar berildi._
 @app.get("/")
 async def root():
     """Root endpoint - service holatini ko'rsatish"""
-    app_settings = get_app_settings(force_reload=True)
+    app_settings = get_app_settings(force_reload=False)
     settings = app_settings.tz_pr_checker
 
     return {
@@ -1464,7 +1454,7 @@ async def health_check():
         health["status"] = "unhealthy"
 
     try:
-        app_settings = get_app_settings(force_reload=True)
+        app_settings = get_app_settings(force_reload=False)
         settings = app_settings.tz_pr_checker
         health["services"]["settings"] = "ok"
         health["settings"] = {
@@ -1482,7 +1472,7 @@ async def health_check():
 @app.get("/settings")
 async def get_settings():
     """Joriy sozlamalarni ko'rsatish"""
-    app_settings = get_app_settings(force_reload=True)
+    app_settings = get_app_settings(force_reload=False)
     settings = app_settings.tz_pr_checker
 
     return {
@@ -1516,7 +1506,7 @@ async def manual_check(task_key: str, background_tasks: BackgroundTasks):
     )
 
     # Testcase generation (settings-dan trigger statusini olish)
-    app_settings = get_app_settings(force_reload=True)
+    app_settings = get_app_settings(force_reload=False)
     tc_settings = app_settings.testcase_generator
     testcase_triggered = False
 
@@ -1550,7 +1540,7 @@ async def manual_testcase(task_key: str, background_tasks: BackgroundTasks):
     """
     log.info(f"Manual testcase generation triggered for {task_key}")
 
-    app_settings = get_app_settings(force_reload=True)
+    app_settings = get_app_settings(force_reload=False)
     tc_settings = app_settings.testcase_generator
     trigger_status = tc_settings.auto_comment_trigger_status
 
@@ -1610,7 +1600,7 @@ async def _retry_blocked_task(task_id: str):
                 'block_reason': None
             })
 
-            log.service_started(task_id, "TZ-PR-Checker (retry)")
+            log.service_running(task_id, "service_1")
             await _wait_for_ai_slot(task_id)
             await check_tz_pr_and_comment(task_key=task_id, new_status=last_jira_status)
 
@@ -1643,13 +1633,13 @@ async def _retry_blocked_task(task_id: str):
                 })
 
                 # Delay between services
-                app_settings = get_app_settings(force_reload=True)
+                app_settings = get_app_settings(force_reload=False)
                 delay = app_settings.queue.checker_testcase_delay
                 if delay > 0 and need_service1:
                     log.delay_waiting(task_id, "Service1→Service2", delay)
                     await asyncio.sleep(delay)
 
-                log.service_started(task_id, "Testcase-Generator (retry)")
+                log.service_running(task_id, "service_2")
                 await _wait_for_ai_slot(task_id)
                 await _run_testcase_generation(task_key=task_id, new_status=last_jira_status)
 
@@ -1673,7 +1663,7 @@ async def _blocked_retry_scheduler():
     log.info("Blocked retry scheduler boshlandi")
 
     # Birinchi marta sozlamalarni yuklash
-    app_settings = get_app_settings(force_reload=True)
+    app_settings = get_app_settings(force_reload=False)
     check_interval = app_settings.queue.blocked_check_interval
 
     while True:
@@ -1682,7 +1672,7 @@ async def _blocked_retry_scheduler():
 
             # Settings har safar reload qilinadi (UI'dan o'zgarishlarni ko'rish uchun)
             # Log DEBUG level'da yoziladi (log spam'ni oldini olish uchun)
-            app_settings = get_app_settings(force_reload=True)
+            app_settings = get_app_settings(force_reload=False)
             check_interval = app_settings.queue.blocked_check_interval
 
             blocked_tasks = get_blocked_tasks_ready_for_retry()
@@ -1697,7 +1687,7 @@ async def _blocked_retry_scheduler():
                 # Boshqa task progressing bo'lsa — kutish (lock bilan)
                 lock = _get_ai_queue_lock()
                 # Settings reload qilinadi (yangilangan qiymatlarni olish uchun)
-                app_settings = get_app_settings(force_reload=True)
+                app_settings = get_app_settings(force_reload=False)
                 timeout = app_settings.queue.task_wait_timeout
 
                 try:
@@ -1717,7 +1707,7 @@ async def _blocked_retry_scheduler():
         except Exception as e:
             log.error(f"Blocked retry scheduler error: {e}", exc_info=True)
             # Xato bo'lganda ham reload qilish
-            app_settings = get_app_settings(force_reload=True)
+            app_settings = get_app_settings(force_reload=False)
             check_interval = app_settings.queue.blocked_check_interval
             await asyncio.sleep(check_interval)
 
@@ -1731,7 +1721,7 @@ async def startup_event():
     """Service boshlanganda"""
     global _blocked_retry_task
 
-    app_settings = get_app_settings(force_reload=True)
+    app_settings = get_app_settings(force_reload=False)
     settings = app_settings.tz_pr_checker
 
     log.system_started("3.1.0", 8000)

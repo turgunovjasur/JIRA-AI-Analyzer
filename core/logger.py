@@ -125,6 +125,25 @@ class StructuredLogger:
         """Service skip qilindi"""
         self.logger.info(f"[{task_key}] SERVICE-SKIP -> {service} ({reason})")
 
+    # === COMPACT SERVICE LOGGING (Minimal) ===
+
+    def service_running(self, task_key: str, service: str):
+        """Service running (compact)"""
+        self.logger.info(f"[{task_key}] {service} running")
+
+    def service_done(self, task_key: str, service: str, **kwargs):
+        """Service done (compact)"""
+        details = " | ".join([f"{k}={v}" for k, v in kwargs.items()])
+        self.logger.info(f"[{task_key}] {service} DONE | {details}")
+
+    def service_error(self, task_key: str, service: str, error: str):
+        """Service error (compact)"""
+        self.logger.error(f"[{task_key}] {service} ERROR | {error}")
+
+    def service_skip(self, task_key: str, service: str, reason: str):
+        """Service skip (compact)"""
+        self.logger.info(f"[{task_key}] {service} SKIP | {reason}")
+
     # === AI OPERATIONS ===
 
     def ai_analyzing(self, task_key: str, model: str):

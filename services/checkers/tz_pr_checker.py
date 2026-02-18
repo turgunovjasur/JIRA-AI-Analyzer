@@ -229,10 +229,6 @@ class TZPRService(BaseService):
         """Task ning TZ va PR mosligini to'liq tahlil qilish"""
 
         update_status = self._create_status_updater(status_callback)
-        update_status("info", f"{task_key} tahlil qilinmoqda...")
-
-        # Log Smart Patch status
-        self._log_smart_patch_status(use_smart_patch, update_status)
 
         try:
             # Step 1: Get task details
@@ -290,8 +286,6 @@ class TZPRService(BaseService):
             # Step 5: Extract compliance score
             compliance_score = self._extract_compliance_score(ai_result['analysis'])
 
-            update_status("success", f"Tahlil tugadi! Moslik: {compliance_score}%")
-
             # Step 6: Update metadata (assignee, task_type, features)
             try:
                 from utils.database.task_db import update_task_metadata
@@ -344,8 +338,6 @@ class TZPRService(BaseService):
                 # No Figma links - bu normal holat, xatolik emas
                 return None
 
-            update_status("progress", f"Figma: {len(figma_links)} ta dizayn topildi")
-
             # Get Figma client (might be None if token missing)
             if not self.figma_client:
                 update_status("warning", "Figma: Token topilmadi, dizayn tahlil qilinmaydi")
@@ -375,8 +367,6 @@ class TZPRService(BaseService):
                         'url': link['url'],
                         'summary': f"Error: {str(e)}"
                     })
-
-            update_status("success", f"Figma: {len(summaries)} ta dizayn tahlil qilindi")
 
             return {
                 'links': figma_links,
@@ -437,7 +427,6 @@ class TZPRService(BaseService):
 
     def _get_task_details(self, task_key: str, update_status):
         """JIRA dan task ma'lumotlarini olish"""
-        update_status("progress", "JIRA dan TZ olinmoqda...")
         return self.jira.get_task_details(task_key)
 
     def _get_tz_content(self, task_details: Dict, update_status):
@@ -457,8 +446,6 @@ class TZPRService(BaseService):
             tz_content, comment_analysis = TZHelper.format_tz_with_comments(
                 task_details, max_comments=max_c
             )
-
-        update_status("success", f"TZ olindi: {len(tz_content)} chars")
 
         if comment_analysis['has_changes']:
             update_status("warning", comment_analysis['summary'])
@@ -518,20 +505,12 @@ class TZPRService(BaseService):
 
     def _get_pr_info(self, task_key: str, task_details: Dict, update_status, use_smart_patch):
         """PR ma'lumotlarini olish"""
-        update_status("progress", "PR'lar qidirilmoqda...")
-
         pr_info = self.pr_helper.get_pr_full_info(
             task_key,
             task_details,
             update_status,
             use_smart_patch=use_smart_patch
         )
-
-        if pr_info:
-            update_status(
-                "success",
-                f"{pr_info['pr_count']} ta PR, {pr_info['files_changed']} fayl tahlil qilinadi"
-            )
 
         return pr_info
 
@@ -548,8 +527,6 @@ class TZPRService(BaseService):
             update_status
     ) -> Dict:
         """AI tahlil qilish (with Figma and DEV comments support)"""
-        update_status("progress", "AI tahlil qilmoqda...")
-
         # Build DEV comments section
         dev_comments_section = self._build_dev_comments_section(task_details)
 

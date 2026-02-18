@@ -116,8 +116,6 @@ class TestCaseGeneratorService(BaseService):
             if not test_types:
                 test_types = ['positive', 'negative']
 
-            update_status("info", f"{task_key} tahlil qilinmoqda...")
-
             # 1. JIRA dan task olish
             task_details = self.jira.get_task_details(task_key)
             if not task_details:
@@ -144,8 +142,6 @@ class TestCaseGeneratorService(BaseService):
                     task_details, max_comments=max_c
                 )
 
-            update_status("success", f"TZ: {len(task_details.get('comments', []))} comment")
-
             # 3. PR ma'lumotlari (PRHelper ishlatamiz - Smart Patch bilan)
             warnings = []
             pr_info = None
@@ -163,7 +159,6 @@ class TestCaseGeneratorService(BaseService):
                     pr_info = None
 
                 if pr_info:
-                    update_status("success", f"PR: {pr_info['pr_count']} ta")
                     pr_details_list = pr_info.get('pr_details', [])
                 else:
                     warnings.append(
@@ -180,8 +175,6 @@ class TestCaseGeneratorService(BaseService):
             )
 
             # 5. AI bilan test case'lar yaratish (WITH CUSTOM CONTEXT)
-            update_status("progress", "AI test case'lar yaratmoqda...")
-
             from config.app_settings import get_app_settings
             max_test_cases = get_app_settings().testcase_generator.max_test_cases
 
@@ -220,8 +213,6 @@ class TestCaseGeneratorService(BaseService):
             for tc in test_cases:
                 by_type[tc.test_type] = by_type.get(tc.test_type, 0) + 1
                 by_priority[tc.priority] = by_priority.get(tc.priority, 0) + 1
-
-            update_status("success", f"{len(test_cases)} ta test case yaratildi!")
 
             return TestCaseGenerationResult(
                 task_key=task_key,

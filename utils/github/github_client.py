@@ -293,7 +293,7 @@ class GitHubClient:
 
         # Strategy 1: Search in title and body
         query1 = f'org:{self.org} "{jira_key}" is:pr'
-        log.info(f"GitHub Search (title/body): {query1}")
+        log.debug(f"GitHub Search (title/body): {query1}")
 
         try:
             response1 = self._make_request(url, params={'q': query1, 'sort': 'updated'})
@@ -309,7 +309,7 @@ class GitHubClient:
                     })
 
                 if items:
-                    log.info(f"Title/body search: {len(items)} ta topildi!")
+                    log.debug(f"Title/body search: {len(items)} ta topildi!")
             else:
                 log.warning(f"Title/body search error: {response1.status_code}")
         except Exception as e:
@@ -317,7 +317,7 @@ class GitHubClient:
 
         # Strategy 2: Search in branch names (if not found in title/body)
         if not found_prs:
-            log.info(f"Branch name search...")
+            log.debug(f"Branch name search...")
 
             # Common branch patterns
             branch_patterns = [
@@ -350,7 +350,7 @@ class GitHubClient:
 
                         # If found, break
                         if items:
-                            log.info(f"Branch search: {len(items)} ta topildi (pattern: {pattern})!")
+                            log.debug(f"Branch search: {len(items)} ta topildi (pattern: {pattern})!")
                             break
                 except Exception as e:
                     log.warning(f"Branch search exception ({pattern}): {e}")
@@ -420,7 +420,7 @@ class GitHubClient:
         if not all([owner, repo, pr_number]):
             return False, "URL parse failed"
 
-        log.info(f"Verifying PR #{pr_number} ({owner}/{repo})...")
+        log.debug(f"Verifying PR #{pr_number} ({owner}/{repo})...")
 
         pr_info = self.get_pr_info(owner, repo, pr_number)
         if not pr_info:
@@ -459,7 +459,7 @@ class GitHubClient:
         """
         found = []
         query = f'org:{self.org} {numeric_part} is:pr'
-        log.info(f"Numeric search: {query} (from {jira_key})")
+        log.debug(f"Numeric search: {query} (from {jira_key})")
 
         try:
             response = self._make_request(search_url, params={
@@ -473,7 +473,7 @@ class GitHubClient:
                 return found
 
             items = response.json().get('items', [])
-            log.info(f"Numeric search: {len(items)} candidate(s) found, verifying...")
+            log.debug(f"Numeric search: {len(items)} candidate(s) found, verifying...")
 
             for item in items:
                 pr_url = item.get('html_url')
@@ -483,7 +483,7 @@ class GitHubClient:
                 is_match, reason = self._verify_pr_for_ticket(pr_url, numeric_part, jira_key)
 
                 if is_match:
-                    log.info(f"PR matched: {reason}")
+                    log.debug(f"PR matched: {reason}")
                     found.append({
                         'url': pr_url,
                         'title': item.get('title'),
@@ -492,10 +492,10 @@ class GitHubClient:
                     })
                     break  # First valid match is enough
                 else:
-                    log.info(f"PR rejected: {reason}")
+                    log.debug(f"PR rejected: {reason}")
 
             if not found:
-                log.info(f"Numeric search: all candidates rejected")
+                log.debug(f"Numeric search: all candidates rejected")
 
         except Exception as e:
             log.warning(f"Numeric search exception: {e}")
@@ -544,7 +544,7 @@ class GitHubClient:
                 seen.add(p)
                 unique_patterns.append(p)
 
-        log.info(f"Extended branch patterns (numeric): {len(unique_patterns)} patterns...")
+        log.debug(f"Extended branch patterns (numeric): {len(unique_patterns)} patterns...")
 
         for pattern in unique_patterns:
             query = f'org:{self.org} head:{pattern} is:pr'
@@ -565,7 +565,7 @@ class GitHubClient:
                             })
 
                     if items:
-                        log.info(f"Extended branch: {len(items)} ta topildi (pattern: {pattern})!")
+                        log.debug(f"Extended branch: {len(items)} ta topildi (pattern: {pattern})!")
                         break  # Found — stop trying patterns
 
             except Exception as e:
@@ -573,7 +573,7 @@ class GitHubClient:
                 continue
 
         if not found:
-            log.info(f"Extended branch patterns: nothing found")
+            log.debug(f"Extended branch patterns: nothing found")
 
         return found
 
