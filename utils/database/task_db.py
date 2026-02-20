@@ -90,23 +90,23 @@ def init_db():
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
+
         # Index yaratish (tez qidirish uchun)
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_task_status 
             ON task_processing(task_status)
         """)
-        
+
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_service1_status 
             ON task_processing(service1_status)
         """)
-        
+
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_service2_status 
             ON task_processing(service2_status)
         """)
-        
+
         conn.commit()
         conn.close()
 
@@ -117,89 +117,87 @@ def init_db():
         raise
 
 
-def migrate_db_v2():
-    """
-    Migrate DB to v2: add assignee, task_type, feature_name, technology_stack
-    Idempotent - safe to run multiple times
-    """
-    try:
-        _ensure_db_dir()
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-
-        # Check if already migrated
-        cursor.execute("PRAGMA table_info(task_processing)")
-        columns = [row[1] for row in cursor.fetchall()]
-
-        if 'assignee' in columns:
-            log.info("DB already migrated to v2")
-            conn.close()
-            return
-
-        log.info("DB migration to v2...")
-
-        # Add new columns
-        cursor.execute("ALTER TABLE task_processing ADD COLUMN assignee TEXT NULL")
-        cursor.execute("ALTER TABLE task_processing ADD COLUMN task_type TEXT NULL")
-        cursor.execute("ALTER TABLE task_processing ADD COLUMN feature_name TEXT NULL")
-        cursor.execute("ALTER TABLE task_processing ADD COLUMN technology_stack TEXT NULL")
-
-        # Indexes for performance
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_task_type
-            ON task_processing(task_type)
-        """)
-
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_assignee
-            ON task_processing(assignee)
-        """)
-
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_feature_name
-            ON task_processing(feature_name)
-        """)
-
-        conn.commit()
-        conn.close()
-        log.info("DB migration v2 completed!")
-
-    except Exception as e:
-        log.warning(f"DB migration error: {e}")
-        raise
-
-
-def migrate_db_v3():
-    """
-    Migrate DB to v3: add blocked_at, blocked_retry_at, block_reason
-    Idempotent - safe to run multiple times
-    """
-    try:
-        _ensure_db_dir()
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-
-        cursor.execute("PRAGMA table_info(task_processing)")
-        columns = [row[1] for row in cursor.fetchall()]
-
-        if 'blocked_at' in columns:
-            log.info("DB already migrated to v3")
-            conn.close()
-            return
-
-        log.info("DB migration to v3...")
-
-        cursor.execute("ALTER TABLE task_processing ADD COLUMN blocked_at DATETIME NULL")
-        cursor.execute("ALTER TABLE task_processing ADD COLUMN blocked_retry_at DATETIME NULL")
-        cursor.execute("ALTER TABLE task_processing ADD COLUMN block_reason TEXT NULL")
-
-        conn.commit()
-        conn.close()
-        log.info("DB migration v3 completed!")
-
-    except Exception as e:
-        log.warning(f"DB migration v3 error: {e}")
-        raise
+# def migrate_db_v2():
+#     """
+#     Migrate DB to v2: add assignee, task_type, feature_name, technology_stack
+#     Idempotent - safe to run multiple times
+#     """
+#     try:
+#         _ensure_db_dir()
+#         conn = sqlite3.connect(DB_FILE)
+#         cursor = conn.cursor()
+#
+#         # Check if already migrated
+#         cursor.execute("PRAGMA table_info(task_processing)")
+#         columns = [row[1] for row in cursor.fetchall()]
+#
+#         if 'assignee' in columns:
+#             conn.close()
+#             return
+#
+#         log.info("DB migration to v2...")
+#
+#         # Add new columns
+#         cursor.execute("ALTER TABLE task_processing ADD COLUMN assignee TEXT NULL")
+#         cursor.execute("ALTER TABLE task_processing ADD COLUMN task_type TEXT NULL")
+#         cursor.execute("ALTER TABLE task_processing ADD COLUMN feature_name TEXT NULL")
+#         cursor.execute("ALTER TABLE task_processing ADD COLUMN technology_stack TEXT NULL")
+#
+#         # Indexes for performance
+#         cursor.execute("""
+#             CREATE INDEX IF NOT EXISTS idx_task_type
+#             ON task_processing(task_type)
+#         """)
+#
+#         cursor.execute("""
+#             CREATE INDEX IF NOT EXISTS idx_assignee
+#             ON task_processing(assignee)
+#         """)
+#
+#         cursor.execute("""
+#             CREATE INDEX IF NOT EXISTS idx_feature_name
+#             ON task_processing(feature_name)
+#         """)
+#
+#         conn.commit()
+#         conn.close()
+#         log.info("DB migration v2 completed!")
+#
+#     except Exception as e:
+#         log.warning(f"DB migration error: {e}")
+#         raise
+#
+#
+# def migrate_db_v3():
+#     """
+#     Migrate DB to v3: add blocked_at, blocked_retry_at, block_reason
+#     Idempotent - safe to run multiple times
+#     """
+#     try:
+#         _ensure_db_dir()
+#         conn = sqlite3.connect(DB_FILE)
+#         cursor = conn.cursor()
+#
+#         cursor.execute("PRAGMA table_info(task_processing)")
+#         columns = [row[1] for row in cursor.fetchall()]
+#
+#         if 'blocked_at' in columns:
+#             conn.close()
+#             return
+#
+#         log.info("DB migration to v3...")
+#
+#         cursor.execute("ALTER TABLE task_processing ADD COLUMN blocked_at DATETIME NULL")
+#         cursor.execute("ALTER TABLE task_processing ADD COLUMN blocked_retry_at DATETIME NULL")
+#         cursor.execute("ALTER TABLE task_processing ADD COLUMN block_reason TEXT NULL")
+#
+#         conn.commit()
+#         conn.close()
+#         log.info("DB migration v3 completed!")
+#
+#     except Exception as e:
+#         log.warning(f"DB migration v3 error: {e}")
+#         raise
 
 
 def get_task(task_id: str) -> Optional[Dict[str, Any]]:
@@ -816,11 +814,6 @@ def update_task_metadata(
             'technology_stack': technology_stack
         })
 
-        log.info(
-            f"[{task_id}] Metadata: {assignee}, {task_type}, "
-            f"{feature_name or 'N/A'}, {technology_stack or 'N/A'}"
-        )
-
     except Exception as e:
         log.warning(f"[{task_id}] Metadata update error: {e}")
 
@@ -865,7 +858,7 @@ def get_stuck_tasks(timeout_minutes: int = 30) -> List[Dict[str, Any]]:
 # DB initialization on import
 try:
     init_db()
-    migrate_db_v2()
-    migrate_db_v3()
+    # migrate_db_v2()
+    # migrate_db_v3()
 except Exception as e:
     log.warning(f"DB initialization warning: {e}")

@@ -62,18 +62,16 @@ class PRHelper:
             return [item.get('url', '') for item in pr_urls if item.get('url')]
 
         # 2. GitHub'dan qidirish
-        print(f"   📋 JIRA dev-status: {task_key} uchun PR topilmadi, GitHub search boshlanadi...")
-        update_status("warning", "⚠️ JIRA da PR yo'q, GitHub'dan qidirilmoqda...")
+        update_status("warning", "JIRA da PR yo'q, GitHub'dan qidirilmoqda...")
 
         found_prs = self.github.search_pr_by_jira_key(task_key)
 
         if found_prs:
             urls = [item.get('url', '') for item in found_prs if item.get('url')]
-            update_status("success", f"✅ GitHub'da {len(urls)} ta PR topildi")
+            update_status("success", f"GitHub'da {len(urls)} ta PR topildi")
             return urls
 
-        print(f"   ❌ {task_key}: Barcha strategiyalar bo'yicha PR topilmadi")
-        update_status("warning", "⚠️ PR topilmadi")
+        update_status("warning", "PR topilmadi")
         return []
 
     def get_pr_full_info(

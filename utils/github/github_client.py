@@ -377,10 +377,8 @@ class GitHubClient:
             found_prs = self._search_by_repo_listing(jira_key, numeric_part)
 
         # Final result
-        if found_prs:
-            log.info(f"JAMI: {len(found_prs)} ta PR topildi!")
-        else:
-            log.warning(f"Hech qanday PR topilmadi")
+        if not found_prs:
+            log.warning("Hech qanday PR topilmadi")
 
         return found_prs
 

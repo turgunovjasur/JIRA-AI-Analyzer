@@ -35,7 +35,6 @@ class JiraCommentWriter:
                 server=self.server,
                 basic_auth=(self.email, self.api_token)
             )
-            log.jira_connected("commenting")
         except Exception as e:
             log.error("INIT", "JIRA connection", f"Connection failed: {e}")
             self.jira = None
@@ -78,7 +77,6 @@ class JiraCommentWriter:
             response = self.session.post(url, json=payload)
 
             if response.status_code == 201:
-                log.info(f"Comment added to {task_key}")
                 return True
             else:
                 log.error(
@@ -109,8 +107,6 @@ class JiraCommentWriter:
         try:
             # Comment qo'shish
             self.jira.add_comment(task_key, comment_text)
-
-            log.info(f"Comment added to {task_key}")
             return True
 
         except Exception as e:

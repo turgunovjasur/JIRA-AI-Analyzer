@@ -34,7 +34,6 @@ class JiraStatusManager:
                     os.getenv('JIRA_API_TOKEN')
                 )
             )
-            log.jira_connected("status management")
         except Exception as e:
             log.error("SYSTEM", "JIRA initialization", str(e))
             self.jira = None
@@ -66,7 +65,6 @@ class JiraStatusManager:
                     "name": t['name'],
                     "to": t.get('to', {}).get('name', '')
                 })
-            log.jira_transitions_available(task_key, len(result))
             return result
 
         except Exception as e:
@@ -145,7 +143,6 @@ class JiraStatusManager:
             else:
                 self.jira.transition_issue(task_key, transition_id)
 
-            log.jira_transitioned(task_key, new_status)
             return True, f"Status o'zgartirildi: {new_status}"
 
         except Exception as e:
