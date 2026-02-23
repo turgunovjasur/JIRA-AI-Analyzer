@@ -58,7 +58,7 @@ class PRHelper:
         pr_urls = task_details.get('pr_urls', [])
 
         if pr_urls:
-            update_status("success", f"✅ JIRA'dan {len(pr_urls)} ta PR topildi")
+            update_status("success", f"JIRA'dan {len(pr_urls)} ta PR topildi")
             return [item.get('url', '') for item in pr_urls if item.get('url')]
 
         # 2. GitHub'dan qidirish
@@ -115,8 +115,8 @@ class PRHelper:
             if not pr_urls:
                 return None
 
-            mode = "🧠 Smart Patch" if use_smart_patch else "📄 Standard"
-            update_status("progress", f"📄 {len(pr_urls)} ta PR tahlil qilinmoqda ({mode})...")
+            mode = "Smart Patch" if use_smart_patch else "Standard"
+            update_status("progress", f"{len(pr_urls)} ta PR tahlil qilinmoqda ({mode})...")
 
             # 2. Har bir PR uchun batafsil ma'lumot
             pr_details = []
@@ -130,13 +130,13 @@ class PRHelper:
                 owner, repo, pr_number = self.github.parse_pr_url(url)
 
                 if not all([owner, repo, pr_number]):
-                    update_status("warning", f"⚠️ Noto'g'ri PR URL: {url}")
+                    update_status("warning", f"Invalid PR URL: {url}")
                     continue
 
                 # PR info
                 pr_info = self.github.get_pr_info(owner, repo, pr_number)
                 if not pr_info:
-                    update_status("warning", f"⚠️ PR ma'lumoti olinmadi: {url}")
+                    update_status("warning", f"PR info not found: {url}")
                     continue
 
                 # PR files
@@ -171,12 +171,12 @@ class PRHelper:
                 all_files.extend(pr_files)
 
             if not pr_details:
-                update_status("error", "❌ Hech qanday PR tahlil qilinmadi")
+                update_status("error", "No PR could be analyzed")
                 return None
 
-            mode = "🧠 Smart Patch" if use_smart_patch else "📄 Patch"
+            mode = "Smart Patch" if use_smart_patch else "Patch"
             update_status("success",
-                          f"✅ {len(pr_details)} ta PR tahlil qilindi ({mode}): "
+                          f"{len(pr_details)} ta PR tahlil qilindi ({mode}): "
                           f"{total_files} fayl, +{total_additions}/-{total_deletions}"
                           )
 

@@ -181,7 +181,21 @@ class TZPRCheckerSettings:
     # AI_SKIP tekshirish uchun nechta oxirgi comment ko'riladi
     max_skip_check_comments: int = 5   # DEFAULT 5 ta comment
 
+    # ━━━ PR Fayl Cheklovlari ━━━
+    # analyze_task() da max fayl soni (full strategiya)
+    pr_max_files: int = 3              # DEFAULT: 3 ta fayl ko'rsatiladi
+    # Oxirgi N ta developer comment AI ga yuboriladi
+    dev_comments_max: int = 5          # DEFAULT: oxirgi 5 ta comment
+
     # Yordam matnlari
+    pr_max_files_help: str = (
+        "AI ga yuboriladigan maksimal PR fayl soni. "
+        "Token tejash uchun - ko'p fayl = ko'p token. 3 tavsiya etiladi."
+    )
+    dev_comments_max_help: str = (
+        "AI ga yuboriladigan oxirgi N ta developer comment soni. "
+        "5 = oxirgi 5 ta comment. Ko'p berish token sarfini oshiradi."
+    )
     return_threshold_help: str = "Moslik bali shu foizdan past bo'lsa task qaytariladi (0-100)"
     auto_return_help: str = "Moslik past bo'lganda avtomatik Return statusga o'tkazish"
     trigger_status_help: str = "Qaysi statusda TZ-PR tekshirish boshlanadi"
@@ -212,6 +226,22 @@ class TZPRCheckerSettings:
         "AI_SKIP kodi qidirilayotganda JIRA ning oxirgi nechta commenti tekshiriladi. "
         "5 = oxirgi 5 ta comment. Oshirsangiz eski commentlardan ham topadi."
     )
+
+    def __post_init__(self):
+        """Sozlamalar validatsiyasi — noto'g'ri qiymatlar exception chiqaradi"""
+        if not 0 <= self.return_threshold <= 100:
+            raise ValueError(
+                f"return_threshold {self.return_threshold}% noto'g'ri: 0-100 oralig'ida bo'lishi kerak"
+            )
+        if self.comment_order not in ('checker_first', 'testcase_first', 'parallel'):
+            raise ValueError(
+                f"comment_order '{self.comment_order}' noto'g'ri: "
+                "'checker_first', 'testcase_first' yoki 'parallel' bo'lishi kerak"
+            )
+        if self.max_skip_check_comments < 1:
+            raise ValueError(
+                f"max_skip_check_comments {self.max_skip_check_comments} noto'g'ri: 1 dan katta bo'lishi kerak"
+            )
 
     def get_trigger_statuses(self) -> List[str]:
         """Barcha trigger statuslarni qaytarish"""
@@ -271,6 +301,13 @@ class TestcaseGeneratorSettings:
     trigger_aliases_help: str = "Trigger status uchun alternativ nomlar"
     use_adf_help: str = "ADF formatda dropdown panellar bilan chiroyli comment yozish"
     testcase_footer_help: str = "Test case comment'ning pastki qismida ko'rinadigan matn"
+
+    def __post_init__(self):
+        """Sozlamalar validatsiyasi — noto'g'ri qiymatlar exception chiqaradi"""
+        if self.max_test_cases < 1 or self.max_test_cases > 50:
+            raise ValueError(
+                f"max_test_cases {self.max_test_cases} noto'g'ri: 1-50 oralig'ida bo'lishi kerak"
+            )
 
     def get_trigger_statuses(self) -> List[str]:
         """Barcha trigger statuslarni qaytarish"""
@@ -378,6 +415,29 @@ class QueueSettings:
         "Testcase generation executor yakunlash timeout (sekund). "
         "Katta task bo'lsa va AI javob sekin bo'lsa oshiring. 120 = 2 daqiqa."
     )
+
+    def __post_init__(self):
+        """Sozlamalar validatsiyasi — noto'g'ri qiymatlar exception chiqaradi"""
+        if self.task_wait_timeout <= 0:
+            raise ValueError(
+                f"task_wait_timeout {self.task_wait_timeout}s noto'g'ri: 0 dan katta bo'lishi kerak"
+            )
+        if self.blocked_retry_delay <= 0:
+            raise ValueError(
+                f"blocked_retry_delay {self.blocked_retry_delay} daqiqa noto'g'ri: 0 dan katta bo'lishi kerak"
+            )
+        if self.gemini_min_interval <= 0:
+            raise ValueError(
+                f"gemini_min_interval {self.gemini_min_interval}s noto'g'ri: 0 dan katta bo'lishi kerak"
+            )
+        if self.key_freeze_duration <= 0:
+            raise ValueError(
+                f"key_freeze_duration {self.key_freeze_duration}s noto'g'ri: 0 dan katta bo'lishi kerak"
+            )
+        if not 0 < self.ai_max_input_tokens <= 2_000_000:
+            raise ValueError(
+                f"ai_max_input_tokens {self.ai_max_input_tokens} noto'g'ri: 1-2,000,000 oralig'ida bo'lishi kerak"
+            )
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

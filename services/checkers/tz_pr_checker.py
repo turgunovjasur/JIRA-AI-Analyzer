@@ -226,7 +226,55 @@ class TZPRService(BaseService):
             use_smart_patch: bool = False,
             status_callback: Optional[Callable[[str, str], None]] = None
     ) -> TZPRAnalysisResult:
-        """Task ning TZ va PR mosligini to'liq tahlil qilish"""
+        """
+        TZ-PR moslik tahlilining asosiy funksiyasi — 7 bosqichli pipeline.
+
+        Bu funksiya JIRA task kaliti bo'yicha to'liq TZ-PR tahlilini amalga oshiradi
+        va natijani TZPRAnalysisResult sifatida qaytaradi. Webhook handler tomonidan
+        check_tz_pr_and_comment() orqali chaqiriladi.
+
+        Ishlash bosqichlari:
+            1. JIRA'dan task tafsilotlarini olish (TZ, priority, assignee, figma_links).
+            2. TZ kontentini formatlash va zid comment'larni aniqlash (TZHelper).
+            3. GitHub'dan PR ma'lumotlarini olish; PR topilmasa — 'pr_not_found' xatosi.
+            3.5 Figma havolalarini ajratib olish va Figma API'dan ma'lumot olish (ixtiyoriy,
+               muvaffaqiyatsizlik bo'lsa ham asosiy jarayon to'xtatilmaydi).
+            4. AI tahlilini amalga oshirish (_analyze_with_retry() orqali 3 ta strategiya).
+            5. Moslik balini ajratib olish (_extract_compliance_score() orqali 4 regex).
+            6. Task meta-ma'lumotlarini DB'ga saqlash (assignee, task_type, feature_name).
+            7. TZPRAnalysisResult natijasini qaytarish.
+
+        Args:
+            task_key (str): JIRA task identifikatori (masalan: 'DEV-1234').
+            max_files (Optional[int]): AI promtiga qo'shiladigan maksimal fayl soni.
+                None bo'lsa — barcha o'zgargan fayllar qo'shiladi.
+            show_full_diff (bool): True bo'lsa — har bir fayl uchun to'liq diff/patch
+                AI promtiga kiritiladi. False bo'lsa — faqat fayl nomi va statistika.
+            use_smart_patch (bool): True bo'lsa — standart diff o'rniga smart_context
+                (to'liq kontekst) ishlatiladi (SMART_PATCH_AVAILABLE = True bo'lishi kerak).
+            status_callback (Optional[Callable[[str, str], None]]): Ixtiyoriy.
+                Progress yangilanishi uchun callback(level, message).
+                UI progress bar yoki logging uchun ishlatiladi.
+
+        Returns:
+            TZPRAnalysisResult:
+                success=True holatida:
+                    - compliance_score: 0-100 oralig'idagi moslik bali.
+                    - ai_analysis: AI tomonidan yozilgan to'liq tahlil matni.
+                    - figma_data: Figma fayl xulosalari (mavjud bo'lsa).
+                    - comment_analysis: Zid comment'lar tahlili.
+                success=False holatida:
+                    - error_message: Xatolik sababi (PR topilmadi, AI xato va h.k.).
+                    - warnings: Qo'shimcha ogohlantirishlar ro'yxati.
+
+        Raises:
+            Exception: Ichki barcha xatoliklar ushlanib, success=False natijaga
+                aylantiriladi — funksiya hech qachon exception ko'tarmaydi.
+
+        Side Effects:
+            - DB'da task meta-ma'lumotlari yangilanadi (update_task_metadata()).
+            - status_callback chaqiriladi (agar berilgan bo'lsa).
+        """
 
         update_status = self._create_status_updater(status_callback)
 
@@ -454,15 +502,33 @@ class TZPRService(BaseService):
 
     def _build_dev_comments_section(self, task_details: Dict) -> str:
         """
-        Extract developer comments for AI context.
+        AI konteksti uchun developer comment'larini filtrlash va formatlash.
 
-        DEV comments help AI understand:
-        - What was actually changed and why
-        - Developer explanations for implementation decisions
-        - Edge cases that were handled
+        Bu funksiya JIRA task'dagi barcha comment'larni ko'rib chiqadi va faqat
+        haqiqiy developer tomonidan yozilgan, mazmunli comment'larni ajratib oladi.
+        Natija AI promtiga "DEVELOPER IZOHLAR" bo'limi sifatida qo'shiladi.
+
+        Filtrlash shartlari (quyidagilar TASHLAB KETILADI):
+            - Muallif nomi 'AI', 'BOT' yoki 'ROBOT' so'zlarini o'z ichiga olgan
+              comment'lar (katta-kichik harfdan qat'i nazar).
+            - Uzunligi 20 belgidan kam bo'lgan trivial comment'lar (masalan: "+1", "ok").
+
+        Qo'shiladigan comment'lar:
+            - Oxirgi 5 ta mos comment (eng yangi comment'lar ustunlik qiladi).
+            - Format: muallif ismi, sana va comment matni.
+
+        Bu comment'larni AI'ga berish maqsadi:
+            - Developerning qaysi talablarni qanday amalga oshirganligi haqida kontekst.
+            - Amalga oshirish qarorlarining sabablarini tushuntirish.
+            - Maxsus edge case'lar yoki muhim o'zgarishlar haqida ma'lumot.
+
+        Args:
+            task_details (Dict): JIRA'dan olingan task ma'lumotlari. Kerakli kalit:
+                - 'comments': {'author': str, 'body': str, 'created': str} ro'yxati.
 
         Returns:
-            str: Formatted section for AI prompt (empty if no relevant comments)
+            str: AI promtiga qo'shishga tayyor formatlangan comment'lar bloki.
+                Agar mos comment'lar topilmasa — bo'sh string ('') qaytariladi.
         """
         comments = task_details.get('comments', [])
 
@@ -491,8 +557,10 @@ class TZPRService(BaseService):
             ""
         ]
 
-        # Show last 5 meaningful comments
-        for comment in dev_comments[-5:]:
+        # Oxirgi N ta meaningful comment ko'rsatish (settings.dev_comments_max)
+        from config.app_settings import get_app_settings
+        max_dev = get_app_settings().tz_pr_checker.dev_comments_max
+        for comment in dev_comments[-max_dev:]:
             author = comment.get('author', 'Unknown')
             body = comment.get('body', '').strip()
             created = comment.get('created', '')
@@ -526,7 +594,39 @@ class TZPRService(BaseService):
             use_smart_patch: bool,
             update_status
     ) -> Dict:
-        """AI tahlil qilish (with Figma and DEV comments support)"""
+        """
+        AI tahlil bosqichini boshqaruvchi oraliq funksiya.
+
+        Bu funksiya ikki ish bajaradi:
+            1. Developer comment'larni filtrlaydi (_build_dev_comments_section()).
+            2. Natijani _analyze_with_retry() ga uzatib, 3 strategiyali AI tahlilini ishga tushiradi.
+
+        analyze_task() va _analyze_with_retry() o'rtasidagi ko'prik vazifasini o'taydi:
+        parametrlarni tartibga soladi va dev_comments_section ni dinamik ravishda qurib,
+        retry mexanizmi uchun tayyor holga keltiradi.
+
+        Args:
+            task_key (str): JIRA task identifikatori (masalan: 'DEV-1234').
+            task_details (Dict): JIRA'dan olingan task ma'lumotlari (summary, comments, va h.k.).
+            tz_content (str): Formatlangan TZ kontenti.
+            pr_info (Dict): GitHub PR ma'lumotlari (files, diff, statistika).
+            figma_data (Optional[Dict]): Figma fayl xulosalari yoki None.
+            max_files (Optional[int]): AI promtiga qo'shiladigan maksimal fayl soni.
+            show_full_diff (bool): Har bir fayl uchun to'liq diff qo'shilsinmi.
+            use_smart_patch (bool): Smart patch rejimi yoqilganmi.
+            update_status: Progress yangilanishi uchun callback(level, message).
+
+        Returns:
+            Dict: _analyze_with_retry() formatidagi natija:
+                {
+                    'success': bool,
+                    'analysis': str,       # AI tahlil matni
+                    'retry_count': int,    # Qayta urinishlar soni
+                    'files_analyzed': int,
+                    'prompt_size': int,
+                    'warnings': List[str]
+                }
+        """
         # Build DEV comments section
         dev_comments_section = self._build_dev_comments_section(task_details)
 
@@ -560,7 +660,45 @@ class TZPRService(BaseService):
             use_smart_patch: bool,
             status_callback
     ) -> Dict:
-        """AI tahlil with automatic retry on overload (with DEV comments)"""
+        """
+        AI tahlilini 3 bosqichli strategiya bilan avtomatik qayta urinish.
+
+        Agar AI modeli band yoki haddan tashqari yuklanган bo'lsa, bu funksiya
+        turli strategiyalar bilan qayta urinib ko'radi va muvaffaqiyatli natijani
+        qaytaradi. Barcha strategiya muvaffaqiyatsiz bo'lsagina xatolik qaytariladi.
+
+        Strategiyalar (tartib bilan):
+            1. To'liq tahlil — barcha fayllar va to'liq diff bilan (_try_ai_analysis).
+            2. Qisqartirilgan fayllar — max_files ikki baravarga kamaytiriladi
+               (overloaded / rate-limit xatoligi aniqlansa ishga tushadi).
+            3. Diff'siz tahlil — show_full_diff=False, faqat 3 ta fayl
+               (2-strategiya ham muvaffaqiyatsiz bo'lsa).
+
+        Args:
+            task_key (str): JIRA task identifikatori (masalan: 'DEV-1234').
+            task_details (Dict): JIRA'dan olingan task ma'lumotlari (summary, comments, va h.k.).
+            tz_content (str): Formatlangan TZ kontenti (AI promtiga qo'shiladi).
+            pr_info (Dict): GitHub PR ma'lumotlari (files, diff, statistika).
+            figma_data (Optional[Dict]): Figma fayl xulosalari (None bo'lishi mumkin).
+            dev_comments_section (str): Filtered developer comment'lar bloki
+                (_build_dev_comments_section() tomonidan tayyorlanadi).
+            max_files (Optional[int]): 1-strategiyada ishlatiladigan maksimal fayl soni.
+            show_full_diff (bool): 1- va 2-strategiyalarda diff qo'shilsinmi.
+            use_smart_patch (bool): Smart patch rejimi yoqilganmi.
+            status_callback: Progress yangilanishi uchun callback(level, message).
+
+        Returns:
+            Dict: _try_ai_analysis() formatidagi natija:
+                {
+                    'success': bool,
+                    'analysis': str,          # AI tahlil matni (muvaffaqiyatli holatda)
+                    'error': str,             # Xatolik xabari (muvaffaqiyatsiz holatda)
+                    'retry_count': int,       # Nechi strategiya ishlatilgani (0, 1 yoki 2)
+                    'files_analyzed': int,    # Tahlil qilingan fayllar soni
+                    'prompt_size': int,       # Promtning belgilar soni
+                    'warnings': List[str]     # Qo'shimcha ogohlantirishlar
+                }
+        """
 
         # Build Figma sections
         figma_section, figma_analysis, figma_response = self._build_figma_prompt_section(figma_data)
@@ -631,14 +769,15 @@ class TZPRService(BaseService):
                 figma_analysis=figma_analysis,
                 dev_comments_section=dev_comments_section,  # NEW
                 response_format_sections=response_format_sections,
-                max_files=3,  # Very limited
+                max_files=get_app_settings().tz_pr_checker.pr_max_files,  # settings dan
                 show_full_diff=False,
                 use_smart_patch=use_smart_patch,
                 retry_attempt=2
             )
 
             if result['success']:
-                result['warnings'].append("Limited analysis (faqat 3 ta fayl, diff yo'q)")
+                pr_max = get_app_settings().tz_pr_checker.pr_max_files
+                result['warnings'].append(f"Limited analysis (faqat {pr_max} ta fayl, diff yo'q)")
                 return result
 
         # All strategies failed
@@ -719,7 +858,39 @@ class TZPRService(BaseService):
             show_full_diff: bool,
             use_smart_patch: bool
     ) -> str:
-        """Build code changes section for prompt"""
+        """
+        AI promti uchun kod o'zgarishlari bo'limini qurishning aqlli funksiyasi.
+
+        Funksiya ikkita rejimda ishlaydi:
+            - Smart Patch rejimi (use_smart_patch=True): Har bir fayl uchun
+              ``smart_context`` maydoni mavjud bo'lsa, standart patch o'rniga
+              to'liq kontekstli kod ko'rinishi qo'shiladi.
+            - Standart diff rejimi (use_smart_patch=False yoki smart_context yo'q):
+              GitHub PR'dagi oddiy unified diff (``patch`` maydoni) ishlatiladi.
+
+        Qo'shilgan bo'limlar:
+            - PR umumiy statistikasi (PR soni, o'zgargan fayllar, qo'shimcha/o'chirish).
+            - Har bir PR uchun: sarlavha, URL, fayl soni.
+            - Har bir fayl uchun (max_files chegarasigacha): fayl nomi, holati,
+              o'zgarishlar soni va (show_full_diff=True bo'lsa) diff/smart_context.
+
+        Args:
+            pr_info (Dict): GitHub PR ma'lumotlari. Kerakli kalitlar:
+                - 'pr_count': PR'lar soni.
+                - 'files_changed': Jami o'zgargan fayllar soni.
+                - 'total_additions': Jami qo'shilgan satrlar.
+                - 'total_deletions': Jami o'chirilgan satrlar.
+                - 'pr_details': Har bir PR uchun {title, url, files} ro'yxati.
+            max_files (Optional[int]): Ko'rsatiladigan maksimal fayl soni.
+                None bo'lsa — barcha o'zgargan fayllar ko'rsatiladi.
+            show_full_diff (bool): True bo'lsa — patch yoki smart_context qo'shiladi.
+                False bo'lsa — faqat fayl nomi va statistika ko'rsatiladi.
+            use_smart_patch (bool): True bo'lsa — smart_context ustunlik qiladi.
+                Agar smart_context mavjud bo'lmasa, patch bilan zaxiralash (fallback).
+
+        Returns:
+            str: AI promtiga qo'shishga tayyor formatlangan kod o'zgarishlari matn bloki.
+        """
         lines = []
 
         files_to_show = pr_info['files_changed']
@@ -757,7 +928,34 @@ class TZPRService(BaseService):
         return "\n".join(lines)
 
     def _extract_compliance_score(self, analysis: str) -> Optional[int]:
-        """Extract compliance score from AI response"""
+        """
+        AI javob matnidan moslik balini ajratib olish — 4 bosqichli regex strategiyasi.
+
+        AI modeli har doim bir xil formatda javob bermaydi. Shuning uchun bu funksiya
+        to'rtta turli regex pattern'ni ketma-ket sinab ko'radi va birinchi mos
+        kelganidan balini qaytaradi.
+
+        Regex strategiyalari (tartib bilan):
+            1. Oddiy format: ``COMPLIANCE_SCORE: 85%``
+            2. Bold format:  ``**COMPLIANCE_SCORE: 85%**``
+            3. Bo'lim sarlavhasi: ``MOSLIK BALI`` dan keyin birinchi foiz raqam.
+            4. Zaxira: ``compliance``, ``bali``, ``score`` yoki ``moslik`` so'zidan
+               30 belgidan so'ng kelgan birinchi foiz raqam.
+
+        Agar to'rtta strategiyadan birontasi ham mos kelmasa, None qaytariladi
+        va log'ga ogohlantirish yoziladi.
+
+        Args:
+            analysis (str): AI tomonidan qaytarilgan to'liq tahlil matni.
+
+        Returns:
+            Optional[int]: 0-100 oralig'idagi moslik bali (masalan: 87).
+                Agar hech qaysi pattern mos kelmasa — None.
+
+        Note:
+            Barcha pattern'lar case-insensitive (re.IGNORECASE) rejimida ishlatiladi.
+            Xatolik bo'lsa (masalan: bo'sh string) — exception ushlanib, None qaytariladi.
+        """
         try:
             # Try format: COMPLIANCE_SCORE: XX%
             match = re.search(r'COMPLIANCE_SCORE:\s*(\d+)%', analysis, re.IGNORECASE)
@@ -780,7 +978,7 @@ class TZPRService(BaseService):
             if match:
                 return int(match.group(1))
         except Exception as e:
-            log.error("UNKNOWN", "Score extraction", str(e))
+            log.log_error("UNKNOWN", "Score extraction", str(e))
 
         # If not found, log warning
         log.warning("COMPLIANCE_SCORE not found in AI response!")
@@ -801,9 +999,9 @@ class TZPRService(BaseService):
         """Log Smart Patch availability"""
         if use_smart_patch:
             if SMART_PATCH_AVAILABLE:
-                update_status("info", "✅ Smart Patch: Enabled (full context mode)")
+                update_status("info", "Smart Patch: Enabled (full context mode)")
             else:
-                update_status("warning", "⚠️  Smart Patch: Not available (using standard diff)")
+                update_status("warning", "Smart Patch: Not available (using standard diff)")
 
     def _create_error_result(
             self,

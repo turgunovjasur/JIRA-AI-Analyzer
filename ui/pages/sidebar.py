@@ -104,8 +104,14 @@ def render_sidebar():
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         st.markdown("### Status")
         col1, col2 = st.columns(2)
+        jira_ok, jira_err = _check_jira()
         with col1:
-            st.markdown("✅ JIRA: OK" if _check_jira() else "❌ JIRA: ERROR")
+            if jira_ok:
+                st.markdown("✅ JIRA: OK")
+            else:
+                st.markdown("❌ JIRA: ERROR")
+                if jira_err:
+                    st.caption(f"⚠️ {jira_err}")
         with col2:
             st.markdown("✅ GitHub: OK" if _check_github() else "⚠️ GitHub: Optional")
 
@@ -137,12 +143,15 @@ def render_sidebar():
 
 
 def _check_jira():
-    """JIRA ulanishini tekshirish"""
+    """JIRA ulanishini tekshirish — credentials mavjudligini tekshiradi"""
     try:
         from config.settings import settings
-        return bool(settings.JIRA_EMAIL and settings.JIRA_API_TOKEN)
-    except:
-        return False
+        has_creds = bool(settings.JIRA_EMAIL and settings.JIRA_API_TOKEN)
+        if not has_creds:
+            return False, "JIRA_EMAIL yoki JIRA_API_TOKEN .env da yo'q"
+        return True, None
+    except Exception as e:
+        return False, str(e)
 
 
 def _check_github():

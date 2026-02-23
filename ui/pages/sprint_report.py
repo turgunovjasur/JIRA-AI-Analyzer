@@ -111,7 +111,7 @@ def _render_task_type_chart(data):
             color_discrete_sequence=px.colors.qualitative.Set3
         )
         fig.update_traces(textposition='inside', textinfo='percent+label')
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
     with col2:
         st.dataframe(
@@ -120,7 +120,7 @@ def _render_task_type_chart(data):
                 'count': 'Soni',
                 'percentage': 'Foiz'
             }),
-            use_container_width=True,
+            width='stretch',
             hide_index=True
         )
 
@@ -167,7 +167,7 @@ def _render_top_features(data):
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
     # Table
     st.dataframe(
@@ -181,7 +181,7 @@ def _render_top_features(data):
             'analiz': 'Analiz',
             'other': 'Boshqa'
         }),
-        use_container_width=True,
+        width='stretch',
         hide_index=True
     )
 
@@ -226,7 +226,7 @@ def _render_bug_distribution(data):
         showlegend=True
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 def _render_developer_workload(data):
@@ -254,6 +254,6 @@ def _render_developer_workload(data):
             'returned': 'Qaytarilgan',
             'avg_compliance_score': 'O\'rtacha Moslik'
         }).style.background_gradient(subset=['Jami'], cmap='Blues'),
-        use_container_width=True,
+        width='stretch',
         hide_index=True
     )

@@ -28,7 +28,7 @@ def _get_db_settings():
             from config.app_settings import get_app_settings
             _settings_cache = get_app_settings(force_reload=False).queue
         except Exception as e:
-            log.warning(f"Settings yuklanmadi, default ishlatiladi: {e}")
+            log.warning(f"Settings load failed, using defaults: {e}")
             # Default values
             class DefaultSettings:
                 db_busy_timeout = 30000
@@ -47,10 +47,41 @@ def _ensure_db_dir():
     Path(DB_DIR).mkdir(parents=True, exist_ok=True)
 
 
-def init_db():
+def init_db() -> None:
     """
-    DB va jadvalni yaratish (yoki yangilash)
-    WAL mode va busy_timeout concurrent access uchun
+    SQLite ma'lumotlar bazasini ishga tushirish va kerakli strukturani yaratish.
+
+    Agar DB fayli mavjud bo'lmasa yaratadi. Agar jadval allaqachon mavjud bo'lsa
+    (IF NOT EXISTS), hech narsa o'zgarmaydi — idempotent funksiya.
+
+    Yaratilgan tuzilma:
+        - task_processing jadvali (v3 ustunlari bilan: blocked_*, assignee, task_type)
+        - WAL (Write-Ahead Logging) rejimi — parallel o'qish uchun
+        - busy_timeout=30000ms — bir vaqtda yozishda kutish muddati
+        - Tezlashtiruvchi indekslar: task_status, service1_status, service2_status
+
+    WAL rejimi nima uchun:
+        SQLite standard rejimda (DELETE mode) yozishda barcha o'qishlarni bloklaydi.
+        WAL rejimda yozish va o'qish parallel ishlaydi — webhook server bir vaqtda
+        ko'p taskni boshqarganda muhim. Natija: deadlock va timeout xatolari kamayadi.
+
+    v2 ustunlari (meros sifatida CREATE TABLE ga kiritilgan):
+        - assignee: JIRA task ijrochisi
+        - task_type: task turi (product, client, bug, error, analiz, other)
+        - feature_name: PR fayllaridan ajratilgan funksiya nomi
+        - technology_stack: PR fayllaridan ajratilgan texnologiyalar
+
+    v3 ustunlari (meros sifatida CREATE TABLE ga kiritilgan):
+        - blocked_at: task bloklanган vaqt
+        - blocked_retry_at: qayta urinish rejalashtirilgan vaqt
+        - block_reason: bloklash sababi (masalan: AI 429 limit)
+
+    Side Effects:
+        - data/ katalogi yaratiladi (agar mavjud bo'lmasa)
+        - data/processing.db fayli yaratiladi yoki mavjud faylga ulanadi
+
+    Raises:
+        Exception: DB fayli yaratish yoki PRAGMA bajarishda muvaffaqiyatsiz bo'lsa
     """
     try:
         _ensure_db_dir()
@@ -64,7 +95,7 @@ def init_db():
         cursor.execute(f"PRAGMA busy_timeout={settings.db_busy_timeout}")
         cursor.execute("PRAGMA foreign_keys=ON")
 
-        # task_processing jadvali
+        # task_processing jadvali (v3: blocked_*, assignee, task_type ustunlari bilan)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS task_processing (
                 task_id TEXT PRIMARY KEY,
@@ -75,7 +106,7 @@ def init_db():
                 last_processed_at DATETIME,
                 error_message TEXT NULL,
                 skip_detected INTEGER DEFAULT 0,
-                
+
                 -- Servis-bosqich holatlari
                 service1_status TEXT DEFAULT 'pending',
                 service2_status TEXT DEFAULT 'pending',
@@ -83,11 +114,22 @@ def init_db():
                 service2_error TEXT NULL,
                 service1_done_at DATETIME NULL,
                 service2_done_at DATETIME NULL,
-                
+
                 -- Qo'shimcha ma'lumotlar
                 compliance_score INTEGER NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+                -- v2: task metadata (assignee, tur, xususiyat, texnologiya)
+                assignee TEXT NULL,
+                task_type TEXT NULL,
+                feature_name TEXT NULL,
+                technology_stack TEXT NULL,
+
+                -- v3: blocked holat boshqaruvi
+                blocked_at DATETIME NULL,
+                blocked_retry_at DATETIME NULL,
+                block_reason TEXT NULL
             )
         """)
 
@@ -116,99 +158,36 @@ def init_db():
         log.warning(f"DB initialization error: {e}")
         raise
 
-
-# def migrate_db_v2():
-#     """
-#     Migrate DB to v2: add assignee, task_type, feature_name, technology_stack
-#     Idempotent - safe to run multiple times
-#     """
-#     try:
-#         _ensure_db_dir()
-#         conn = sqlite3.connect(DB_FILE)
-#         cursor = conn.cursor()
-#
-#         # Check if already migrated
-#         cursor.execute("PRAGMA table_info(task_processing)")
-#         columns = [row[1] for row in cursor.fetchall()]
-#
-#         if 'assignee' in columns:
-#             conn.close()
-#             return
-#
-#         log.info("DB migration to v2...")
-#
-#         # Add new columns
-#         cursor.execute("ALTER TABLE task_processing ADD COLUMN assignee TEXT NULL")
-#         cursor.execute("ALTER TABLE task_processing ADD COLUMN task_type TEXT NULL")
-#         cursor.execute("ALTER TABLE task_processing ADD COLUMN feature_name TEXT NULL")
-#         cursor.execute("ALTER TABLE task_processing ADD COLUMN technology_stack TEXT NULL")
-#
-#         # Indexes for performance
-#         cursor.execute("""
-#             CREATE INDEX IF NOT EXISTS idx_task_type
-#             ON task_processing(task_type)
-#         """)
-#
-#         cursor.execute("""
-#             CREATE INDEX IF NOT EXISTS idx_assignee
-#             ON task_processing(assignee)
-#         """)
-#
-#         cursor.execute("""
-#             CREATE INDEX IF NOT EXISTS idx_feature_name
-#             ON task_processing(feature_name)
-#         """)
-#
-#         conn.commit()
-#         conn.close()
-#         log.info("DB migration v2 completed!")
-#
-#     except Exception as e:
-#         log.warning(f"DB migration error: {e}")
-#         raise
-#
-#
-# def migrate_db_v3():
-#     """
-#     Migrate DB to v3: add blocked_at, blocked_retry_at, block_reason
-#     Idempotent - safe to run multiple times
-#     """
-#     try:
-#         _ensure_db_dir()
-#         conn = sqlite3.connect(DB_FILE)
-#         cursor = conn.cursor()
-#
-#         cursor.execute("PRAGMA table_info(task_processing)")
-#         columns = [row[1] for row in cursor.fetchall()]
-#
-#         if 'blocked_at' in columns:
-#             conn.close()
-#             return
-#
-#         log.info("DB migration to v3...")
-#
-#         cursor.execute("ALTER TABLE task_processing ADD COLUMN blocked_at DATETIME NULL")
-#         cursor.execute("ALTER TABLE task_processing ADD COLUMN blocked_retry_at DATETIME NULL")
-#         cursor.execute("ALTER TABLE task_processing ADD COLUMN block_reason TEXT NULL")
-#
-#         conn.commit()
-#         conn.close()
-#         log.info("DB migration v3 completed!")
-#
-#     except Exception as e:
-#         log.warning(f"DB migration v3 error: {e}")
-#         raise
+# DB migrations v2 (assignee/task_type/feature_name/technology_stack ustunlari) va
+# v3 (blocked_at/blocked_retry_at/block_reason ustunlari) yakunlandi va
+# yuqoridagi CREATE TABLE ga kiritildi. Migration funksiyalari o'chirildi 2026-02.
 
 
 def get_task(task_id: str) -> Optional[Dict[str, Any]]:
     """
-    Task ma'lumotlarini olish
+    Berilgan task_id bo'yicha task ma'lumotlarini SQLite dan o'qish.
+
+    WAL rejimda o'qishda eskirgan ma'lumot kelmasligi uchun
+    ``PRAGMA synchronous=FULL`` ishlatiladi — bu SQLite ni barcha yozuvlar
+    diskka to'liq tushishini kutishga majbur qiladi. Shunday qilib
+    ``upsert_task()`` commit qilgandan so'ng darhol chaqirilgan ``get_task()``
+    hamma vaqt yangi qiymatni qaytaradi.
+
+    ``conn.row_factory = sqlite3.Row`` o'rnatiladi — bu SELECT natijasini
+    oddiy tuple emas, balki nom orqali murojaat qilish mumkin bo'lgan
+    Row obyektiga aylantiradi. ``dict(row)`` chaqiruvida to'liq kalit-qiymat
+    lug'ati hosil qilinadi.
 
     Args:
-        task_id: JIRA task key (masalan: DEV-1234)
+        task_id: JIRA task identifikatori (masalan: DEV-1234, PROJ-999)
 
     Returns:
-        dict yoki None
+        Dict[str, Any]: Jadval ustunlari kalit, qiymatlari bo'lgan lug'at.
+            Agar task topilmasa — None qaytadi.
+
+    Note:
+        Xato yuz berganda (masalan DB fayli yo'q) None qaytadi va
+        log.warning chiqariladi — exception ko'tarilmaydi.
     """
     try:
         settings = _get_db_settings()
@@ -236,13 +215,35 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def upsert_task(task_id: str, fields: Dict[str, Any]):
+def upsert_task(task_id: str, fields: Dict[str, Any]) -> None:
     """
-    Task ma'lumotlarini yangilash yoki yaratish (transaction-safe)
+    Task ma'lumotlarini yangilash (UPDATE) yoki yangi yaratish (INSERT).
+
+    Funksiya avval task mavjudligini tekshiradi: agar bor bo'lsa UPDATE,
+    bo'lmasa INSERT bajaradi. ``updated_at`` maydoni har safar avtomatik
+    yangilanadi.
+
+    BEGIN IMMEDIATE transaction lock nima uchun:
+        SQLite da standart ``BEGIN`` (DEFERRED) holatida bir nechta jarayon
+        bir vaqtda o'qiy oladi, lekin birinchi yozuvchi lock olguncha
+        boshqalar ham o'qib, keyin yozmoqchi bo'lishi mumkin — bu race
+        condition ga olib keladi. ``BEGIN IMMEDIATE`` esa darhol write-lock
+        oladi: boshqa yozuvchilar kutadi. Webhook server bir vaqtda bir nechta
+        event qayta ishlaganda bu muhim himoya mexanizmi hisoblanadi.
 
     Args:
-        task_id: JIRA task key
-        fields: Yangilash kerak bo'lgan maydonlar
+        task_id: JIRA task identifikatori (masalan: DEV-1234)
+        fields: Yangilanishi kerak bo'lgan maydonlar lug'ati.
+            Masalan: ``{'task_status': 'progressing', 'service1_status': 'pending'}``
+
+    Raises:
+        sqlite3.OperationalError: DB lock xatosi (masalan: database is locked).
+            Lock xatosi bo'lsa log.warning chiqariladi va exception ko'tariladi.
+        Exception: Boshqa kutilmagan SQLite xatolari.
+
+    Note:
+        ``fields`` lug'atidagi ``updated_at`` kaliti bu funksiya tomonidan
+        avtomatik o'rnatiladi — tashqaridan berilgan qiymat ustiga yoziladi.
     """
     try:
         settings = _get_db_settings()
@@ -290,14 +291,29 @@ def upsert_task(task_id: str, fields: Dict[str, Any]):
         raise
 
 
-def mark_progressing(task_id: str, jira_status: str, update_time: Optional[datetime] = None):
+def mark_progressing(task_id: str, jira_status: str, update_time: Optional[datetime] = None) -> None:
     """
-    Task holatini 'progressing' ga o'zgartirish
-    
+    Task holatini ``'progressing'`` ga o'zgartirish — qayta ishlash boshlanganda chaqiriladi.
+
+    Holat o'tishi (state transition):
+        ``none`` / ``completed`` / ``error`` / ``blocked`` / ``returned``
+            → ``progressing``
+
+    Bu holat webhook handler da dublikat ishlov berishni oldini olish uchun
+    ishlatiladi: agar task allaqachon ``progressing`` bo'lsa, keyingi webhook
+    eventi e'tiborga olinmaydi (queue lock mexanizmi).
+
+    Saqlanadigan ma'lumotlar:
+        - ``task_status`` = ``'progressing'``
+        - ``last_jira_status``: JIRA dagi joriy status nomi (masalan: ``Ready to Test``)
+        - ``task_update_time``: JIRA webhook eventidagi o'zgarish vaqti
+        - ``last_processed_at``: hozirgi vaqt (qayta ishlash boshlangan moment)
+
     Args:
-        task_id: JIRA task key
-        jira_status: JIRA status nomi
-        update_time: Vaqt (default: hozirgi vaqt)
+        task_id: JIRA task identifikatori (masalan: DEV-1234)
+        jira_status: JIRA status nomi (masalan: ``'Ready to Test'``)
+        update_time: JIRA webhook eventidagi vaqt damgasi.
+            Agar berilmasa — hozirgi vaqt (``datetime.now()``) ishlatiladi.
     """
     if update_time is None:
         update_time = datetime.now()
@@ -320,10 +336,27 @@ def mark_completed(task_id: str):
     })
 
 
-def mark_returned(task_id: str):
+def mark_returned(task_id: str) -> None:
     """
-    Task holatini 'returned' ga o'zgartirish
-    service1=done (o'zgarmaydi), service2=pending (run bo'lmasligi uchun, error emas)
+    Task holatini ``'returned'`` ga o'zgartirish — task TZ/PR muammo sababli qaytarilganda.
+
+    Holat o'tishi (state transition):
+        ``progressing`` → ``returned``
+
+    Nima uchun service2_status ``'pending'`` qoladi (``'error'`` emas):
+        Task ``returned`` bo'lganda Service1 allaqachon ishlagan va past moslik
+        bali (compliance_score) tufayli Service2 ishga tushmagan. Bu holat
+        ``'error'`` emas — bu kutilgan biznes-mantiq. Shu sababli:
+
+        - ``service1_status`` = ``'done'`` (Service1 bajarilgan, natija past)
+        - ``service2_status`` = ``'pending'`` (Service2 hali ishlamagan, xato emas)
+        - ``service2_error`` = None (xato xabari tozalanadi)
+
+        Agar ``service2_status`` = ``'error'`` qilinsa, monitoring dashboardda
+        noto'g'ri xato ko'rsatiladi va re-check logikasi buziladi.
+
+    Args:
+        task_id: JIRA task identifikatori (masalan: DEV-1234)
     """
     upsert_task(task_id, {
         'task_status': 'returned',
@@ -391,15 +424,32 @@ def set_service1_done(task_id: str, compliance_score: Optional[int] = None):
     upsert_task(task_id, fields)
 
 
-def set_service1_error(task_id: str, error_msg: str, keep_service2_pending: bool = False):
+def set_service1_error(task_id: str, error_msg: str, keep_service2_pending: bool = False) -> None:
     """
-    Service1 (TZ-PR) holatini 'error' ga o'zgartirish
+    Service1 (TZ-PR checker) holatini ``'error'`` ga o'zgartirish.
+
+    Holat o'tishi (state transition):
+        ``service1_status``: ``'pending'`` / ``'progressing'`` → ``'error'``
+        ``task_status``: → ``'error'``
+
+    keep_service2_pending parametri nima uchun kerak:
+        Ba'zi hollarda Service1 xatosi Service2 ni to'xtatmasligi kerak.
+        Masalan, GitHub PR topilmasa Service1 xato bo'ladi, lekin Service2
+        TZ-only rejimda ishlashi mumkin. Bunday holda:
+
+        - ``keep_service2_pending=True`` — Service2 ``'pending'`` qoladi,
+          Service2 keyingi bosqichda TZ ma'lumoti bilan ishlaydi.
+
+        - ``keep_service2_pending=False`` (default) — Service1 xatosi
+          Service2 ni ham bloklaydi: ``service2_status`` = ``'error'``,
+          ``service2_error`` = ``'Blocked by Service1 failure'``.
 
     Args:
-        task_id: JIRA task key
-        error_msg: Xato xabari
-        keep_service2_pending: True bo'lsa service2 'pending' ga o'rnatiladi
-                               (masalan: PR topilmadi xatosida Service2 TZ-only bilan ishlaydi)
+        task_id: JIRA task identifikatori (masalan: DEV-1234)
+        error_msg: Xato xabari (log va DB ga yoziladi)
+        keep_service2_pending: True bo'lsa Service2 ``'pending'`` holatida qoladi
+            va keyingi bosqichda TZ-only rejimda ishlashga ruxsat beriladi.
+            False bo'lsa (default) Service2 ham ``'error'`` ga o'tadi.
     """
     fields = {
         'service1_status': 'error',
@@ -552,10 +602,30 @@ def set_service1_skip(task_id: str):
 
 def get_blocked_tasks_ready_for_retry() -> List[Dict[str, Any]]:
     """
-    Retry vaqti kelgan blocked tasklarni olish
+    Qayta urinish vaqti kelgan ``'blocked'`` tasklarni tanlash.
+
+    So'rov mantiq:
+        ``WHERE task_status = 'blocked'
+           AND blocked_retry_at IS NOT NULL
+           AND blocked_retry_at <= :now``
+
+        Ya'ni: hozirgi vaqt ``blocked_retry_at`` dan katta yoki teng bo'lgan
+        barcha blocked tasklar qaytariladi. Bu retry scheduler tomonidan har
+        N daqiqada chaqiriladi — ``blocked_retry_at`` qiymati kelajakda
+        bo'lsa, o'sha task hali tayyor emas.
+
+    Bloklash stsenariylari (bu funksiya ular uchun ishlatiladi):
+        - AI 429 (Too Many Requests) — rate limit oshilganda
+        - AI timeout — Gemini javob bermasa
+        - ``mark_blocked()``, ``set_service1_blocked()``, ``set_service2_blocked()``
+          orqali o'rnatilgan holatlar
+
+    Tartiblash:
+        ``blocked_retry_at ASC`` — eng eski (eng uzoq kutgan) task birinchi.
 
     Returns:
-        blocked_retry_at <= now bo'lgan tasklar ro'yxati
+        List[Dict[str, Any]]: Har bir task to'liq maydonlari bilan lug'at sifatida.
+            Bo'sh ro'yxat qaytadi agar tayyor task yo'q bo'lsa yoki xato yuz bersa.
     """
     try:
         conn = sqlite3.connect(DB_FILE)
@@ -625,18 +695,18 @@ def delete_task(task_id: str) -> bool:
             if still_exists:
                 conn.close()
                 conn = None
-                log.warning(f"[{task_id}] Task o'chirilmadi - DELETE qilgandan keyin hali ham mavjud!")
+                log.warning(f"[{task_id}] DB-DELETE -> failed, task still exists after DELETE")
                 return False
             else:
                 conn.close()
                 conn = None
-                log.info(f"[{task_id}] Task DB dan to'liq o'chirildi (deleted_count={deleted_count}, WAL checkpoint done)")
+                log.info(f"[{task_id}] DB-DELETE -> ok (count={deleted_count})")
                 return True
         else:
             conn.commit()
             conn.close()
             conn = None
-            log.warning(f"[{task_id}] Task DB da topilmadi (o'chirish kerak emas)")
+            log.warning(f"[{task_id}] DB-DELETE -> task not found, nothing to delete")
             return False
 
     except sqlite3.OperationalError as e:
@@ -667,12 +737,33 @@ def delete_task(task_id: str) -> bool:
                 pass
 
 
-def reset_service_statuses(task_id: str):
+def reset_service_statuses(task_id: str) -> None:
     """
-    Service holatlarini qayta ishlash uchun reset qilish
+    Servis holatlarini noldan boshlash uchun qayta tiklash (re-check stsenariysida).
 
-    Re-check vaqtida (task qaytarilgandan keyin yana Ready to Test)
-    service statuslarni qayta boshlash uchun ishlatiladi.
+    Qachon chaqiriladi:
+        Task ilgari ``'returned'`` yoki ``'error'`` holatida bo'lgan va
+        endi qayta ``Ready to Test`` statusiga o'tganda (masalan: developer
+        TZ ni to'ldirib, taskni qaytadan test uchun jo'natganda) bu funksiya
+        chaqiriladi. Shunday qilib Service1 va Service2 yana yangi sikl
+        sifatida boshidan boshlanadi.
+
+    Reset qilinadigan maydonlar:
+        - ``service1_status`` → ``'pending'``
+        - ``service2_status`` → ``'pending'``
+        - ``service1_error`` → None
+        - ``service2_error`` → None
+        - ``service1_done_at`` → None
+        - ``service2_done_at`` → None
+        - ``compliance_score`` → None
+
+    O'zgarmaydigan maydonlar:
+        - ``task_status``: chaqiruvchi funksiya tomonidan boshqariladi
+        - ``return_count``: saqlab qolinadi (nechi marta qaytarilgani statistika uchun)
+        - ``assignee``, ``task_type``, ``feature_name``: meta-ma'lumotlar saqlanadi
+
+    Args:
+        task_id: JIRA task identifikatori (masalan: DEV-1234)
     """
     upsert_task(task_id, {
         'service1_status': 'pending',
@@ -820,13 +911,43 @@ def update_task_metadata(
 
 def get_stuck_tasks(timeout_minutes: int = 30) -> List[Dict[str, Any]]:
     """
-    'progressing' statusda timeout minutdan ortiq turgan tasklarni topish
+    ``'progressing'`` holatida qolib ketgan (stuck) tasklarni topish.
+
+    Task "stuck" hisoblanganda:
+        Task ``'progressing'`` holatiga o'tgandan keyin ``timeout_minutes``
+        daqiqadan ortiq vaqt o'tsa va hali ham ``'progressing'`` bo'lsa —
+        bu task server crash, network uzilishi yoki kutilmagan xato sababli
+        to'xtab qolgan deb hisoblanadi.
+
+    timeout_minutes parametri nima uchun kerak:
+        - Turli muhitlarda (test, staging, prod) timeout farqli bo'lishi mumkin.
+        - Kichik qiymat (masalan: 5 min) — test muhitida tez aniqlash uchun.
+        - Katta qiymat (masalan: 60 min) — og'ir AI operatsiyalar uchun.
+        - Default: 30 daqiqa — oddiy webhook operatsiyalar uchun yetarli.
+
+    SQL so'rovi:
+        ``WHERE task_status = 'progressing'
+           AND updated_at < :cutoff_time``
+
+        ``stuck_minutes`` = ``(julianday('now') - julianday(updated_at)) * 1440``
+        (julianday farqi kunlarda, x1440 → daqiqaga aylantiriladi)
+
+    Monitoring ishlatilishi:
+        Bu funksiya monitoring dashboard va cleanup scheduler tomonidan
+        periodiq chaqiriladi. Topilgan stuck tasklar ``mark_error()`` orqali
+        xato holatiga o'tkazilishi yoki adminга xabar yuborilishi mumkin.
 
     Args:
-        timeout_minutes: Task stuck hisoblanadigan muddat (daqiqa)
+        timeout_minutes: Qancha daqiqa o'tsa task stuck deb hisoblanadi.
+            Default: 30 daqiqa.
 
     Returns:
-        Stuck task'lar ro'yxati [{'task_id': 'DEV-123', 'stuck_minutes': 45, ...}, ...]
+        List[Dict[str, Any]]: Stuck tasklar ro'yxati. Har bir element:
+            - ``task_id``: JIRA task identifikatori
+            - ``task_status``: ``'progressing'``
+            - ``service1_status``, ``service2_status``: servis holatlari
+            - ``last_processed_at``, ``updated_at``: vaqt damgalari
+            - ``stuck_minutes``: necha daqiqa stuck bo'lgani (hisoblangan)
     """
     try:
         conn = sqlite3.connect(DB_FILE)

@@ -320,7 +320,7 @@ def render_developers_tab(df):
             font_color=CHART_COLORS['text'], showlegend=False,
             yaxis={'categoryorder': 'total ascending'}
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
     with col2:
         dev_stats['Completion Rate'] = (dev_stats['Closed'] / dev_stats['Total Tasks'] * 100).round(1)
@@ -337,9 +337,9 @@ def render_developers_tab(df):
             font_color=CHART_COLORS['text'], showlegend=False,
             yaxis={'categoryorder': 'total ascending'}
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
-    st.dataframe(dev_stats, use_container_width=True, hide_index=True)
+    st.dataframe(dev_stats, width='stretch', hide_index=True)
 
 
 def render_bugs_tab(df):
@@ -358,14 +358,14 @@ def render_bugs_tab(df):
         bug_status.columns = ['Status', 'Count']
         fig = px.pie(bug_status, values='Count', names='Status', title='🎯 Bug Status', hole=0.4)
         fig.update_layout(paper_bgcolor=CHART_COLORS['bg'], font_color=CHART_COLORS['text'])
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
     with col2:
         bug_priority = bugs_df['priority'].value_counts().reset_index()
         bug_priority.columns = ['Priority', 'Count']
         fig = px.bar(bug_priority, x='Priority', y='Count', title='⚡ Bug Priority')
         fig.update_layout(paper_bgcolor=CHART_COLORS['bg'], font_color=CHART_COLORS['text'])
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
 
 def render_returns_tab(df):
@@ -436,7 +436,7 @@ def render_statistics():
                 'Issues': meta['total_rows'],
                 'Hajm': meta['file_size']
             })
-        st.dataframe(pd.DataFrame(sprint_info), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(sprint_info), width='stretch', hide_index=True)
 
     st.markdown("---")
 

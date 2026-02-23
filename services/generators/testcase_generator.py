@@ -96,18 +96,63 @@ class TestCaseGeneratorService(BaseService):
             status_callback: Optional[Callable[[str, str], None]] = None
     ) -> TestCaseGenerationResult:
         """
-        Task uchun test case'lar yaratish
+        Testcase generation — asosiy funksiya (6 bosqichli pipeline).
+
+        Bu funksiya JIRA task TZ va GitHub PR ma'lumotlari asosida
+        Google Gemini AI yordamida test case'lar yaratadi va
+        ``TestCaseGenerationResult`` sifatida qaytaradi.
+
+        Ishlash bosqichlari:
+            1. JIRA'dan task tafsilotlarini olish (summary, TZ, description, comments).
+            2. TZHelper orqali TZ matnini formatlash va comment tahlilini bajarish.
+            3. GitHub'dan PR ma'lumotlarini olish — ``include_pr=True`` bo'lsa
+               ``PRHelper.get_pr_full_info()`` chaqiriladi (Smart Patch bilan).
+               PR topilmasa — TZ-only rejimga o'tish (fallback), warning saqlanadi.
+            4. ``TZHelper.create_task_overview()`` orqali task umumiy tavsifi yaratiladi.
+            5. ``_generate_with_ai()`` orqali Gemini AI ga prompt yuboriladi va
+               xom JSON javob olinadi.
+            6. ``_parse_test_cases()`` orqali xom JSON dan ``TestCase`` ro'yxati
+               ajratib olinadi va statistika hisoblanadi.
+
+        Custom context (qo'shimcha kontekst):
+            ``custom_context`` bo'sh bo'lmasa, u prompt ichiga alohida bo'lim
+            sifatida kiritiladi va AI ga ``MUHIM: ishlat`` ko'rsatmasi beriladi.
+            Bu QA muhandisga product nomlari, narxlar, chegirmalar kabi
+            domainга xos ma'lumotlarni AI ga berish imkonini yaratadi.
+
+        PR topilmasa nima bo'ladi (fallback):
+            - ``pr_info = None`` qoladi
+            - ``warnings`` ro'yxatiga xabar qo'shiladi
+            - AI faqat TZ asosida ishlaydi (``include_pr=False`` bilan ekvivalent)
+            - ``TestCaseGenerationResult.pr_count = 0``
 
         Args:
-            task_key: JIRA task key
-            include_pr: PR'ni hisobga olish
-            use_smart_patch: Smart Patch ishlatish
-            test_types: Test turlari ['positive', 'negative', 'boundary', ...]
-            custom_context: Foydalanuvchidan qo'shimcha ma'lumot (product nomlari, narxlar, etc.)
-            status_callback: Status update callback
+            task_key: JIRA task identifikatori (masalan: DEV-1234).
+            include_pr: True bo'lsa GitHub PR ma'lumotlari olinadi.
+                False bo'lsa — faqat TZ asosida ishlaydi (tezroq, PR-siz).
+            use_smart_patch: True bo'lsa PRHelper Smart Patch algoritmini
+                ishlatadi — katta PR'larda faqat muhim o'zgarishlar olinadi.
+            test_types: Yaratilishi kerak bo'lgan test turlari ro'yxati.
+                Masalan: ``['positive', 'negative', 'boundary']``.
+                Default: ``['positive', 'negative']``.
+            custom_context: Foydalanuvchidan qo'shimcha kontekst matni.
+                Masalan: ``'Mahsulot: Anor Premium. Narx: 50000 so'm. Chegirma: 20%'``.
+                Bo'sh string bo'lsa e'tiborga olinmaydi.
+            status_callback: Har bir bosqich tugaganda chaqiriladigan callback.
+                Imzosi: ``(status: str, message: str) -> None``.
 
         Returns:
-            TestCaseGenerationResult
+            TestCaseGenerationResult: Natija ob'ekti quyidagilarni o'z ichiga oladi:
+                - ``test_cases``: ``TestCase`` ob'ektlari ro'yxati
+                - ``total_test_cases``: yaratilgan test case'lar soni
+                - ``by_type``: test turi bo'yicha statistika (masalan: ``{'positive': 3}``)
+                - ``by_priority``: prioritet bo'yicha statistika
+                - ``pr_count``, ``files_changed``: PR statistikasi
+                - ``tz_content``: ishlatilgan TZ matni
+                - ``success``: True agar muvaffaqiyatli
+                - ``error_message``: xato bo'lsa tavsif
+                - ``warnings``: ogohlantirish xabarlari ro'yxati
+                - ``custom_context_used``: custom_context ishlatilganmi
         """
         # Status updater (BaseService'dan)
         update_status = self._create_status_updater(status_callback)
@@ -237,7 +282,7 @@ class TestCaseGeneratorService(BaseService):
 
         except Exception as e:
             import traceback
-            log.error(task_key, "generate_test_cases", traceback.format_exc())
+            log.log_error(task_key, "generate_test_cases", traceback.format_exc())
             return TestCaseGenerationResult(
                 task_key=task_key,
                 task_summary="",
@@ -257,14 +302,44 @@ class TestCaseGeneratorService(BaseService):
             max_test_cases: int = 10
     ) -> Dict:
         """
-        AI bilan test case'lar yaratish
+        Gemini AI ga prompt yuborish va xom javobni qaytarish.
+
+        Bu metod ``generate_test_cases()`` pipeline'ining 5-bosqichi:
+        prompt yaratiladi → matn hajmi tekshiriladi → AI chaqiriladi.
+
+        Prompt yaratish:
+            ``_create_test_case_prompt()`` chaqiriladi — barcha parametrlar
+            u yerga uzatiladi. Prompt TZ, comment tahlili, PR ma'lumoti va
+            custom context bo'limlarini o'z ichiga oladi.
+
+        Matn hajmi tekshiruvi:
+            ``BaseService._calculate_text_length()`` orqali prompt token hajmi
+            aniqlanadi. Agar limit oshilgan bo'lsa ``BaseService._truncate_text()``
+            orqali prompt qisqartiriladi — bu Gemini kontekst limitiga sig'ish
+            uchun zarur.
+
+        AI chaqiruvi:
+            ``self.gemini.analyze(prompt, max_output_tokens=...)`` chaqiriladi.
+            ``max_output_tokens`` ``app_settings.testcase_generator.ai_max_output_tokens``
+            dan olinadi — bu JSON truncation (kesilish) xatosini oldini oladi.
+
+        Args:
+            task_key: JIRA task identifikatori (log uchun).
+            task_details: JIRA task to'liq ma'lumotlari (summary, type, priority).
+            tz_content: Formatlangan TZ matni.
+            comment_analysis: ``TZHelper.format_tz_with_comments()`` natijasi
+                (``has_changes``, ``summary``, ``important_comments``).
+            pr_info: ``PRHelper.get_pr_full_info()`` natijasi yoki None.
+            test_types: Yaratilishi kerak bo'lgan test turlari.
+            custom_context: Foydalanuvchi qo'shimcha matni (bo'sh bo'lishi mumkin).
+            max_test_cases: AI yaratishi mumkin bo'lgan maksimal test case soni.
 
         Returns:
-            {
-                'success': bool,
-                'raw_response': str,
-                'error': str (if failed)
-            }
+            Dict: Ikki kalitli lug'at:
+                - Muvaffaqiyatli holda:
+                    ``{'success': True, 'raw_response': '<AI xom JSON javobi>'}``
+                - Xato holda:
+                    ``{'success': False, 'error': 'AI xatosi: <sabab>'}``
         """
         try:
             # Prompt yaratish (WITH CUSTOM CONTEXT)
@@ -314,7 +389,45 @@ class TestCaseGeneratorService(BaseService):
             max_test_cases: int = 10
     ) -> str:
         """
-        Test case generation uchun prompt yaratish (WITH CUSTOM CONTEXT)
+        Gemini AI uchun testcase generation promptini yig'ish.
+
+        Prompt dinamik ravishda bo'limlardan tuziladi — ba'zi bo'limlar
+        faqat ma'lumot mavjud bo'lganda kiritiladi:
+
+        Har doim kiritilgan bo'limlar:
+            1. TASK MA'LUMOTLARI — task_key, summary, type, priority.
+            2. TEXNIK TOPSHIRIQ (TZ) — ``tz_content`` to'liq matni.
+            3. TEST CASE TALABLARI — test turlari va sifat ko'rsatmalari.
+            4. JAVOB FORMATI (JSON) — AI javob strukturasi namunasi.
+
+        Shartli bo'limlar (mavjud bo'lganda qo'shiladi):
+            - QO'SHIMCHA MA'LUMOTLAR: ``custom_context`` bo'sh bo'lmasa,
+              alohida bo'lim sifatida kiritiladi. AI ga ``ALBATTA ishlat``
+              ko'rsatmasi beriladi — product nomlari, narxlar, domenga xos
+              ma'lumotlar test datalarida aks ettiriladi.
+            - MUHIM: COMMENT'LARDA O'ZGARISHLAR: ``comment_analysis['has_changes']``
+              True bo'lsa, comment tahlili kiritiladi.
+            - KOD O'ZGARISHLARI: ``pr_info`` mavjud bo'lsa, PR statistikasi
+              (PR soni, fayl soni, qo'shilgan/o'chirilgan qatorlar) kiritiladi.
+
+        Prompt formati:
+            - O'zbek tilida yoziladi (AI javobi ham O'zbek tilida bo'ladi)
+            - Unicode vizual ajratgichlar (═══) bo'limlar chegarasini belgilaydi
+            - JSON namunasi ``{{}}`` escape bilan f-string ichida beriladi
+            - ``max_test_cases`` va ``len(test_types)`` dinamik kiritiladi
+
+        Args:
+            task_key: JIRA task identifikatori (prompt sarlavhasida ko'rsatiladi).
+            task_details: JIRA task ma'lumotlari (summary, type, priority kerak).
+            tz_content: Formatlangan TZ matni (prompt markaziy bo'limi).
+            comment_analysis: Comment tahlili natijasi.
+            pr_info: PR ma'lumotlari lug'ati yoki None.
+            test_types: Yaratilishi kerak bo'lgan test turlari ro'yxati.
+            custom_context: Foydalanuvchi qo'shimcha matni (bo'sh bo'lsa bo'lim qo'shilmaydi).
+            max_test_cases: Maksimal test case soni (prompt ichiga kiritiladi).
+
+        Returns:
+            str: Gemini AI ga yuborish uchun tayyor prompt matni.
         """
         # Test types description
         test_types_desc = {
@@ -460,13 +573,39 @@ Endi {len(test_types)} xil test ({types_text}) uchun test case'lar yarating!
 
     def _parse_test_cases(self, raw_response: str) -> List[TestCase]:
         """
-        AI javobidan test case'larni parse qilish
+        AI xom javobidan JSON ajratib olish va ``TestCase`` ob'ektlarini yaratish.
+
+        Parse bosqichlari:
+            1. Xom javobdan birinchi ``{`` va oxirgi ``}`` orasidagi JSON
+               qismi kesib olinadi (markdown blok, ortiqcha matn filtirlanadi).
+            2. ``json.loads()`` bilan parse qilinadi.
+            3. Test case ro'yxati quyidagi kalitlardan biri orqali topiladi
+               (alias qidirish): ``test_cases`` → ``testCases`` → ``tests``
+               → ``test_case_list``.
+            4. Har bir test case lug'atidan ``TestCase`` dataclass ob'ekti
+               yaratiladi.
+
+        JSON parse xatosi bo'lsa (repair rejimi):
+            Agar ``json.loads()`` ``JSONDecodeError`` ko'tarsa —
+            ``_try_repair_json()`` chaqiriladi. Muvaffaqiyatli bo'lsa
+            repaired JSON qayta parse qilinadi va test case'lar tiklangan
+            miqdorda qaytariladi.
+
+        Maydonlar uchun default qiymatlar:
+            Har bir maydon uchun ``.get(key, default)`` ishlatiladi —
+            agar AI javobida maydon bo'lmasa xato ko'tarilmaydi:
+            - ``id`` → ``'TC-XXX'``
+            - ``test_type`` → ``'positive'``
+            - ``priority`` → ``'Medium'``
+            - ``severity`` → ``'Major'``
+            - ``steps``, ``tags`` → bo'sh ro'yxat
 
         Args:
-            raw_response: AI'dan kelgan javob
+            raw_response: AI dan kelgan xom matn (JSON yoki JSON + boshqa matn).
 
         Returns:
-            List[TestCase]: Parse qilingan test case'lar
+            List[TestCase]: Muvaffaqiyatli parse qilingan test case'lar ro'yxati.
+                Xato bo'lsa — bo'sh ro'yxat qaytadi (exception ko'tarilmaydi).
         """
         test_cases = []
 
@@ -567,16 +706,37 @@ Endi {len(test_types)} xil test ({types_text}) uchun test case'lar yarating!
 
     def _try_repair_json(self, broken_json: str) -> Optional[str]:
         """
-        Truncated JSON ni tuzatishga urinish.
+        Yarim kesilgan (truncated) JSON ni tiklab, to'liq va yaroqli holga keltirish.
 
-        AI javob kesilganda (max_output_tokens tugashi) JSON yarim holda qoladi.
-        Bu metod oxirgi to'liq test case gacha kesib, JSON ni to'g'rilaydi.
+        Kesilish sababi:
+            Gemini AI ``max_output_tokens`` limitiga yetganda javobni o'rtada
+            to'xtatadi. Bu holda JSON strukturasi yarim holda qoladi:
+            oxirgi test case tugallanmagan, yopilmagan ``[`` yoki ``{`` qoladi.
+
+        Tuzatish strategiyalari (ketma-ket uriniladi):
+
+            1-urinish (rfind ``},`` metodi):
+                Oxirgi to'liq test case obyektini topish uchun ``},`` izlanadi —
+                bu array ichida bir test case tugab, keyingisi boshlanayotgan joy.
+                O'sha nuqtagacha kesib, ochilmagan ``[`` va ``{`` bracket'larni
+                sanab yopiladi. Natija JSON ga parse qilinib tekshiriladi.
+
+            2-urinish (oxirgi ``}`` metodi):
+                Agar 1-urinish muvaffaqiyatsiz bo'lsa, eng oxirgi ``}``
+                topiladi va undan keyin kesish amalga oshiriladi.
+                Xuddi shunday bracket'lar yopiladi va parse tekshiriladi.
+
+        Bracket balanslashtirish:
+            ``open_brackets = str.count('[') - str.count(']')``
+            ``open_braces   = str.count('{') - str.count('}'')``
+            Kamchilikcha yopilmagan har bir bracket uchun yopuvchi belgi qo'shiladi.
 
         Args:
-            broken_json: Yarim holda qolgan JSON string
+            broken_json: Yarim kesilgan JSON matni (bo'sh bo'lishi mumkin).
 
         Returns:
-            Optional[str]: Tuzatilgan JSON yoki None
+            Optional[str]: Tuzatilgan va ``json.loads()`` dan o'tgan JSON matni.
+                Agar barcha urinishlar muvaffaqiyatsiz bo'lsa — None qaytadi.
         """
         if not broken_json:
             return None
@@ -624,5 +784,5 @@ Endi {len(test_types)} xil test ({types_text}) uchun test case'lar yarating!
             return None
 
         except Exception as e:
-            log.error("UNKNOWN", "json_repair", str(e))
+            log.log_error("UNKNOWN", "json_repair", str(e))
             return None

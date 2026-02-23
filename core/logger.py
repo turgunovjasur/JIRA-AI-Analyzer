@@ -62,8 +62,9 @@ class StructuredLogger:
             console = logging.StreamHandler(sys.stdout)
             console.setFormatter(ColoredFormatter(use_colors=False))  # Windows uchun False
 
-            # File handler (rang yo'q)
-            log_file = Path("data/webhook.log")
+            # File handler (rang yo'q) — absolut yo'l, istalgan joydan ishga tushsa ham to'g'ri
+            _project_root = Path(__file__).parent.parent
+            log_file = _project_root / "data" / "webhook.log"
             log_file.parent.mkdir(exist_ok=True)
             file_handler = logging.FileHandler(log_file, encoding='utf-8')
             file_handler.setFormatter(ColoredFormatter(use_colors=False))
@@ -146,9 +147,9 @@ class StructuredLogger:
 
     # === AI OPERATIONS ===
 
-    def ai_analyzing(self, task_key: str, model: str):
+    def ai_analyzing(self, task_key: str, model: str, key: str = "KEY_1"):
         """AI tahlil qilmoqda"""
-        self.logger.info(f"[{task_key}] AI-ANALYZE -> model={model}")
+        self.logger.info(f"[{task_key}] AI-ANALYZE -> model={model} | key={key}")
 
     def ai_ready(self, model: str, key_count: int):
         """AI tayyor"""
@@ -215,8 +216,8 @@ class StructuredLogger:
 
     # === ERRORS ===
 
-    def error(self, task_key: str, context: str, error: str):
-        """Umumiy xato"""
+    def log_error(self, task_key: str, context: str, error: str):
+        """Umumiy xato (structured format: task_key + context + error)"""
         self.logger.error(f"[{task_key}] ERROR -> {context} | {error}")
 
     def pr_not_found(self, task_key: str):
@@ -239,21 +240,21 @@ class StructuredLogger:
 
     def system_started(self, version: str, port: int):
         """Tizim boshlandi"""
-        separator = "=" * 80
+        separator = "-" * 60
         self.logger.info(separator)
-        self.logger.info(f"SYSTEM-START -> JIRA TZ-PR Auto Checker v{version}")
-        self.logger.info(f"LISTENING -> http://0.0.0.0:{port}/webhook/jira")
-        self.logger.info(f"TIME -> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        self.logger.info(f"SYSTEM-START  v{version}  port={port}")
+        self.logger.info(f"ENDPOINT      http://0.0.0.0:{port}/webhook/jira")
+        self.logger.info(f"TIME          {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         self.logger.info(separator)
 
     def settings_loaded(self, **kwargs):
         """Sozlamalar yuklandi"""
         settings_str = " | ".join([f"{k}={v}" for k, v in kwargs.items()])
-        self.logger.info(f"SETTINGS -> {settings_str}")
+        self.logger.info(f"SETTINGS      {settings_str}")
 
     def request_separator(self):
         """So'rov ajratuvchi"""
-        self.logger.info("=" * 80)
+        self.logger.info("-" * 60)
 
     # === GENERIC LOGGING ===
 
@@ -268,6 +269,22 @@ class StructuredLogger:
     def debug(self, message: str):
         """Generic debug log"""
         self.logger.debug(message)
+
+    def error(self, message: str, exc_info: bool = False):
+        """
+        Generic error log — f-string bilan oddiy chaqiruv uchun.
+
+        Bu method old `error(task_key, context, error)` imzosi o'rniga
+        ishlatiladigan universal variant. Barcha modullarda:
+            log.error(f"[{task_key}] Xato: {e}")
+            log.error(f"Xato: {e}", exc_info=True)
+        shaklida ishlatish mumkin.
+
+        Args:
+            message: Xato xabari (f-string bilan formatlangan)
+            exc_info: True bo'lsa traceback ham log'ga yoziladi
+        """
+        self.logger.error(message, exc_info=exc_info)
 
 
 # Global logger factory

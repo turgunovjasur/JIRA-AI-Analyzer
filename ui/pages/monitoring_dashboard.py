@@ -254,7 +254,7 @@ def _render_task_status_chart(conn: sqlite3.Connection):
         height=300
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 def _render_service_status_chart(conn: sqlite3.Connection):
@@ -399,14 +399,14 @@ def _render_recent_tasks_table(conn: sqlite3.Connection):
         return ''
 
     # Apply styling
-    styled_df = df.style.applymap(
+    styled_df = df.style.map(
         style_status,
         subset=['task_status', 'service1_status', 'service2_status']
     )
 
     st.dataframe(
         styled_df,
-        use_container_width=True,
+        width='stretch',
         height=500
     )
 

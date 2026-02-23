@@ -36,7 +36,7 @@ class JiraCommentWriter:
                 basic_auth=(self.email, self.api_token)
             )
         except Exception as e:
-            log.error("INIT", "JIRA connection", f"Connection failed: {e}")
+            log.log_error("INIT", "JIRA connection", f"Connection failed: {e}")
             self.jira = None
 
         # REST API session (ADF format uchun)
@@ -79,14 +79,14 @@ class JiraCommentWriter:
             if response.status_code == 201:
                 return True
             else:
-                log.error(
+                log.log_error(
                     task_key, "ADF comment",
                     f"Failed: {response.status_code} - {response.text}"
                 )
                 return False
 
         except Exception as e:
-            log.error(task_key, "ADF comment", str(e))
+            log.log_error(task_key, "ADF comment", str(e))
             return False
 
     def add_comment(self, task_key: str, comment_text: str) -> bool:
@@ -101,7 +101,7 @@ class JiraCommentWriter:
             True - success, False - failed
         """
         if not self.jira:
-            log.error("UNKNOWN", "add_comment", "JIRA client not initialized")
+            log.log_error("UNKNOWN", "add_comment", "JIRA client not initialized")
             return False
 
         try:
@@ -110,7 +110,7 @@ class JiraCommentWriter:
             return True
 
         except Exception as e:
-            log.error(task_key, "add_comment", str(e))
+            log.log_error(task_key, "add_comment", str(e))
             return False
 
     def add_comment_with_visibility(
@@ -151,7 +151,7 @@ class JiraCommentWriter:
             return True
 
         except Exception as e:
-            log.error(task_key, "restricted_comment", str(e))
+            log.log_error(task_key, "restricted_comment", str(e))
             return False
 
     def update_comment(
@@ -177,5 +177,5 @@ class JiraCommentWriter:
             return True
 
         except Exception as e:
-            log.error("UNKNOWN", "update_comment", str(e))
+            log.log_error("UNKNOWN", "update_comment", str(e))
             return False

@@ -35,7 +35,7 @@ class JiraStatusManager:
                 )
             )
         except Exception as e:
-            log.error("SYSTEM", "JIRA initialization", str(e))
+            log.log_error("SYSTEM", "JIRA initialization", str(e))
             self.jira = None
 
     def get_available_transitions(self, task_key: str) -> List[Dict]:
@@ -53,7 +53,7 @@ class JiraStatusManager:
             ]
         """
         if not self.jira:
-            log.error("SYSTEM", "get_available_transitions", "JIRA client not initialized")
+            log.log_error("SYSTEM", "get_available_transitions", "JIRA client not initialized")
             return []
 
         try:
@@ -68,7 +68,7 @@ class JiraStatusManager:
             return result
 
         except Exception as e:
-            log.error(task_key, "get_transitions", str(e))
+            log.log_error(task_key, "get_transitions", str(e))
             return []
 
     def find_transition_by_name(
@@ -147,7 +147,7 @@ class JiraStatusManager:
 
         except Exception as e:
             error_msg = str(e)
-            log.error(task_key, "change_status", error_msg)
+            log.log_error(task_key, "change_status", error_msg)
             return False, f"Xato: {error_msg}"
 
     def get_current_status(self, task_key: str) -> Optional[str]:
@@ -168,7 +168,7 @@ class JiraStatusManager:
             return issue.fields.status.name
 
         except Exception as e:
-            log.error(task_key, "get_current_status", str(e))
+            log.log_error(task_key, "get_current_status", str(e))
             return None
 
     def auto_return_if_needed(

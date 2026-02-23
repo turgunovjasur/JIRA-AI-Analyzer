@@ -1,17 +1,30 @@
 """
-JIRA-AI-Analyzer - To'liq Tizim Testlari
-==========================================
+JIRA-AI-Analyzer - To'liq Tizim Testlari (Consolidated)
+=========================================================
 
-Barcha jarayonlarni batafsil tekshirish:
-1. 2 ta servis qanday ishlashi (tz_pr_checker, testcase_generator)
-2. JIRA task testing statusga tushganda tizim o'zini qanday tutishi
-3. 5 ta task bir vaqtda testing statusga tushganda (concurrency)
-4. DB fayl bilan ishlash
-5. Bir taskda 2 ta servis qay tartibda ishlashi
-6. Xato va error holatlarida tizim barqarorligi
+Barcha test fayllardan birlashtirilib yaratilgan pytest test fayli.
+Manba fayllar:
+- test_full_system.py (original, 12 test funksiya)
+- test_system_resilience.py (6 test funksiya)
+- test_webhook_after_delete.py (3 test funksiya)
+- test_delete_task_flow.py (3 test funksiya)
 
-Author: Test Suite
-Date: 2026-02-10
+Pytest class tuzilmasi:
+- TestServiceUnit         - test_1 (services), test_9 (base_service)
+- TestWebhookEndpoint     - test_2 (webhook), resilience test_1
+- TestConcurrency         - test_3 (concurrent tasks)
+- TestDatabaseOperations  - test_4 (db), test_delete_task_flow
+- TestServiceOrchestration- test_5 (service order), test_8 (testcase webhook)
+- TestErrorHandling       - test_6 (error), resilience test_4, test_6
+- TestSettingsManagement  - test_7 (settings), resilience test_2
+- TestDebugCapability     - test_10 (debug info)
+- TestBlockedRetry        - test_11 (blocked status), resilience test_3
+- TestGeminiKeyFallback   - test_12 (key freeze)
+- TestDeleteAndWebhook    - test_webhook_after_delete
+- TestSystemResilience    - resilience test_5, test_6
+
+Author: Test Suite (Consolidated)
+Date: 2026-02-20
 """
 import sys
 import os
@@ -20,9 +33,11 @@ import sqlite3
 import asyncio
 import time
 import logging
-from datetime import datetime
+import pytest
+from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock, AsyncMock
 from dataclasses import asdict
+from typing import List, Dict, Any
 
 # Loyiha root path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -35,91 +50,45 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ============================================================================
-# TEST RESULTS TRACKER
-# ============================================================================
-
-class TestTracker:
-    """Test natijalarini kuzatish"""
-    def __init__(self):
-        self.passed = 0
-        self.failed = 0
-        self.errors = []
-        self.results = []
-
-    def ok(self, test_name, detail=""):
-        self.passed += 1
-        self.results.append(("PASS", test_name, detail))
-        logger.info(f"  PASS: {test_name} {detail}")
-
-    def fail(self, test_name, reason):
-        self.failed += 1
-        self.errors.append((test_name, reason))
-        self.results.append(("FAIL", test_name, reason))
-        logger.error(f"  FAIL: {test_name} - {reason}")
-
-    def summary(self):
-        total = self.passed + self.failed
-        logger.info("=" * 70)
-        logger.info(f"NATIJA: {self.passed}/{total} test o'tdi, {self.failed} ta xato")
-        if self.errors:
-            logger.info("XATOLAR:")
-            for name, reason in self.errors:
-                logger.info(f"  - {name}: {reason}")
-        logger.info("=" * 70)
-        return self.failed == 0
-
-
-tracker = TestTracker()
-
 
 # ============================================================================
-# 1-TEST: 2 TA SERVIS ALOHIDA ISHLASHI
+# CLASS 1: TestServiceUnit
 # ============================================================================
 
-def test_1_services_individually():
+class TestServiceUnit:
     """
-    TEST 1: Har bir servis alohida qanday ishlashini tekshirish
-
+    Har bir servis alohida qanday ishlashini tekshirish (test_1, test_9)
     - TZPRService.analyze_task() to'g'ri natija qaytaradimi?
     - TestCaseGeneratorService.generate_test_cases() to'g'ri natija qaytaradimi?
     - Har bir servis BaseService'dan meros oladimi?
     - Lazy loading ishlayaptimi?
+    - BaseService text length, truncation, status updater
     """
-    logger.info("\n" + "=" * 70)
-    logger.info("TEST 1: 2 ta servis alohida ishlashi")
-    logger.info("=" * 70)
 
-    # --- 1.1 TZPRService ---
-    try:
-        from services.checkers.tz_pr_checker import TZPRService, TZPRAnalysisResult
+    def test_tzpr_service_inherits_base_service(self):
+        from services.checkers.tz_pr_checker import TZPRService
         from core.base_service import BaseService
-
         service = TZPRService()
+        assert isinstance(service, BaseService)
 
-        # BaseService'dan meros olganmi?
-        if isinstance(service, BaseService):
-            tracker.ok("TZPRService BaseService'dan meros olgan")
-        else:
-            tracker.fail("TZPRService meros", "BaseService'dan meros olmagan")
+    def test_tzpr_service_lazy_loading_jira(self):
+        from services.checkers.tz_pr_checker import TZPRService
+        service = TZPRService()
+        assert service._jira_client is None
 
-        # Lazy loading: _jira_client boshlang'ichda None
-        if service._jira_client is None:
-            tracker.ok("TZPRService lazy loading (JIRA boshlang'ichda None)")
-        else:
-            tracker.fail("TZPRService lazy loading", "_jira_client None emas")
+    def test_tzpr_service_lazy_loading_github(self):
+        from services.checkers.tz_pr_checker import TZPRService
+        service = TZPRService()
+        assert service._github_client is None
 
-        if service._github_client is None:
-            tracker.ok("TZPRService lazy loading (GitHub boshlang'ichda None)")
-        else:
-            tracker.fail("TZPRService lazy loading GitHub", "_github_client None emas")
+    def test_tzpr_service_lazy_loading_gemini(self):
+        from services.checkers.tz_pr_checker import TZPRService
+        service = TZPRService()
+        assert service._gemini_helper is None
 
-        if service._gemini_helper is None:
-            tracker.ok("TZPRService lazy loading (Gemini boshlang'ichda None)")
-        else:
-            tracker.fail("TZPRService lazy loading Gemini", "_gemini_helper None emas")
-
-        # Mock bilan analyze_task tekshirish
+    def test_tzpr_service_analyze_task_returns_result_type(self):
+        from services.checkers.tz_pr_checker import TZPRService, TZPRAnalysisResult
+        service = TZPRService()
         mock_jira = MagicMock()
         mock_jira.get_task_details.return_value = {
             'summary': 'Test task summary',
@@ -129,34 +98,11 @@ def test_1_services_individually():
             'comments': [],
             'figma_links': []
         }
-
-        mock_github = MagicMock()
-        mock_pr = MagicMock()
-        mock_pr.title = "feat: test PR"
-        mock_pr.html_url = "https://github.com/test/pr/1"
-        mock_pr.get_files.return_value = [
-            MagicMock(
-                filename="test.py",
-                status="modified",
-                additions=10,
-                deletions=5,
-                patch="@@ -1,5 +1,10 @@\n+new code"
-            )
-        ]
-        mock_github.search_pull_requests.return_value = [mock_pr]
-        mock_github.get_repo_name.return_value = "test/repo"
-
         mock_gemini = MagicMock()
         mock_gemini.analyze.return_value = (
             "## BAJARILGAN TALABLAR\nTest bajarildi\n\n"
             "## MOSLIK BALI\n**COMPLIANCE_SCORE: 85%**"
         )
-
-        service._jira_client = mock_jira
-        service._github_client = mock_github
-        service._gemini_helper = mock_gemini
-
-        # PR Helper ham mock
         mock_pr_helper = MagicMock()
         mock_pr_helper.get_pr_full_info.return_value = {
             'pr_count': 1,
@@ -175,58 +121,158 @@ def test_1_services_individually():
                 }]
             }]
         }
+        service._jira_client = mock_jira
+        service._github_client = MagicMock()
+        service._gemini_helper = mock_gemini
         service._pr_helper = mock_pr_helper
-
         result = service.analyze_task("TEST-001")
+        assert isinstance(result, TZPRAnalysisResult)
 
-        if isinstance(result, TZPRAnalysisResult):
-            tracker.ok("TZPRService.analyze_task() TZPRAnalysisResult qaytaradi")
-        else:
-            tracker.fail("TZPRService natija turi", f"Kutilgan: TZPRAnalysisResult, Keldi: {type(result)}")
-
-        if result.success:
-            tracker.ok("TZPRService.analyze_task() muvaffaqiyatli")
-        else:
-            tracker.fail("TZPRService.analyze_task() success=False", result.error_message)
-
-        if result.compliance_score == 85:
-            tracker.ok("TZPRService compliance_score to'g'ri extract qilgan (85%)")
-        else:
-            tracker.fail("TZPRService compliance_score", f"Kutilgan: 85, Keldi: {result.compliance_score}")
-
-        if result.task_key == "TEST-001":
-            tracker.ok("TZPRService task_key to'g'ri")
-        else:
-            tracker.fail("TZPRService task_key", f"Kutilgan: TEST-001, Keldi: {result.task_key}")
-
-    except Exception as e:
-        tracker.fail("TZPRService umumiy", str(e))
-
-    # --- 1.2 TestCaseGeneratorService ---
-    try:
-        from services.generators.testcase_generator import (
-            TestCaseGeneratorService, TestCaseGenerationResult, TestCase
+    def test_tzpr_service_analyze_task_success(self):
+        from services.checkers.tz_pr_checker import TZPRService
+        service = TZPRService()
+        mock_jira = MagicMock()
+        mock_jira.get_task_details.return_value = {
+            'summary': 'Test task summary',
+            'type': 'Story',
+            'priority': 'High',
+            'description': 'Test TZ mazmuni',
+            'comments': [],
+            'figma_links': []
+        }
+        mock_gemini = MagicMock()
+        mock_gemini.analyze.return_value = (
+            "## BAJARILGAN TALABLAR\nTest bajarildi\n\n"
+            "## MOSLIK BALI\n**COMPLIANCE_SCORE: 85%**"
         )
+        mock_pr_helper = MagicMock()
+        mock_pr_helper.get_pr_full_info.return_value = {
+            'pr_count': 1,
+            'files_changed': 1,
+            'total_additions': 10,
+            'total_deletions': 5,
+            'pr_details': [{
+                'title': 'feat: test PR',
+                'url': 'https://github.com/test/pr/1',
+                'files': [{
+                    'filename': 'test.py',
+                    'status': 'modified',
+                    'additions': 10,
+                    'deletions': 5,
+                    'patch': '+new code'
+                }]
+            }]
+        }
+        service._jira_client = mock_jira
+        service._github_client = MagicMock()
+        service._gemini_helper = mock_gemini
+        service._pr_helper = mock_pr_helper
+        result = service.analyze_task("TEST-001")
+        assert result.success
 
-        service2 = TestCaseGeneratorService()
+    def test_tzpr_service_compliance_score_extraction(self):
+        from services.checkers.tz_pr_checker import TZPRService
+        service = TZPRService()
+        mock_jira = MagicMock()
+        mock_jira.get_task_details.return_value = {
+            'summary': 'Test task summary',
+            'type': 'Story',
+            'priority': 'High',
+            'description': 'Test TZ mazmuni',
+            'comments': [],
+            'figma_links': []
+        }
+        mock_gemini = MagicMock()
+        mock_gemini.analyze.return_value = (
+            "## BAJARILGAN TALABLAR\nTest bajarildi\n\n"
+            "## MOSLIK BALI\n**COMPLIANCE_SCORE: 85%**"
+        )
+        mock_pr_helper = MagicMock()
+        mock_pr_helper.get_pr_full_info.return_value = {
+            'pr_count': 1,
+            'files_changed': 1,
+            'total_additions': 10,
+            'total_deletions': 5,
+            'pr_details': [{
+                'title': 'feat: test PR',
+                'url': 'https://github.com/test/pr/1',
+                'files': [{
+                    'filename': 'test.py',
+                    'status': 'modified',
+                    'additions': 10,
+                    'deletions': 5,
+                    'patch': '+new code'
+                }]
+            }]
+        }
+        service._jira_client = mock_jira
+        service._github_client = MagicMock()
+        service._gemini_helper = mock_gemini
+        service._pr_helper = mock_pr_helper
+        result = service.analyze_task("TEST-001")
+        assert result.compliance_score == 85
 
-        if isinstance(service2, BaseService):
-            tracker.ok("TestCaseGeneratorService BaseService'dan meros olgan")
-        else:
-            tracker.fail("TestCaseGeneratorService meros", "BaseService'dan meros olmagan")
+    def test_tzpr_service_task_key_preserved(self):
+        from services.checkers.tz_pr_checker import TZPRService
+        service = TZPRService()
+        mock_jira = MagicMock()
+        mock_jira.get_task_details.return_value = {
+            'summary': 'Test task summary',
+            'type': 'Story',
+            'priority': 'High',
+            'description': 'Test TZ mazmuni',
+            'comments': [],
+            'figma_links': []
+        }
+        mock_gemini = MagicMock()
+        mock_gemini.analyze.return_value = (
+            "## BAJARILGAN TALABLAR\nTest bajarildi\n\n"
+            "## MOSLIK BALI\n**COMPLIANCE_SCORE: 85%**"
+        )
+        mock_pr_helper = MagicMock()
+        mock_pr_helper.get_pr_full_info.return_value = {
+            'pr_count': 1,
+            'files_changed': 1,
+            'total_additions': 10,
+            'total_deletions': 5,
+            'pr_details': [{
+                'title': 'feat: test PR',
+                'url': 'https://github.com/test/pr/1',
+                'files': [{
+                    'filename': 'test.py',
+                    'status': 'modified',
+                    'additions': 10,
+                    'deletions': 5,
+                    'patch': '+new code'
+                }]
+            }]
+        }
+        service._jira_client = mock_jira
+        service._github_client = MagicMock()
+        service._gemini_helper = mock_gemini
+        service._pr_helper = mock_pr_helper
+        result = service.analyze_task("TEST-001")
+        assert result.task_key == "TEST-001"
 
-        # Mock sozlash
-        mock_jira2 = MagicMock()
-        mock_jira2.get_task_details.return_value = {
+    def test_testcase_generator_inherits_base_service(self):
+        from services.generators.testcase_generator import TestCaseGeneratorService
+        from core.base_service import BaseService
+        service = TestCaseGeneratorService()
+        assert isinstance(service, BaseService)
+
+    def test_testcase_generator_success(self):
+        from services.generators.testcase_generator import TestCaseGeneratorService, TestCaseGenerationResult
+        service = TestCaseGeneratorService()
+        mock_jira = MagicMock()
+        mock_jira.get_task_details.return_value = {
             'summary': 'Login functionality',
             'type': 'Story',
             'priority': 'High',
             'description': 'Login sahifasini yaratish kerak',
             'comments': []
         }
-
-        mock_gemini2 = MagicMock()
-        mock_gemini2.analyze.return_value = json.dumps({
+        mock_gemini = MagicMock()
+        mock_gemini.analyze.return_value = json.dumps({
             "test_cases": [
                 {
                     "id": "TC-001",
@@ -254,118 +300,262 @@ def test_1_services_individually():
                 }
             ]
         })
+        mock_pr_helper = MagicMock()
+        mock_pr_helper.get_pr_full_info.return_value = None
+        service._jira_client = mock_jira
+        service._gemini_helper = mock_gemini
+        service._github_client = MagicMock()
+        service._pr_helper = mock_pr_helper
+        result = service.generate_test_cases("TEST-002", include_pr=True)
+        assert isinstance(result, TestCaseGenerationResult)
+        assert result.success
 
-        service2._jira_client = mock_jira2
-        service2._gemini_helper = mock_gemini2
-        service2._github_client = MagicMock()
+    def test_testcase_generator_returns_correct_count(self):
+        from services.generators.testcase_generator import TestCaseGeneratorService
+        service = TestCaseGeneratorService()
+        mock_jira = MagicMock()
+        mock_jira.get_task_details.return_value = {
+            'summary': 'Login functionality',
+            'type': 'Story',
+            'priority': 'High',
+            'description': 'Login sahifasini yaratish kerak',
+            'comments': []
+        }
+        mock_gemini = MagicMock()
+        mock_gemini.analyze.return_value = json.dumps({
+            "test_cases": [
+                {
+                    "id": "TC-001",
+                    "title": "Login positive test",
+                    "description": "desc",
+                    "preconditions": "pre",
+                    "steps": ["1. step"],
+                    "expected_result": "ok",
+                    "test_type": "positive",
+                    "priority": "High",
+                    "severity": "Critical",
+                    "tags": ["login"]
+                },
+                {
+                    "id": "TC-002",
+                    "title": "Login negative test",
+                    "description": "desc",
+                    "preconditions": "pre",
+                    "steps": ["1. step"],
+                    "expected_result": "error shown",
+                    "test_type": "negative",
+                    "priority": "High",
+                    "severity": "Major",
+                    "tags": ["login"]
+                }
+            ]
+        })
+        mock_pr_helper = MagicMock()
+        mock_pr_helper.get_pr_full_info.return_value = None
+        service._jira_client = mock_jira
+        service._gemini_helper = mock_gemini
+        service._github_client = MagicMock()
+        service._pr_helper = mock_pr_helper
+        result = service.generate_test_cases("TEST-002", include_pr=True)
+        assert len(result.test_cases) == 2
 
-        # PR Helper mock (PR topilmadi holati)
-        mock_pr_helper2 = MagicMock()
-        mock_pr_helper2.get_pr_full_info.return_value = None
-        service2._pr_helper = mock_pr_helper2
+    def test_testcase_generator_first_test_type(self):
+        from services.generators.testcase_generator import TestCaseGeneratorService
+        service = TestCaseGeneratorService()
+        mock_jira = MagicMock()
+        mock_jira.get_task_details.return_value = {
+            'summary': 'Login functionality',
+            'type': 'Story',
+            'priority': 'High',
+            'description': 'Login',
+            'comments': []
+        }
+        mock_gemini = MagicMock()
+        mock_gemini.analyze.return_value = json.dumps({
+            "test_cases": [
+                {
+                    "id": "TC-001",
+                    "title": "Login positive test",
+                    "description": "desc",
+                    "preconditions": "pre",
+                    "steps": ["1. step"],
+                    "expected_result": "ok",
+                    "test_type": "positive",
+                    "priority": "High",
+                    "severity": "Critical",
+                    "tags": []
+                }
+            ]
+        })
+        mock_pr_helper = MagicMock()
+        mock_pr_helper.get_pr_full_info.return_value = None
+        service._jira_client = mock_jira
+        service._gemini_helper = mock_gemini
+        service._github_client = MagicMock()
+        service._pr_helper = mock_pr_helper
+        result = service.generate_test_cases("TEST-002", include_pr=True)
+        assert result.test_cases[0].test_type == "positive"
 
-        result2 = service2.generate_test_cases("TEST-002", include_pr=True)
-
-        if isinstance(result2, TestCaseGenerationResult):
-            tracker.ok("TestCaseGeneratorService to'g'ri natija turi qaytaradi")
-        else:
-            tracker.fail("TestCaseGenerator natija turi", f"Keldi: {type(result2)}")
-
-        if result2.success:
-            tracker.ok("TestCaseGeneratorService muvaffaqiyatli ishladi")
-        else:
-            tracker.fail("TestCaseGenerator muvaffaqiyatsiz", result2.error_message)
-
-        if len(result2.test_cases) == 2:
-            tracker.ok("TestCaseGenerator 2 ta test case yaratdi")
-        else:
-            tracker.fail("TestCaseGenerator test cases soni", f"Kutilgan: 2, Keldi: {len(result2.test_cases)}")
-
-        if result2.test_cases and result2.test_cases[0].test_type == "positive":
-            tracker.ok("TestCaseGenerator birinchi test case positive turi")
-        else:
-            tracker.fail("TestCaseGenerator test type", "Birinchi test case positive emas")
-
-        # Custom context tekshirish
-        result3 = service2.generate_test_cases(
+    def test_testcase_generator_custom_context(self):
+        from services.generators.testcase_generator import TestCaseGeneratorService
+        service = TestCaseGeneratorService()
+        mock_jira = MagicMock()
+        mock_jira.get_task_details.return_value = {
+            'summary': 'Widget test',
+            'type': 'Story',
+            'priority': 'High',
+            'description': 'desc',
+            'comments': []
+        }
+        mock_gemini = MagicMock()
+        mock_gemini.analyze.return_value = json.dumps({
+            "test_cases": [
+                {
+                    "id": "TC-001",
+                    "title": "Test",
+                    "description": "desc",
+                    "preconditions": "pre",
+                    "steps": ["1. step"],
+                    "expected_result": "ok",
+                    "test_type": "positive",
+                    "priority": "High",
+                    "severity": "Critical",
+                    "tags": []
+                }
+            ]
+        })
+        mock_pr_helper = MagicMock()
+        mock_pr_helper.get_pr_full_info.return_value = None
+        service._jira_client = mock_jira
+        service._gemini_helper = mock_gemini
+        service._github_client = MagicMock()
+        service._pr_helper = mock_pr_helper
+        result = service.generate_test_cases(
             "TEST-003",
             include_pr=False,
             custom_context="Product: ACME Widget, Narx: $99.99"
         )
+        assert result.custom_context_used
+        call_args = mock_gemini.analyze.call_args
+        assert "ACME Widget" in str(call_args)
 
-        if result3.custom_context_used:
-            tracker.ok("TestCaseGenerator custom_context_used=True")
-        else:
-            tracker.fail("TestCaseGenerator custom context", "custom_context_used=False")
+    # --- BaseService tests (test_9) ---
 
-        # Gemini'ga yuborilgan prompt'da custom context borligini tekshirish
-        call_args = mock_gemini2.analyze.call_args
-        if "ACME Widget" in str(call_args):
-            tracker.ok("TestCaseGenerator custom context prompt'ga qo'shilgan")
-        else:
-            tracker.fail("TestCaseGenerator custom context prompt", "ACME Widget prompt'da topilmadi")
+    def test_base_service_text_length_chars(self):
+        from core.base_service import BaseService
+        service = BaseService()
+        test_text = "Hello World" * 100  # 1100 chars
+        info = service._calculate_text_length(test_text)
+        assert info['chars'] == 1100
 
-    except Exception as e:
-        tracker.fail("TestCaseGeneratorService umumiy", str(e))
+    def test_base_service_text_length_tokens(self):
+        from core.base_service import BaseService
+        service = BaseService()
+        test_text = "Hello World" * 100  # 1100 chars
+        info = service._calculate_text_length(test_text)
+        assert info['tokens'] == 275  # 1100 / 4
+
+    def test_base_service_text_within_limit(self):
+        from core.base_service import BaseService
+        service = BaseService()
+        test_text = "Hello World" * 100
+        info = service._calculate_text_length(test_text)
+        assert info['within_limit'] is True
+
+    def test_base_service_text_truncation(self):
+        from core.base_service import BaseService
+        service = BaseService()
+        big_text = "A" * (900000 * 4 + 1000)
+        truncated = service._truncate_text(big_text)
+        assert len(truncated) < len(big_text)
+
+    def test_base_service_text_truncation_warning(self):
+        from core.base_service import BaseService
+        service = BaseService()
+        big_text = "A" * (900000 * 4 + 1000)
+        truncated = service._truncate_text(big_text)
+        assert "TRUNCATED" in truncated
+
+    def test_base_service_small_text_not_truncated(self):
+        from core.base_service import BaseService
+        service = BaseService()
+        small_text = "Small text"
+        result = service._truncate_text(small_text)
+        assert result == small_text
+
+    def test_base_service_status_updater_callback(self):
+        from core.base_service import BaseService
+        service = BaseService()
+        statuses_collected = []
+        def mock_callback(status_type, message):
+            statuses_collected.append((status_type, message))
+        updater = service._create_status_updater(mock_callback)
+        updater("info", "Test message")
+        assert len(statuses_collected) == 1
+        assert statuses_collected[0] == ("info", "Test message")
+
+    def test_base_service_status_updater_none_callback(self):
+        from core.base_service import BaseService
+        service = BaseService()
+        updater_none = service._create_status_updater(None)
+        # Should not raise
+        updater_none("info", "Test")
+
+    def test_base_service_max_tokens(self):
+        from core.base_service import BaseService
+        service = BaseService()
+        assert service.MAX_TOKENS == 900000
 
 
 # ============================================================================
-# 2-TEST: JIRA TASK TESTING STATUSGA TUSHGANDA
+# CLASS 2: TestWebhookEndpoint
 # ============================================================================
 
-def test_2_webhook_status_change():
+class TestWebhookEndpoint:
     """
-    TEST 2: JIRA task testing statusga tushganda tizim o'zini qanday tutishi
-
+    Webhook endpoint testlari (test_2, resilience test_1)
     - Webhook endpoint to'g'ri parse qiladimi?
     - Status o'zgarishi aniqlanadimi?
     - Target status tekshiruvi ishlaydimi?
     - DB holat boshqaruvi to'g'rimi?
     - Dublikat event filtri ishlaydimi?
+    - 20 ta soxta webhook yuborish
     """
-    logger.info("\n" + "=" * 70)
-    logger.info("TEST 2: Webhook status o'zgarishi")
-    logger.info("=" * 70)
 
-    try:
+    def test_health_check_endpoint(self):
         from fastapi.testclient import TestClient
         from services.webhook.jira_webhook_handler import app
-
         client = TestClient(app)
-
-        # 2.1 Health check
         response = client.get("/health")
-        if response.status_code == 200:
-            tracker.ok("Health check endpoint ishlaydi")
-        else:
-            tracker.fail("Health check", f"Status: {response.status_code}")
+        assert response.status_code == 200
 
-        # 2.2 Root endpoint
+    def test_root_endpoint_status_running(self):
+        from fastapi.testclient import TestClient
+        from services.webhook.jira_webhook_handler import app
+        client = TestClient(app)
         response = client.get("/")
-        if response.status_code == 200:
-            data = response.json()
-            if data.get('status') == 'running':
-                tracker.ok("Root endpoint service=running ko'rsatadi")
-            else:
-                tracker.fail("Root endpoint status", f"Keldi: {data.get('status')}")
-        else:
-            tracker.fail("Root endpoint", f"Status: {response.status_code}")
+        assert response.status_code == 200
+        data = response.json()
+        assert data.get('status') == 'running'
 
-        # 2.3 Noto'g'ri event type (jira:issue_created - status change emas)
-        payload_wrong_event = {
+    def test_wrong_event_type_ignored(self):
+        from fastapi.testclient import TestClient
+        from services.webhook.jira_webhook_handler import app
+        client = TestClient(app)
+        payload = {
             "webhookEvent": "jira:issue_created",
             "issue": {"key": "TEST-100"},
             "changelog": {}
         }
-        response = client.post("/webhook/jira", json=payload_wrong_event)
+        response = client.post("/webhook/jira", json=payload)
         data = response.json()
-        if data.get('status') == 'ignored':
-            tracker.ok("Noto'g'ri event type (issue_created) to'g'ri ignored qilindi")
-        else:
-            tracker.fail("Noto'g'ri event type", f"Kutilgan: ignored, Keldi: {data.get('status')}")
+        assert data.get('status') == 'ignored'
 
-        # 2.4 Status o'zgarishi yo'q (changelog'da status yo'q)
-        payload_no_status = {
+    def test_no_status_change_ignored(self):
+        from fastapi.testclient import TestClient
+        from services.webhook.jira_webhook_handler import app
+        client = TestClient(app)
+        payload = {
             "webhookEvent": "jira:issue_updated",
             "issue": {"key": "TEST-101"},
             "changelog": {
@@ -374,15 +564,16 @@ def test_2_webhook_status_change():
                 ]
             }
         }
-        response = client.post("/webhook/jira", json=payload_no_status)
+        response = client.post("/webhook/jira", json=payload)
         data = response.json()
-        if data.get('status') == 'ignored' and 'status not changed' in data.get('reason', ''):
-            tracker.ok("Status o'zgarishi yo'q - to'g'ri ignored qilindi")
-        else:
-            tracker.fail("Status o'zgarishi yo'q", f"Keldi: {data}")
+        assert data.get('status') == 'ignored'
+        assert 'status not changed' in data.get('reason', '')
 
-        # 2.5 Target bo'lmagan statusga o'tish (In Progress)
-        payload_wrong_status = {
+    def test_non_target_status_ignored(self):
+        from fastapi.testclient import TestClient
+        from services.webhook.jira_webhook_handler import app
+        client = TestClient(app)
+        payload = {
             "webhookEvent": "jira:issue_updated",
             "issue": {"key": "TEST-102"},
             "changelog": {
@@ -391,16 +582,15 @@ def test_2_webhook_status_change():
                 ]
             }
         }
-        response = client.post("/webhook/jira", json=payload_wrong_status)
+        response = client.post("/webhook/jira", json=payload)
         data = response.json()
-        if data.get('status') == 'ignored':
-            tracker.ok("Target bo'lmagan status (In Progress) ignored qilindi")
-        else:
-            tracker.fail("Target bo'lmagan status", f"Keldi: {data}")
+        assert data.get('status') == 'ignored'
 
-        # 2.6 To'g'ri status o'zgarishi (Ready to Test) - background task ishga tushadi
-        # Bu holda task_key yangi bo'lishi kerak
-        payload_correct = {
+    def test_correct_status_processing(self):
+        from fastapi.testclient import TestClient
+        from services.webhook.jira_webhook_handler import app
+        client = TestClient(app)
+        payload = {
             "webhookEvent": "jira:issue_updated",
             "issue": {"key": "TEST-WEBHOOK-001"},
             "changelog": {
@@ -409,158 +599,216 @@ def test_2_webhook_status_change():
                 ]
             }
         }
-
-        # Background task'ni mock qilish (asl AI chaqirmaslik uchun)
         with patch('services.webhook.jira_webhook_handler.check_tz_pr_and_comment', new_callable=AsyncMock):
             with patch('services.webhook.jira_webhook_handler._run_testcase_generation', new_callable=AsyncMock):
                 with patch('services.webhook.jira_webhook_handler._run_task_group', new_callable=AsyncMock):
                     with patch('services.webhook.jira_webhook_handler._run_sequential_tasks', new_callable=AsyncMock):
-                        response = client.post("/webhook/jira", json=payload_correct)
+                        response = client.post("/webhook/jira", json=payload)
                         data = response.json()
+                        assert data.get('status') == 'processing'
 
-                        if data.get('status') == 'processing':
-                            tracker.ok("To'g'ri status (READY TO TEST) processing qilindi")
-                        else:
-                            tracker.fail("To'g'ri status processing", f"Keldi: {data}")
-
-                        if data.get('task_key') == 'TEST-WEBHOOK-001':
-                            tracker.ok("Task key to'g'ri qaytarildi")
-                        else:
-                            tracker.fail("Task key", f"Keldi: {data.get('task_key')}")
-
-        # 2.7 Dublikat event tekshirish - xuddi shu payload'ni qayta yuborish
-        # Birinchi so'rovdan keyin task progressing holatda
+    def test_correct_status_task_key_returned(self):
+        from fastapi.testclient import TestClient
+        from services.webhook.jira_webhook_handler import app
+        client = TestClient(app)
+        payload = {
+            "webhookEvent": "jira:issue_updated",
+            "issue": {"key": "TEST-WEBHOOK-001"},
+            "changelog": {
+                "items": [
+                    {"field": "status", "fromString": "In Progress", "toString": "READY TO TEST"}
+                ]
+            }
+        }
         with patch('services.webhook.jira_webhook_handler.check_tz_pr_and_comment', new_callable=AsyncMock):
             with patch('services.webhook.jira_webhook_handler._run_testcase_generation', new_callable=AsyncMock):
                 with patch('services.webhook.jira_webhook_handler._run_task_group', new_callable=AsyncMock):
                     with patch('services.webhook.jira_webhook_handler._run_sequential_tasks', new_callable=AsyncMock):
-                        response2 = client.post("/webhook/jira", json=payload_correct)
+                        response = client.post("/webhook/jira", json=payload)
+                        data = response.json()
+                        assert data.get('task_key') == 'TEST-WEBHOOK-001'
+
+    def test_duplicate_event_ignored(self):
+        from fastapi.testclient import TestClient
+        from services.webhook.jira_webhook_handler import app
+        client = TestClient(app)
+        payload = {
+            "webhookEvent": "jira:issue_updated",
+            "issue": {"key": "TEST-WEBHOOK-001"},
+            "changelog": {
+                "items": [
+                    {"field": "status", "fromString": "In Progress", "toString": "READY TO TEST"}
+                ]
+            }
+        }
+        with patch('services.webhook.jira_webhook_handler.check_tz_pr_and_comment', new_callable=AsyncMock):
+            with patch('services.webhook.jira_webhook_handler._run_testcase_generation', new_callable=AsyncMock):
+                with patch('services.webhook.jira_webhook_handler._run_task_group', new_callable=AsyncMock):
+                    with patch('services.webhook.jira_webhook_handler._run_sequential_tasks', new_callable=AsyncMock):
+                        # First request
+                        client.post("/webhook/jira", json=payload)
+                        # Duplicate request
+                        response2 = client.post("/webhook/jira", json=payload)
                         data2 = response2.json()
+                        assert data2.get('status') == 'ignored'
 
-                        if data2.get('status') == 'ignored':
-                            tracker.ok("Dublikat event to'g'ri ignored qilindi (progressing)")
-                        else:
-                            tracker.fail("Dublikat event", f"Keldi: {data2}")
-
-        # 2.8 Task key yo'q holat
-        payload_no_key = {
+    def test_no_task_key_returns_error(self):
+        from fastapi.testclient import TestClient
+        from services.webhook.jira_webhook_handler import app
+        client = TestClient(app)
+        payload = {
             "webhookEvent": "jira:issue_updated",
             "issue": {},
             "changelog": {}
         }
-        response = client.post("/webhook/jira", json=payload_no_key)
+        response = client.post("/webhook/jira", json=payload)
         data = response.json()
-        if data.get('status') == 'error' or 'no task key' in data.get('reason', ''):
-            tracker.ok("Task key yo'q - xato to'g'ri qaytarildi")
-        else:
-            tracker.fail("Task key yo'q holat", f"Keldi: {data}")
+        assert data.get('status') == 'error' or 'no task key' in data.get('reason', '')
 
-        # 2.9 Settings endpoint
+    def test_settings_endpoint(self):
+        from fastapi.testclient import TestClient
+        from services.webhook.jira_webhook_handler import app
+        client = TestClient(app)
         response = client.get("/settings")
-        if response.status_code == 200:
-            settings_data = response.json()
-            if 'return_threshold' in settings_data:
-                tracker.ok("Settings endpoint ishlaydi va threshold qaytaradi")
-            else:
-                tracker.fail("Settings endpoint", "return_threshold yo'q")
-        else:
-            tracker.fail("Settings endpoint", f"Status: {response.status_code}")
+        assert response.status_code == 200
+        settings_data = response.json()
+        assert 'return_threshold' in settings_data
 
-    except Exception as e:
-        tracker.fail("Webhook testi umumiy", str(e))
+    def test_20_fake_webhooks_all_responded(self):
+        from fastapi.testclient import TestClient
+        from services.webhook.jira_webhook_handler import app
+        from utils.database.task_db import get_task, init_db
+        init_db()
+        client = TestClient(app)
+        task_keys = [f"TEST-WEBHOOK-{i:03d}" for i in range(1, 21)]
+        webhook_payloads = []
+        for i, task_key in enumerate(task_keys, 1):
+            payload = {
+                "webhookEvent": "jira:issue_updated",
+                "issue": {
+                    "key": task_key,
+                    "fields": {
+                        "summary": f"Test Task {i}",
+                        "status": {"name": "READY TO TEST"}
+                    }
+                },
+                "changelog": {
+                    "items": [
+                        {
+                            "field": "status",
+                            "fromString": "In Progress",
+                            "toString": "READY TO TEST"
+                        }
+                    ]
+                }
+            }
+            webhook_payloads.append(payload)
+        with patch('services.webhook.jira_webhook_handler.check_tz_pr_and_comment', new_callable=AsyncMock):
+            with patch('services.webhook.jira_webhook_handler._run_testcase_generation', new_callable=AsyncMock):
+                with patch('services.webhook.jira_webhook_handler._run_task_group', new_callable=AsyncMock):
+                    with patch('services.webhook.jira_webhook_handler._run_sequential_tasks', new_callable=AsyncMock):
+                        success_count = 0
+                        for payload in webhook_payloads:
+                            response = client.post("/webhook/jira", json=payload)
+                            if response.status_code == 200:
+                                data = response.json()
+                                if data.get('status') in ('processing', 'ignored'):
+                                    success_count += 1
+                        assert success_count == 20
+
+    def test_20_fake_webhooks_written_to_db(self):
+        from fastapi.testclient import TestClient
+        from services.webhook.jira_webhook_handler import app
+        from utils.database.task_db import get_task, init_db
+        init_db()
+        client = TestClient(app)
+        task_keys = [f"TEST-WEBHOOK-{i:03d}" for i in range(1, 21)]
+        webhook_payloads = []
+        for i, task_key in enumerate(task_keys, 1):
+            payload = {
+                "webhookEvent": "jira:issue_updated",
+                "issue": {"key": task_key},
+                "changelog": {
+                    "items": [
+                        {
+                            "field": "status",
+                            "fromString": "In Progress",
+                            "toString": "READY TO TEST"
+                        }
+                    ]
+                }
+            }
+            webhook_payloads.append(payload)
+        with patch('services.webhook.jira_webhook_handler.check_tz_pr_and_comment', new_callable=AsyncMock):
+            with patch('services.webhook.jira_webhook_handler._run_testcase_generation', new_callable=AsyncMock):
+                with patch('services.webhook.jira_webhook_handler._run_task_group', new_callable=AsyncMock):
+                    with patch('services.webhook.jira_webhook_handler._run_sequential_tasks', new_callable=AsyncMock):
+                        for payload in webhook_payloads:
+                            client.post("/webhook/jira", json=payload)
+                        db_tasks_found = sum(1 for k in task_keys if get_task(k) is not None)
+                        assert db_tasks_found == 20
 
 
 # ============================================================================
-# 3-TEST: 5 TA TASK BIR VAQTDA (CONCURRENCY)
+# CLASS 3: TestConcurrency
 # ============================================================================
 
-def test_3_concurrent_tasks():
+class TestConcurrency:
     """
-    TEST 3: 5 ta task bir vaqtda testing statusga tushganda
-
+    5 ta task bir vaqtda testing statusga tushganda (test_3)
     - Queue lock ishlayaptimi?
     - Timeout mehanizmi to'g'rimi?
     - Barcha tasklar DB ga yozilganmi?
     - Race condition yo'qmi?
     """
-    logger.info("\n" + "=" * 70)
-    logger.info("TEST 3: Concurrent tasklar (5 ta bir vaqtda)")
-    logger.info("=" * 70)
 
-    try:
-        from services.webhook.jira_webhook_handler import (
-            _get_ai_queue_lock, _wait_for_ai_slot
-        )
-        from utils.database.task_db import (
-            get_task, mark_progressing, mark_completed,
-            set_service1_done, set_service2_done
-        )
-
-        # 3.1 Queue lock singleton tekshirish
+    def test_queue_lock_singleton(self):
+        from services.webhook.jira_webhook_handler import _get_ai_queue_lock
         lock1 = _get_ai_queue_lock()
         lock2 = _get_ai_queue_lock()
-        if lock1 is lock2:
-            tracker.ok("AI queue lock singleton - bir xil ob'ekt")
-        else:
-            tracker.fail("AI queue lock singleton", "Har safar yangi ob'ekt yaratilgan")
+        assert lock1 is lock2
 
-        # 3.2 5 ta task bir vaqtda DB ga yozish
-        task_keys = [f"CONC-{i}" for i in range(1, 6)]
-
+    def test_five_tasks_written_to_db_concurrently(self):
+        from utils.database.task_db import get_task, mark_progressing
+        task_keys = [f"TEST-CONC-{i}" for i in range(1, 6)]
         for key in task_keys:
             mark_progressing(key, "READY TO TEST", datetime.now())
-
-        # Barcha tasklar DB da mavjudmi?
-        all_in_db = True
         for key in task_keys:
             task = get_task(key)
-            if not task:
-                all_in_db = False
-                tracker.fail(f"Concurrent DB yozish {key}", "Task DB da topilmadi")
-                break
-            if task['task_status'] != 'progressing':
-                all_in_db = False
-                tracker.fail(f"Concurrent DB status {key}", f"Kutilgan: progressing, Keldi: {task['task_status']}")
-                break
+            assert task is not None, f"Task {key} DB da topilmadi"
+            assert task['task_status'] == 'progressing'
 
-        if all_in_db:
-            tracker.ok("5 ta task bir vaqtda DB ga progressing holatda yozildi")
-
-        # 3.3 Concurrent service done yozish
+    def test_concurrent_service1_scores(self):
+        from utils.database.task_db import get_task, mark_progressing, set_service1_done
+        task_keys = [f"TEST-CONC-SCORE-{i}" for i in range(1, 6)]
+        for key in task_keys:
+            mark_progressing(key, "READY TO TEST", datetime.now())
         for i, key in enumerate(task_keys):
             set_service1_done(key, compliance_score=70 + i * 5)
-
-        scores_correct = True
         for i, key in enumerate(task_keys):
             task = get_task(key)
             expected_score = 70 + i * 5
-            if task['compliance_score'] != expected_score:
-                scores_correct = False
-                tracker.fail(f"Concurrent score {key}",
-                           f"Kutilgan: {expected_score}, Keldi: {task['compliance_score']}")
-                break
+            assert task['compliance_score'] == expected_score
 
-        if scores_correct:
-            tracker.ok("5 ta task concurrent score yozish to'g'ri ishladi")
-
-        # 3.4 Concurrent completed qilish
+    def test_concurrent_tasks_all_completed(self):
+        from utils.database.task_db import (
+            get_task, mark_progressing, set_service1_done, set_service2_done
+        )
+        task_keys = [f"TEST-CONC-COMP-{i}" for i in range(1, 6)]
+        for key in task_keys:
+            mark_progressing(key, "READY TO TEST", datetime.now())
+        for i, key in enumerate(task_keys):
+            set_service1_done(key, compliance_score=70 + i * 5)
         for key in task_keys:
             set_service2_done(key)
-
-        all_completed = True
         for key in task_keys:
             task = get_task(key)
-            if task['task_status'] != 'completed':
-                all_completed = False
-                tracker.fail(f"Concurrent completed {key}", f"Status: {task['task_status']}")
-                break
+            assert task['task_status'] == 'completed'
 
-        if all_completed:
-            tracker.ok("5 ta task concurrent completed holatga o'tdi")
+    def test_queue_lock_sequential_workers(self):
+        from services.webhook.jira_webhook_handler import _get_ai_queue_lock
 
-        # 3.5 Async queue lock testi
-        async def test_queue_lock():
-            """Queue lock'ni async muhitda tekshirish"""
+        async def run_test():
             lock = _get_ai_queue_lock()
             results = []
 
@@ -569,113 +817,80 @@ def test_3_concurrent_tasks():
                 try:
                     await asyncio.wait_for(lock.acquire(), timeout=5)
                     acquired = True
-                    results.append(f"W{worker_id}-start-{time.time():.2f}")
+                    results.append(f"W{worker_id}-start")
                     await asyncio.sleep(delay)
-                    results.append(f"W{worker_id}-end-{time.time():.2f}")
+                    results.append(f"W{worker_id}-end")
                 except asyncio.TimeoutError:
                     results.append(f"W{worker_id}-timeout")
                 finally:
                     if acquired:
                         lock.release()
-
-            # 3 ta worker parallel ishga tushirish
             await asyncio.gather(
-                worker(1, 0.1),
-                worker(2, 0.1),
-                worker(3, 0.1)
+                worker(1, 0.05),
+                worker(2, 0.05),
+                worker(3, 0.05)
             )
-
             return results
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            results = loop.run_until_complete(test_queue_lock())
-
-            # Har bir worker boshlanishi va tugashi ketma-ket bo'lishi kerak
+            results = loop.run_until_complete(run_test())
             starts = [r for r in results if 'start' in r]
             ends = [r for r in results if 'end' in r]
-
-            if len(starts) == 3 and len(ends) == 3:
-                tracker.ok("Queue lock: 3 ta worker ketma-ket ishladi (parallel emas)")
-            else:
-                tracker.fail("Queue lock parallel test", f"Results: {results}")
+            assert len(starts) == 3
+            assert len(ends) == 3
         finally:
             loop.close()
 
-        # 3.6 Queue timeout testi
-        async def test_queue_timeout():
-            """Queue timeout tekshirish"""
+    def test_queue_timeout_mechanism(self):
+        async def run_test():
             lock = asyncio.Lock()
-            await lock.acquire()  # Lock'ni ushlab turish
-
+            await lock.acquire()
             timed_out = False
             try:
-                await asyncio.wait_for(lock.acquire(), timeout=0.5)
+                await asyncio.wait_for(lock.acquire(), timeout=0.3)
             except asyncio.TimeoutError:
                 timed_out = True
             finally:
-                lock.release()  # Ushlab turgan lock'ni qo'yib yuborish
-
+                lock.release()
             return timed_out
 
-        loop2 = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop2)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         try:
-            timed_out = loop2.run_until_complete(test_queue_timeout())
-            if timed_out:
-                tracker.ok("Queue timeout mehanizmi ishlaydi (0.5s)")
-            else:
-                tracker.fail("Queue timeout", "Timeout ishlamadi")
+            timed_out = loop.run_until_complete(run_test())
+            assert timed_out
         finally:
-            loop2.close()
-
-    except Exception as e:
-        tracker.fail("Concurrent test umumiy", str(e))
+            loop.close()
 
 
 # ============================================================================
-# 4-TEST: DB FAYL BILAN ISHLASH
+# CLASS 4: TestDatabaseOperations
 # ============================================================================
 
-def test_4_database_operations():
+class TestDatabaseOperations:
     """
-    TEST 4: DB fayl bilan ishlash
-
+    DB fayl bilan ishlash (test_4, test_delete_task_flow)
     - init_db() to'g'ri jadval yaratadimi?
     - CRUD operatsiyalar ishlayaptimi?
     - task_status state machine to'g'rimi?
     - Service statuslar to'g'ri yangilanadimi?
     - Reset service statuslar ishlayaptimi?
+    - Delete after webhook flow
     """
-    logger.info("\n" + "=" * 70)
-    logger.info("TEST 4: Database operatsiyalari")
-    logger.info("=" * 70)
 
-    try:
-        from utils.database.task_db import (
-            init_db, get_task, upsert_task, mark_progressing,
-            mark_completed, mark_returned, mark_error,
-            increment_return_count, set_skip_detected,
-            set_service1_done, set_service1_error,
-            set_service2_done, set_service2_error,
-            reset_service_statuses, DB_FILE
-        )
+    def test_db_file_exists(self):
+        from utils.database.task_db import DB_FILE
+        assert os.path.exists(DB_FILE), f"DB fayl topilmadi: {DB_FILE}"
 
-        # 4.1 DB fayl mavjud
-        if os.path.exists(DB_FILE):
-            tracker.ok(f"DB fayl mavjud: {DB_FILE}")
-        else:
-            tracker.fail("DB fayl", f"Topilmadi: {DB_FILE}")
-            return
-
-        # 4.2 Jadval strukturasini tekshirish
+    def test_db_table_structure(self):
+        from utils.database.task_db import DB_FILE
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         cursor.execute("PRAGMA table_info(task_processing)")
         columns = {row[1] for row in cursor.fetchall()}
         conn.close()
-
         required_columns = {
             'task_id', 'task_status', 'task_update_time', 'return_count',
             'last_jira_status', 'last_processed_at', 'error_message', 'skip_detected',
@@ -683,317 +898,335 @@ def test_4_database_operations():
             'service1_done_at', 'service2_done_at', 'compliance_score',
             'created_at', 'updated_at'
         }
-
         missing = required_columns - columns
-        if not missing:
-            tracker.ok(f"DB jadval strukturasi to'liq ({len(required_columns)} ta column)")
-        else:
-            tracker.fail("DB jadval strukturasi", f"Yo'q columnlar: {missing}")
+        assert not missing, f"Yo'q columnlar: {missing}"
 
-        # 4.3 Yangi task yaratish (upsert)
-        test_key = "DB-TEST-001"
+    def test_mark_progressing(self):
+        from utils.database.task_db import get_task, mark_progressing
+        test_key = "TEST-DB-001"
         mark_progressing(test_key, "READY TO TEST", datetime.now())
-
         task = get_task(test_key)
-        if task and task['task_status'] == 'progressing':
-            tracker.ok("mark_progressing() to'g'ri ishlaydi")
-        else:
-            tracker.fail("mark_progressing", f"Task: {task}")
+        assert task is not None
+        assert task['task_status'] == 'progressing'
 
-        # 4.4 Service1 done
+    def test_set_service1_done_score(self):
+        from utils.database.task_db import get_task, mark_progressing, set_service1_done
+        test_key = "TEST-DB-002"
+        mark_progressing(test_key, "READY TO TEST", datetime.now())
         set_service1_done(test_key, compliance_score=75)
         task = get_task(test_key)
-        if task['service1_status'] == 'done' and task['compliance_score'] == 75:
-            tracker.ok("set_service1_done() to'g'ri (score=75)")
-        else:
-            tracker.fail("set_service1_done", f"Status: {task['service1_status']}, Score: {task['compliance_score']}")
+        assert task['service1_status'] == 'done'
+        assert task['compliance_score'] == 75
 
-        # 4.5 Service2 done
+    def test_set_service2_done_completes_task(self):
+        from utils.database.task_db import get_task, mark_progressing, set_service1_done, set_service2_done
+        test_key = "TEST-DB-003"
+        mark_progressing(test_key, "READY TO TEST", datetime.now())
+        set_service1_done(test_key, compliance_score=75)
         set_service2_done(test_key)
         task = get_task(test_key)
-        if task['service2_status'] == 'done' and task['task_status'] == 'completed':
-            tracker.ok("set_service2_done() to'g'ri (task completed)")
-        else:
-            tracker.fail("set_service2_done", f"Service2: {task['service2_status']}, Task: {task['task_status']}")
+        assert task['service2_status'] == 'done'
+        assert task['task_status'] == 'completed'
 
-        # 4.6 mark_returned()
-        test_key2 = "DB-TEST-002"
-        mark_progressing(test_key2, "READY TO TEST")
-        set_service1_done(test_key2, compliance_score=40)
-        mark_returned(test_key2)
-
-        task = get_task(test_key2)
-        if task['task_status'] == 'returned':
-            tracker.ok("mark_returned() to'g'ri ishlaydi")
-        else:
-            tracker.fail("mark_returned", f"Status: {task['task_status']}")
-
-        # 4.7 increment_return_count()
-        increment_return_count(test_key2)
-        task = get_task(test_key2)
-        if task['return_count'] == 1:
-            tracker.ok("increment_return_count() 0 -> 1")
-        else:
-            tracker.fail("increment_return_count", f"Count: {task['return_count']}")
-
-        increment_return_count(test_key2)
-        task = get_task(test_key2)
-        if task['return_count'] == 2:
-            tracker.ok("increment_return_count() 1 -> 2")
-        else:
-            tracker.fail("increment_return_count 2", f"Count: {task['return_count']}")
-
-        # 4.8 reset_service_statuses()
-        reset_service_statuses(test_key2)
-        task = get_task(test_key2)
-        if (task['service1_status'] == 'pending' and
-            task['service2_status'] == 'pending' and
-            task['compliance_score'] is None):
-            tracker.ok("reset_service_statuses() to'g'ri (pending, score=None)")
-        else:
-            tracker.fail("reset_service_statuses",
-                        f"S1: {task['service1_status']}, S2: {task['service2_status']}, Score: {task['compliance_score']}")
-
-        # 4.9 Service error holatlar
-        test_key3 = "DB-TEST-003"
-        mark_progressing(test_key3, "READY TO TEST")
-        set_service1_error(test_key3, "AI timeout error")
-
-        task = get_task(test_key3)
-        if task['service1_status'] == 'error' and task['service1_error'] == 'AI timeout error':
-            tracker.ok("set_service1_error() to'g'ri (error message saqlandi)")
-        else:
-            tracker.fail("set_service1_error", f"Status: {task['service1_status']}, Error: {task['service1_error']}")
-
-        # 4.10 set_skip_detected()
-        test_key4 = "DB-TEST-004"
-        mark_progressing(test_key4, "READY TO TEST")
-        set_skip_detected(test_key4)
-
-        task = get_task(test_key4)
-        if task['skip_detected'] == 1 and task['task_status'] == 'completed':
-            tracker.ok("set_skip_detected() to'g'ri (completed, skip=1)")
-        else:
-            tracker.fail("set_skip_detected", f"Skip: {task['skip_detected']}, Status: {task['task_status']}")
-
-        # 4.11 Mavjud bo'lmagan task
-        task = get_task("NONEXISTENT-999")
-        if task is None:
-            tracker.ok("get_task() mavjud bo'lmagan task uchun None qaytaradi")
-        else:
-            tracker.fail("get_task nonexistent", f"Kutilgan: None, Keldi: {task}")
-
-        # 4.12 mark_error()
-        test_key5 = "DB-TEST-005"
-        mark_progressing(test_key5, "READY TO TEST")
-        mark_error(test_key5, "Critical system failure")
-
-        task = get_task(test_key5)
-        if task['task_status'] == 'error' and task['error_message'] == 'Critical system failure':
-            tracker.ok("mark_error() to'g'ri ishlaydi")
-        else:
-            tracker.fail("mark_error", f"Status: {task['task_status']}, Error: {task['error_message']}")
-
-        # 4.13 State Machine: none -> progressing -> completed -> (qayta progressing ruxsat etilmasligi)
-        test_key6 = "DB-TEST-006"
-        mark_progressing(test_key6, "READY TO TEST")
-        set_service1_done(test_key6, 90)
-        set_service2_done(test_key6)
-        mark_completed(test_key6)
-
-        task = get_task(test_key6)
-        if task['task_status'] == 'completed':
-            tracker.ok("State Machine: none -> progressing -> completed to'g'ri")
-        else:
-            tracker.fail("State Machine", f"Oxirgi status: {task['task_status']}")
-
-        # 4.14 Updated_at yangilanganligi
+    def test_mark_returned(self):
+        from utils.database.task_db import get_task, mark_progressing, set_service1_done, mark_returned
+        test_key = "TEST-DB-004"
+        mark_progressing(test_key, "READY TO TEST")
+        set_service1_done(test_key, compliance_score=40)
+        mark_returned(test_key)
         task = get_task(test_key)
-        if task.get('updated_at'):
-            tracker.ok("updated_at avtomatik yangilanadi")
-        else:
-            tracker.fail("updated_at", "Topilmadi")
+        assert task['task_status'] == 'returned'
 
-        # 4.15 Indexlar mavjudligi
+    def test_increment_return_count(self):
+        from utils.database.task_db import get_task, mark_progressing, increment_return_count
+        test_key = "TEST-DB-005"
+        mark_progressing(test_key, "READY TO TEST")
+        increment_return_count(test_key)
+        task = get_task(test_key)
+        assert task['return_count'] == 1
+        increment_return_count(test_key)
+        task = get_task(test_key)
+        assert task['return_count'] == 2
+
+    def test_reset_service_statuses(self):
+        from utils.database.task_db import (
+            get_task, mark_progressing, set_service1_done,
+            mark_returned, reset_service_statuses
+        )
+        test_key = "TEST-DB-006"
+        mark_progressing(test_key, "READY TO TEST")
+        set_service1_done(test_key, compliance_score=40)
+        mark_returned(test_key)
+        reset_service_statuses(test_key)
+        task = get_task(test_key)
+        assert task['service1_status'] == 'pending'
+        assert task['service2_status'] == 'pending'
+        assert task['compliance_score'] is None
+
+    def test_set_service1_error(self):
+        from utils.database.task_db import get_task, mark_progressing, set_service1_error
+        test_key = "TEST-DB-007"
+        mark_progressing(test_key, "READY TO TEST")
+        set_service1_error(test_key, "AI timeout error")
+        task = get_task(test_key)
+        assert task['service1_status'] == 'error'
+        assert task['service1_error'] == 'AI timeout error'
+
+    def test_set_skip_detected(self):
+        from utils.database.task_db import get_task, mark_progressing, set_skip_detected
+        test_key = "TEST-DB-008"
+        mark_progressing(test_key, "READY TO TEST")
+        set_skip_detected(test_key)
+        task = get_task(test_key)
+        assert task['skip_detected'] == 1
+        assert task['task_status'] == 'completed'
+
+    def test_get_task_nonexistent_returns_none(self):
+        from utils.database.task_db import get_task
+        task = get_task("TEST-NONEXISTENT-99999")
+        assert task is None
+
+    def test_mark_error(self):
+        from utils.database.task_db import get_task, mark_progressing, mark_error
+        test_key = "TEST-DB-009"
+        mark_progressing(test_key, "READY TO TEST")
+        mark_error(test_key, "Critical system failure")
+        task = get_task(test_key)
+        assert task['task_status'] == 'error'
+        assert task['error_message'] == 'Critical system failure'
+
+    def test_state_machine_full_flow(self):
+        from utils.database.task_db import (
+            get_task, mark_progressing, set_service1_done,
+            set_service2_done, mark_completed
+        )
+        test_key = "TEST-DB-010"
+        mark_progressing(test_key, "READY TO TEST")
+        set_service1_done(test_key, 90)
+        set_service2_done(test_key)
+        mark_completed(test_key)
+        task = get_task(test_key)
+        assert task['task_status'] == 'completed'
+
+    def test_updated_at_is_set(self):
+        from utils.database.task_db import get_task, mark_progressing
+        test_key = "TEST-DB-011"
+        mark_progressing(test_key, "READY TO TEST")
+        task = get_task(test_key)
+        assert task.get('updated_at') is not None
+
+    def test_db_indexes_exist(self):
+        from utils.database.task_db import DB_FILE
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         cursor.execute("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='task_processing'")
         indexes = {row[0] for row in cursor.fetchall()}
         conn.close()
-
         expected_indexes = {'idx_task_status', 'idx_service1_status', 'idx_service2_status'}
-        if expected_indexes.issubset(indexes):
-            tracker.ok(f"DB indexlar mavjud: {expected_indexes}")
-        else:
-            tracker.fail("DB indexlar", f"Yo'q: {expected_indexes - indexes}")
+        assert expected_indexes.issubset(indexes), f"Yo'q indexlar: {expected_indexes - indexes}"
 
-    except Exception as e:
-        tracker.fail("DB test umumiy", str(e))
+    # --- test_delete_task_flow tests ---
+
+    def test_delete_task_then_get_returns_none(self):
+        from utils.database.task_db import get_task, delete_task, mark_progressing, DB_FILE
+        task_key = "TEST-DELETE-001"
+        mark_progressing(task_key, "Ready to Test", datetime.now())
+        task = get_task(task_key)
+        assert task is not None
+        assert task['task_status'] == 'progressing'
+        success = delete_task(task_key)
+        assert success is True
+        task_after_delete = get_task(task_key)
+        assert task_after_delete is None
+        # DB direct verification
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("SELECT task_id FROM task_processing WHERE task_id = ?", (task_key,))
+        row = cursor.fetchone()
+        conn.close()
+        assert row is None
+
+    def test_delete_then_recreate_as_new(self):
+        from utils.database.task_db import get_task, delete_task, mark_progressing
+        task_key = "TEST-DELETE-RECREATE"
+        mark_progressing(task_key, "Ready to Test", datetime.now())
+        delete_task(task_key)
+        mark_progressing(task_key, "Ready to Test", datetime.now())
+        task_new = get_task(task_key)
+        assert task_new is not None
+        assert task_new['task_status'] == 'progressing'
+        assert task_new['return_count'] == 0
+
+    def test_multiple_delete_calls_safe(self):
+        from utils.database.task_db import get_task, delete_task, mark_progressing
+        task_key = "TEST-DELETE-MULTI"
+        mark_progressing(task_key, "Ready to Test", datetime.now())
+        success1 = delete_task(task_key)
+        assert success1 is True
+        success2 = delete_task(task_key)
+        assert success2 is False
+        success3 = delete_task(task_key)
+        assert success3 is False
+
+    def test_delete_with_concurrent_access_pattern(self):
+        from utils.database.task_db import get_task, delete_task, mark_progressing
+        task_key = "TEST-DELETE-CONC"
+        mark_progressing(task_key, "Ready to Test", datetime.now())
+        success = delete_task(task_key)
+        assert success is True
+        task = get_task(task_key)
+        assert task is None
+        # Simulate webhook handler recreating
+        mark_progressing(task_key, "Ready to Test", datetime.now())
+        task_new = get_task(task_key)
+        assert task_new is not None
+        assert task_new['task_status'] == 'progressing'
 
 
 # ============================================================================
-# 5-TEST: 2 TA SERVIS TARTIB TEKSHIRISH
+# CLASS 5: TestServiceOrchestration
 # ============================================================================
 
-def test_5_service_order():
+class TestServiceOrchestration:
     """
-    TEST 5: Bir taskda 2 ta servis qay tartibda ishlashi
-
+    Bir taskda 2 ta servis qay tartibda ishlashi (test_5, test_8)
     - checker_first mode: Service1 -> delay -> Service2
-    - testcase_first mode: Service2 -> delay -> Service1
-    - parallel mode: ikkalasi bir vaqtda
     - Service2 Service1 done bo'lguncha kutadimi?
     - Score threshold Service2 ni bloklayaptimi?
+    - Testcase webhook handler
     """
-    logger.info("\n" + "=" * 70)
-    logger.info("TEST 5: Servislar tartibini tekshirish")
-    logger.info("=" * 70)
 
-    try:
-        from config.app_settings import get_app_settings, TZPRCheckerSettings
-        from utils.database.task_db import (
-            get_task, mark_progressing, set_service1_done,
-            set_service2_done, mark_returned, reset_service_statuses
-        )
-
+    def test_default_comment_order_is_valid(self):
+        from config.app_settings import get_app_settings
         settings = get_app_settings()
+        valid_orders = ["checker_first", "testcase_first", "parallel"]
+        assert settings.tz_pr_checker.comment_order in valid_orders
 
-        # 5.1 Default tartib tekshirish
-        order = settings.tz_pr_checker.comment_order
-        tracker.ok(f"Default comment_order: '{order}'")
-
-        # 5.2 checker_first tartibida Service1 -> Service2
-        test_key = "ORDER-001"
+    def test_service1_done_allows_service2(self):
+        from utils.database.task_db import get_task, mark_progressing, set_service1_done
+        test_key = "TEST-ORDER-001"
         mark_progressing(test_key, "READY TO TEST")
-
-        # Service1 done (score yaxshi)
         set_service1_done(test_key, compliance_score=80)
         task = get_task(test_key)
+        assert task['service1_status'] == 'done'
 
-        # Service2 ishlashi uchun shart: service1_status == 'done'
-        if task['service1_status'] == 'done':
-            tracker.ok("Service1 done - Service2 ishga tushishi mumkin")
-        else:
-            tracker.fail("Service1 done check", f"Status: {task['service1_status']}")
-
-        # 5.3 Score past bo'lganda Service2 bloklanishi
-        test_key2 = "ORDER-002"
-        mark_progressing(test_key2, "READY TO TEST")
-        set_service1_done(test_key2, compliance_score=40)  # 40% < 60% threshold
-
-        task = get_task(test_key2)
+    def test_low_score_should_block_service2(self):
+        from utils.database.task_db import get_task, mark_progressing, set_service1_done
+        from config.app_settings import get_app_settings
+        settings = get_app_settings()
+        test_key = "TEST-ORDER-002"
+        mark_progressing(test_key, "READY TO TEST")
+        set_service1_done(test_key, compliance_score=40)
+        task = get_task(test_key)
         threshold = settings.tz_pr_checker.return_threshold
+        assert task['compliance_score'] < threshold
 
-        if task['compliance_score'] < threshold:
-            tracker.ok(f"Score past ({task['compliance_score']}% < {threshold}%) - Service2 bloklanishi kerak")
-        else:
-            tracker.fail("Score threshold check", f"Score: {task['compliance_score']}, Threshold: {threshold}")
+    def test_service1_pending_blocks_service2(self):
+        from utils.database.task_db import get_task, mark_progressing
+        test_key = "TEST-ORDER-003"
+        mark_progressing(test_key, "READY TO TEST")
+        task = get_task(test_key)
+        assert task['service1_status'] == 'pending'
 
-        # 5.4 Service2 Service1'siz ishlamasligi (service1_status != 'done')
-        test_key3 = "ORDER-003"
-        mark_progressing(test_key3, "READY TO TEST")
+    def test_returned_task_service2_not_run(self):
+        from utils.database.task_db import get_task, mark_progressing, set_service1_done, mark_returned
+        test_key = "TEST-ORDER-004"
+        mark_progressing(test_key, "READY TO TEST")
+        set_service1_done(test_key, compliance_score=30)
+        mark_returned(test_key)
+        task = get_task(test_key)
+        assert task['task_status'] == 'returned'
 
-        task = get_task(test_key3)
-        if task['service1_status'] == 'pending':
-            tracker.ok("Service1 pending - Service2 ishlamasligi kerak")
-        else:
-            tracker.fail("Service1 pending check", f"Status: {task['service1_status']}")
+    def test_recheck_flow_reset_to_progressing(self):
+        from utils.database.task_db import (
+            get_task, mark_progressing, set_service1_done,
+            mark_returned, reset_service_statuses
+        )
+        test_key = "TEST-ORDER-005"
+        mark_progressing(test_key, "READY TO TEST")
+        set_service1_done(test_key, compliance_score=30)
+        mark_returned(test_key)
+        reset_service_statuses(test_key)
+        mark_progressing(test_key, "READY TO TEST")
+        task = get_task(test_key)
+        assert task['service1_status'] == 'pending'
+        assert task['service2_status'] == 'pending'
+        assert task['task_status'] == 'progressing'
 
-        # 5.5 Returned taskda Service2 ishlamasligi
-        test_key4 = "ORDER-004"
-        mark_progressing(test_key4, "READY TO TEST")
-        set_service1_done(test_key4, compliance_score=30)
-        mark_returned(test_key4)
+    def test_score_none_does_not_block_service2(self):
+        from utils.database.task_db import get_task, mark_progressing, set_service1_done
+        test_key = "TEST-ORDER-006"
+        mark_progressing(test_key, "READY TO TEST")
+        set_service1_done(test_key, compliance_score=None)
+        task = get_task(test_key)
+        assert task['compliance_score'] is None
+        assert task['service1_status'] == 'done'
 
-        task = get_task(test_key4)
-        if task['task_status'] == 'returned':
-            tracker.ok("Returned task - Service2 ishlamasligi kerak")
-        else:
-            tracker.fail("Returned task check", f"Status: {task['task_status']}")
-
-        # 5.6 Re-check flow: returned -> reset -> progressing -> ikkalasi ishlaydi
-        reset_service_statuses(test_key4)
-        mark_progressing(test_key4, "READY TO TEST")
-
-        task = get_task(test_key4)
-        if (task['service1_status'] == 'pending' and
-            task['service2_status'] == 'pending' and
-            task['task_status'] == 'progressing'):
-            tracker.ok("Re-check flow: reset -> progressing to'g'ri (ikkala servis pending)")
-        else:
-            tracker.fail("Re-check flow",
-                        f"S1: {task['service1_status']}, S2: {task['service2_status']}, Task: {task['task_status']}")
-
-        # 5.7 compliance_score=None bo'lganda Service2 ishlay olishi
-        test_key5 = "ORDER-005"
-        mark_progressing(test_key5, "READY TO TEST")
-        set_service1_done(test_key5, compliance_score=None)
-
-        task = get_task(test_key5)
-        # score is None bo'lganda, Service2 bloklashmaslik kerak (None or score >= threshold)
-        if task['compliance_score'] is None and task['service1_status'] == 'done':
-            tracker.ok("Score=None holat: Service2 bloklanmasligi kerak (score None or >= threshold)")
-        else:
-            tracker.fail("Score=None holat", f"Score: {task['compliance_score']}, S1: {task['service1_status']}")
-
-        # 5.8 Trigger statuses tekshirish
+    def test_trigger_statuses_contain_ready_to_test(self):
+        from config.app_settings import get_app_settings
+        settings = get_app_settings()
         trigger_statuses = settings.tz_pr_checker.get_trigger_statuses()
-        if "READY TO TEST" in trigger_statuses:
-            tracker.ok(f"Trigger statuses: {trigger_statuses}")
+        assert "READY TO TEST" in trigger_statuses
+
+    # --- test_8 testcase webhook handler ---
+
+    def test_testcase_trigger_status_ready_to_test(self):
+        from services.webhook.testcase_webhook_handler import is_testcase_trigger_status
+        from config.app_settings import get_app_settings
+        settings = get_app_settings(force_reload=True)
+        if settings.testcase_generator.auto_comment_enabled:
+            assert is_testcase_trigger_status("READY TO TEST") is True
         else:
-            tracker.fail("Trigger statuses", f"READY TO TEST topilmadi: {trigger_statuses}")
+            assert is_testcase_trigger_status("READY TO TEST") is False
 
-    except Exception as e:
-        tracker.fail("Service order test umumiy", str(e))
+    def test_testcase_trigger_status_in_progress_false(self):
+        from services.webhook.testcase_webhook_handler import is_testcase_trigger_status
+        assert is_testcase_trigger_status("In Progress") is False
+
+    def test_testcase_trigger_status_empty_false(self):
+        from services.webhook.testcase_webhook_handler import is_testcase_trigger_status
+        assert is_testcase_trigger_status("") is False
 
 
 # ============================================================================
-# 6-TEST: XATO VA ERROR HOLATLAR
+# CLASS 6: TestErrorHandling
 # ============================================================================
 
-def test_6_error_handling():
+class TestErrorHandling:
     """
-    TEST 6: Xato va error holatlarida tizim barqarorligi
-
+    Xato va error holatlarida tizim barqarorligi (test_6, resilience test_4, test_6)
     - Task topilmasa nima bo'ladi?
     - PR topilmasa nima bo'ladi?
     - AI xato bersa nima bo'ladi?
     - JSON parse xato bo'lsa nima bo'ladi?
-    - Compliance score topilmasa nima bo'ladi?
-    - DB yozishda xato bo'lsa?
     - Gemini fallback ishlayaptimi?
+    - Webhook error handling
     """
-    logger.info("\n" + "=" * 70)
-    logger.info("TEST 6: Error handling va barqarorlik")
-    logger.info("=" * 70)
 
-    try:
+    def test_tzpr_task_not_found_graceful_error(self):
         from services.checkers.tz_pr_checker import TZPRService, TZPRAnalysisResult
-        from services.generators.testcase_generator import TestCaseGeneratorService
-        from utils.ai.gemini_helper import GeminiHelper
-
-        # 6.1 TZPRService: Task topilmasa
         service = TZPRService()
         mock_jira = MagicMock()
-        mock_jira.get_task_details.return_value = None  # Task topilmadi
+        mock_jira.get_task_details.return_value = None
         service._jira_client = mock_jira
+        result = service.analyze_task("TEST-NONEXIST-001")
+        assert not result.success
+        assert "topilmadi" in result.error_message
 
-        result = service.analyze_task("NONEXIST-001")
-        if not result.success and "topilmadi" in result.error_message:
-            tracker.ok("TZPRService: Task topilmasa graceful error qaytaradi")
-        else:
-            tracker.fail("TZPRService task topilmadi", f"Success: {result.success}, Error: {result.error_message}")
+    def test_tzpr_task_not_found_returns_result_type(self):
+        from services.checkers.tz_pr_checker import TZPRService, TZPRAnalysisResult
+        service = TZPRService()
+        mock_jira = MagicMock()
+        mock_jira.get_task_details.return_value = None
+        service._jira_client = mock_jira
+        result = service.analyze_task("TEST-NONEXIST-002")
+        assert isinstance(result, TZPRAnalysisResult)
 
-        # Tizim crash qilmadi - bu muhim!
-        if isinstance(result, TZPRAnalysisResult):
-            tracker.ok("TZPRService: Task topilmasa ham TZPRAnalysisResult qaytaradi (crash yo'q)")
-        else:
-            tracker.fail("TZPRService crash", "Natija turi noto'g'ri")
-
-        # 6.2 TZPRService: PR topilmasa
-        service2 = TZPRService()
-        mock_jira2 = MagicMock()
-        mock_jira2.get_task_details.return_value = {
+    def test_tzpr_pr_not_found_graceful_error(self):
+        from services.checkers.tz_pr_checker import TZPRService
+        service = TZPRService()
+        mock_jira = MagicMock()
+        mock_jira.get_task_details.return_value = {
             'summary': 'Test task',
             'type': 'Story',
             'priority': 'High',
@@ -1001,1082 +1234,1178 @@ def test_6_error_handling():
             'comments': [],
             'figma_links': []
         }
-        service2._jira_client = mock_jira2
-
+        service._jira_client = mock_jira
         mock_pr_helper = MagicMock()
-        mock_pr_helper.get_pr_full_info.return_value = None  # PR topilmadi
-        service2._pr_helper = mock_pr_helper
+        mock_pr_helper.get_pr_full_info.return_value = None
+        service._pr_helper = mock_pr_helper
+        result = service.analyze_task("TEST-NOPR-001")
+        assert not result.success
+        assert "PR topilmadi" in result.error_message
 
-        result = service2.analyze_task("NOPR-001")
-        if not result.success and "PR topilmadi" in result.error_message:
-            tracker.ok("TZPRService: PR topilmasa graceful error qaytaradi")
-        else:
-            tracker.fail("TZPRService PR topilmadi", f"Success: {result.success}, Error: {result.error_message}")
+    def test_tzpr_pr_not_found_has_warnings(self):
+        from services.checkers.tz_pr_checker import TZPRService
+        service = TZPRService()
+        mock_jira = MagicMock()
+        mock_jira.get_task_details.return_value = {
+            'summary': 'Test task',
+            'type': 'Story',
+            'priority': 'High',
+            'description': 'TZ content',
+            'comments': [],
+            'figma_links': []
+        }
+        service._jira_client = mock_jira
+        mock_pr_helper = MagicMock()
+        mock_pr_helper.get_pr_full_info.return_value = None
+        service._pr_helper = mock_pr_helper
+        result = service.analyze_task("TEST-NOPR-002")
+        assert len(result.warnings) > 0
 
-        if result.warnings:
-            tracker.ok(f"TZPRService: PR topilmasa warnings bor: {result.warnings}")
-        else:
-            tracker.fail("TZPRService PR warnings", "Warnings bo'sh")
-
-        # 6.3 AI xato bersa (Gemini exception)
-        service3 = TZPRService()
-        mock_jira3 = MagicMock()
-        mock_jira3.get_task_details.return_value = {
+    def test_tzpr_ai_error_graceful(self):
+        from services.checkers.tz_pr_checker import TZPRService
+        service = TZPRService()
+        mock_jira = MagicMock()
+        mock_jira.get_task_details.return_value = {
             'summary': 'Test', 'type': 'Story', 'priority': 'High',
             'description': 'TZ', 'comments': [], 'figma_links': []
         }
-        service3._jira_client = mock_jira3
-
-        mock_pr3 = MagicMock()
-        mock_pr3.get_pr_full_info.return_value = {
+        service._jira_client = mock_jira
+        mock_pr = MagicMock()
+        mock_pr.get_pr_full_info.return_value = {
             'pr_count': 1, 'files_changed': 1,
             'total_additions': 1, 'total_deletions': 0,
             'pr_details': [{'title': 'test', 'url': 'http://test', 'files': []}]
         }
-        service3._pr_helper = mock_pr3
+        service._pr_helper = mock_pr
+        mock_gemini = MagicMock()
+        mock_gemini.analyze.side_effect = RuntimeError("Gemini API xatosi: quota exceeded")
+        service._gemini_helper = mock_gemini
+        result = service.analyze_task("TEST-AIERR-001")
+        assert not result.success
 
-        mock_gemini3 = MagicMock()
-        mock_gemini3.analyze.side_effect = RuntimeError("Gemini API xatosi: quota exceeded")
-        service3._gemini_helper = mock_gemini3
+    def test_compliance_score_none_when_missing(self):
+        from services.checkers.tz_pr_checker import TZPRService
+        service = TZPRService()
+        score = service._extract_compliance_score("Bu javobda hech qanday score yo'q")
+        assert score is None
 
-        result = service3.analyze_task("AIERR-001")
-        if not result.success:
-            tracker.ok("TZPRService: AI xatoda graceful error (tizim crash qilmadi)")
-        else:
-            tracker.fail("TZPRService AI xato", "Success=True bo'lmasligi kerak edi")
+    def test_compliance_score_format1(self):
+        from services.checkers.tz_pr_checker import TZPRService
+        service = TZPRService()
+        score = service._extract_compliance_score("COMPLIANCE_SCORE: 85%")
+        assert score == 85
 
-        # 6.4 Compliance score topilmasa
-        service4 = TZPRService()
-        # Score yo'q AI javob
-        score = service4._extract_compliance_score("Bu javobda hech qanday score yo'q")
-        if score is None:
-            tracker.ok("Compliance score topilmasa None qaytaradi (crash yo'q)")
-        else:
-            tracker.fail("Compliance score None", f"Kutilgan: None, Keldi: {score}")
+    def test_compliance_score_format2(self):
+        from services.checkers.tz_pr_checker import TZPRService
+        service = TZPRService()
+        score = service._extract_compliance_score("**COMPLIANCE_SCORE: 92%**")
+        assert score == 92
 
-        # Turli formatdagi score'lar
-        score1 = service4._extract_compliance_score("COMPLIANCE_SCORE: 85%")
-        score2 = service4._extract_compliance_score("**COMPLIANCE_SCORE: 92%**")
-        score3 = service4._extract_compliance_score("MOSLIK BALI: 73%")
+    def test_compliance_score_format3(self):
+        from services.checkers.tz_pr_checker import TZPRService
+        service = TZPRService()
+        score = service._extract_compliance_score("MOSLIK BALI: 73%")
+        assert score == 73
 
-        if score1 == 85:
-            tracker.ok("Score format 1 (COMPLIANCE_SCORE: 85%) to'g'ri")
-        else:
-            tracker.fail("Score format 1", f"Keldi: {score1}")
-
-        if score2 == 92:
-            tracker.ok("Score format 2 (**COMPLIANCE_SCORE: 92%**) to'g'ri")
-        else:
-            tracker.fail("Score format 2", f"Keldi: {score2}")
-
-        if score3 == 73:
-            tracker.ok("Score format 3 (MOSLIK BALI: 73%) to'g'ri")
-        else:
-            tracker.fail("Score format 3", f"Keldi: {score3}")
-
-        # 6.5 TestCaseGenerator: JSON parse xato
+    def test_testcase_json_repair(self):
+        from services.generators.testcase_generator import TestCaseGeneratorService
         tc_service = TestCaseGeneratorService()
-
-        # Truncated JSON
-        broken_json = '{"test_cases": [{"id": "TC-001", "title": "Test", "description": "desc", "preconditions": "pre", "steps": ["1"], "expected_result": "ok", "test_type": "positive", "priority": "High", "severity": "Major"}, {"id": "TC-002", "title": "Test 2", "desc'
-
+        broken_json = ('{"test_cases": [{"id": "TC-001", "title": "Test", "description": "desc", '
+                       '"preconditions": "pre", "steps": ["1"], "expected_result": "ok", '
+                       '"test_type": "positive", "priority": "High", "severity": "Major"}, '
+                       '{"id": "TC-002", "title": "Test 2", "desc')
         repaired = tc_service._try_repair_json(broken_json)
-        if repaired:
+        assert repaired is not None
+        data = json.loads(repaired)
+        assert 'test_cases' in data
+        assert len(data['test_cases']) >= 1
+
+    def test_testcase_json_repair_empty_string(self):
+        from services.generators.testcase_generator import TestCaseGeneratorService
+        tc_service = TestCaseGeneratorService()
+        repaired = tc_service._try_repair_json("")
+        assert repaired is None
+
+    def test_testcase_task_not_found_graceful(self):
+        from services.generators.testcase_generator import TestCaseGeneratorService
+        tc_service = TestCaseGeneratorService()
+        mock_jira = MagicMock()
+        mock_jira.get_task_details.return_value = None
+        tc_service._jira_client = mock_jira
+        result = tc_service.generate_test_cases("TEST-NOTFOUND-001")
+        assert not result.success
+        assert "topilmadi" in result.error_message
+
+    def test_gemini_fallback_quota_error_detection(self):
+        from utils.ai.gemini_helper import GeminiHelper
+        helper = GeminiHelper.__new__(GeminiHelper)
+        helper.api_key_1 = "key1"
+        helper.api_key_2 = "key2"
+        helper.using_fallback = False
+        helper.FALLBACK_ERROR_KEYWORDS = GeminiHelper.FALLBACK_ERROR_KEYWORDS
+
+        class FakeQuotaError(Exception):
+            pass
+
+        quota_error = FakeQuotaError("resource_exhausted: quota limit reached")
+        assert helper._is_fallback_error(quota_error)
+
+    def test_gemini_fallback_normal_error_not_triggered(self):
+        from utils.ai.gemini_helper import GeminiHelper
+        helper = GeminiHelper.__new__(GeminiHelper)
+        helper.api_key_1 = "key1"
+        helper.api_key_2 = "key2"
+        helper.using_fallback = False
+        helper.FALLBACK_ERROR_KEYWORDS = GeminiHelper.FALLBACK_ERROR_KEYWORDS
+
+        class FakeError(Exception):
+            pass
+
+        normal_error = FakeError("connection timeout")
+        assert not helper._is_fallback_error(normal_error)
+
+    def test_gemini_fallback_429_detection(self):
+        from utils.ai.gemini_helper import GeminiHelper
+        helper = GeminiHelper.__new__(GeminiHelper)
+        helper.api_key_1 = "key1"
+        helper.api_key_2 = "key2"
+        helper.using_fallback = False
+        helper.FALLBACK_ERROR_KEYWORDS = GeminiHelper.FALLBACK_ERROR_KEYWORDS
+
+        class FakeError(Exception):
+            pass
+
+        rate_error = FakeError("429 rate limit exceeded")
+        assert helper._is_fallback_error(rate_error)
+
+    def test_webhook_invalid_payload_no_crash(self):
+        from fastapi.testclient import TestClient
+        from services.webhook.jira_webhook_handler import app
+        client = TestClient(app)
+        response = client.post("/webhook/jira", json={"random": "data"})
+        assert response.status_code in [200, 422]
+
+    def test_webhook_empty_payload_no_crash(self):
+        from fastapi.testclient import TestClient
+        from services.webhook.jira_webhook_handler import app
+        client = TestClient(app)
+        response = client.post("/webhook/jira", json={})
+        assert response.status_code in [200, 422]
+
+    # --- Resilience test_4: both keys error retry ---
+
+    def test_service1_blocked_retry_flow(self):
+        from utils.database.task_db import (
+            mark_progressing, set_service1_blocked, get_task, upsert_task
+        )
+        from services.webhook.jira_webhook_handler import _retry_blocked_task
+        task_key = "TEST-RETRY-KEY1-001"
+        mark_progressing(task_key, "READY TO TEST")
+        set_service1_blocked(task_key, "AI timeout: 429 rate limit", retry_minutes=0)
+        past_time = (datetime.now() - timedelta(minutes=1)).isoformat()
+        upsert_task(task_key, {'blocked_retry_at': past_time})
+        # retry_scheduler.py funksiya ichida import qiladi: from services.webhook.service_runner import check_tz_pr_and_comment
+        with patch('services.webhook.service_runner.check_tz_pr_and_comment', new_callable=AsyncMock):
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
             try:
-                data = json.loads(repaired)
-                if 'test_cases' in data and len(data['test_cases']) >= 1:
-                    tracker.ok(f"JSON repair ishladi: {len(data['test_cases'])} ta test case tiklandi")
-                else:
-                    tracker.fail("JSON repair natija", f"Test cases topilmadi: {data.keys()}")
-            except json.JSONDecodeError as je:
-                tracker.fail("JSON repair parse", str(je))
+                loop.run_until_complete(_retry_blocked_task(task_key))
+                task = get_task(task_key)
+                assert task is not None
+                assert task['service1_status'] in ('pending', 'done', 'skip')
+            finally:
+                loop.close()
+
+    def test_service2_blocked_retry_flow(self):
+        from utils.database.task_db import (
+            mark_progressing, set_service1_done, set_service2_blocked, get_task, upsert_task
+        )
+        from services.webhook.jira_webhook_handler import _retry_blocked_task
+        task_key = "TEST-RETRY-KEY2-001"
+        mark_progressing(task_key, "READY TO TEST")
+        set_service1_done(task_key, compliance_score=80)
+        set_service2_blocked(task_key, "AI timeout: resource_exhausted", retry_minutes=0)
+        past_time = (datetime.now() - timedelta(minutes=1)).isoformat()
+        upsert_task(task_key, {'blocked_retry_at': past_time})
+        # retry_scheduler.py funksiya ichida import qiladi: from services.webhook.service_runner import _run_testcase_generation
+        with patch('services.webhook.service_runner._run_testcase_generation', new_callable=AsyncMock):
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(_retry_blocked_task(task_key))
+                task = get_task(task_key)
+                assert task is not None
+                assert task['service2_status'] in ('pending', 'done')
+            finally:
+                loop.close()
+
+    def test_both_keys_error_service1_stays_blocked_on_retry(self):
+        from utils.database.task_db import (
+            mark_progressing, set_service1_blocked, set_service2_blocked,
+            get_task, upsert_task
+        )
+        from services.webhook.jira_webhook_handler import _retry_blocked_task
+        task_key = "TEST-RETRY-BOTH-001"
+        mark_progressing(task_key, "READY TO TEST")
+        set_service1_blocked(task_key, "AI timeout: ikkala key ham ishlamadi", retry_minutes=0)
+        set_service2_blocked(task_key, "AI timeout: ikkala key ham ishlamadi", retry_minutes=0)
+        past_time = (datetime.now() - timedelta(minutes=1)).isoformat()
+        upsert_task(task_key, {'blocked_retry_at': past_time})
+
+        async def mock_service1_error(**kwargs):
+            set_service1_blocked(task_key, "AI timeout: yana error", retry_minutes=1)
+
+        # retry_scheduler.py funksiya ichida import qiladi: from services.webhook.service_runner import check_tz_pr_and_comment
+        with patch('services.webhook.service_runner.check_tz_pr_and_comment',
+                   new_callable=AsyncMock) as mock_service1:
+            mock_service1.side_effect = mock_service1_error
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(_retry_blocked_task(task_key))
+                task = get_task(task_key)
+                assert task is not None
+                assert task['service1_status'] == 'blocked'
+            finally:
+                loop.close()
+
+    # --- Resilience test_6: system resilience ---
+
+    def test_webhook_null_task_key_graceful(self):
+        from fastapi.testclient import TestClient
+        from services.webhook.jira_webhook_handler import app
+        client = TestClient(app)
+        payload = {
+            "webhookEvent": "jira:issue_updated",
+            "issue": {"key": None},
+            "changelog": {}
+        }
+        response = client.post("/webhook/jira", json=payload)
+        if response.status_code == 200:
+            data = response.json()
+            assert data.get('status') in ['error', 'ignored']
         else:
-            tracker.fail("JSON repair", "None qaytardi - tuzatib bo'lmadi")
+            assert response.status_code in [200, 422]
 
-        # Bo'sh JSON
-        repaired_empty = tc_service._try_repair_json("")
-        if repaired_empty is None:
-            tracker.ok("JSON repair: bo'sh string uchun None qaytaradi")
-        else:
-            tracker.fail("JSON repair bo'sh", f"Kutilgan: None, Keldi: {repaired_empty}")
-
-        # 6.6 TestCaseGenerator: Task topilmasa
-        tc_service2 = TestCaseGeneratorService()
-        mock_jira_tc = MagicMock()
-        mock_jira_tc.get_task_details.return_value = None
-        tc_service2._jira_client = mock_jira_tc
-
-        result = tc_service2.generate_test_cases("NOTFOUND-001")
-        if not result.success and "topilmadi" in result.error_message:
-            tracker.ok("TestCaseGenerator: Task topilmasa graceful error")
-        else:
-            tracker.fail("TestCaseGenerator task topilmadi", f"Success: {result.success}")
-
-        # 6.7 Gemini fallback mehanizmi
-        try:
-            # GeminiHelper init qilmasdan fallback logikasini tekshirish
-            helper = GeminiHelper.__new__(GeminiHelper)
-            helper.api_key_1 = "key1"
-            helper.api_key_2 = "key2"
-            helper.using_fallback = False
-            helper.FALLBACK_ERROR_KEYWORDS = GeminiHelper.FALLBACK_ERROR_KEYWORDS
-
-            # Fallback error detection
-            class FakeQuotaError(Exception):
-                pass
-
-            quota_error = FakeQuotaError("resource_exhausted: quota limit reached")
-            if helper._is_fallback_error(quota_error):
-                tracker.ok("Gemini fallback: quota error to'g'ri detect qiladi")
-            else:
-                tracker.fail("Gemini fallback detection", "quota error detect qilmadi")
-
-            normal_error = FakeQuotaError("connection timeout")
-            if not helper._is_fallback_error(normal_error):
-                tracker.ok("Gemini fallback: oddiy xatoda fallback qilmaydi")
-            else:
-                tracker.fail("Gemini fallback oddiy xato", "Noto'g'ri fallback qildi")
-
-            rate_error = FakeQuotaError("429 rate limit exceeded")
-            if helper._is_fallback_error(rate_error):
-                tracker.ok("Gemini fallback: 429 rate limit to'g'ri detect qiladi")
-            else:
-                tracker.fail("Gemini fallback 429", "429 detect qilmadi")
-        except Exception as e:
-            tracker.fail("Gemini fallback test", str(e))
-
-        # 6.8 Webhook error handling - noto'g'ri payload
-        try:
-            from fastapi.testclient import TestClient
-            from services.webhook.jira_webhook_handler import app
-
-            client = TestClient(app)
-
-            # Butunlay noto'g'ri payload
-            response = client.post("/webhook/jira", json={"random": "data"})
-            # Tizim crash qilmasligi kerak
-            if response.status_code in [200, 422]:
-                tracker.ok("Webhook: noto'g'ri payload crash qilmaydi")
-            else:
-                tracker.fail("Webhook noto'g'ri payload", f"Status: {response.status_code}")
-
-            # Bo'sh payload
-            response = client.post("/webhook/jira", json={})
-            if response.status_code in [200, 422]:
-                tracker.ok("Webhook: bo'sh payload crash qilmaydi")
-            else:
-                tracker.fail("Webhook bo'sh payload", f"Status: {response.status_code}")
-        except Exception as e:
-            tracker.fail("Webhook error handling", str(e))
-
-    except Exception as e:
-        tracker.fail("Error handling test umumiy", str(e))
+    def test_db_nonexistent_task_no_crash(self):
+        from utils.database.task_db import get_task
+        nonexistent = get_task("TEST-NONEXISTENT-999999")
+        assert nonexistent is None
 
 
 # ============================================================================
-# 7-TEST: KONFIGURATSIYA VA SOZLAMALAR
+# CLASS 7: TestSettingsManagement
 # ============================================================================
 
-def test_7_settings():
+class TestSettingsManagement:
     """
-    TEST 7: Sozlamalar tizimi to'g'ri ishlashi
-
+    Sozlamalar tizimi to'g'ri ishlashi (test_7, resilience test_2)
     - AppSettings default qiymatlar to'g'rimi?
     - Settings file o'qilishi va yozilishi
     - force_reload ishlayaptimi?
     - Trigger statuses to'g'ri generatsiya qilinadimi?
+    - Settings ziddiyatlarini tekshirish
     """
-    logger.info("\n" + "=" * 70)
-    logger.info("TEST 7: Sozlamalar tizimi")
-    logger.info("=" * 70)
 
-    try:
-        from config.app_settings import (
-            AppSettings, TZPRCheckerSettings, TestcaseGeneratorSettings,
-            QueueSettings, get_app_settings, AppSettingsManager
-        )
-
-        # 7.1 Default qiymatlar
+    def test_default_return_threshold(self):
+        from config.app_settings import AppSettings
         settings = AppSettings()
+        assert settings.tz_pr_checker.return_threshold == 60
 
-        if settings.tz_pr_checker.return_threshold == 60:
-            tracker.ok("Default return_threshold: 60")
-        else:
-            tracker.fail("Default threshold", f"Keldi: {settings.tz_pr_checker.return_threshold}")
+    def test_default_auto_return_disabled(self):
+        from config.app_settings import AppSettings
+        settings = AppSettings()
+        assert settings.tz_pr_checker.auto_return_enabled is False
 
-        if settings.tz_pr_checker.auto_return_enabled == False:
-            tracker.ok("Default auto_return_enabled: False")
-        else:
-            tracker.fail("Default auto_return", "True bo'lmasligi kerak")
+    def test_default_queue_enabled(self):
+        from config.app_settings import AppSettings
+        settings = AppSettings()
+        assert settings.queue.queue_enabled is True
 
-        if settings.queue.queue_enabled == True:
-            tracker.ok("Default queue_enabled: True")
-        else:
-            tracker.fail("Default queue", "False bo'lmasligi kerak")
+    def test_default_checker_testcase_delay(self):
+        from config.app_settings import AppSettings
+        settings = AppSettings()
+        assert settings.queue.checker_testcase_delay == 15
 
-        if settings.queue.checker_testcase_delay == 15:
-            tracker.ok("Default checker_testcase_delay: 15s")
-        else:
-            tracker.fail("Default delay", f"Keldi: {settings.queue.checker_testcase_delay}")
-
-        # 7.2 Trigger statuses (aliases bilan)
+    def test_tz_pr_trigger_statuses_contain_ready(self):
+        from config.app_settings import AppSettings
+        settings = AppSettings()
         tz_triggers = settings.tz_pr_checker.get_trigger_statuses()
-        if "READY TO TEST" in tz_triggers:
-            tracker.ok(f"TZ-PR trigger statuses: {tz_triggers}")
-        else:
-            tracker.fail("TZ-PR triggers", f"READY TO TEST topilmadi: {tz_triggers}")
+        assert "READY TO TEST" in tz_triggers
 
+    def test_testcase_trigger_statuses_contain_ready(self):
+        from config.app_settings import AppSettings
+        settings = AppSettings()
         tc_triggers = settings.testcase_generator.get_trigger_statuses()
-        if "READY TO TEST" in tc_triggers:
-            tracker.ok(f"Testcase trigger statuses: {tc_triggers}")
-        else:
-            tracker.fail("Testcase triggers", f"READY TO TEST topilmadi: {tc_triggers}")
+        assert "READY TO TEST" in tc_triggers
 
-        # 7.3 Settings singleton
+    def test_settings_singleton(self):
+        from config.app_settings import get_app_settings
         s1 = get_app_settings()
         s2 = get_app_settings()
-        # Ikkalasi bir xil ob'ekt bo'lishi kerak (cache)
-        if s1 is s2:
-            tracker.ok("Settings singleton: bir xil ob'ekt (cache ishlaydi)")
-        else:
-            tracker.fail("Settings singleton", "Har safar yangi ob'ekt")
+        assert s1 is s2
 
-        # 7.4 force_reload
+    def test_force_reload_returns_app_settings(self):
+        from config.app_settings import get_app_settings, AppSettings
         s3 = get_app_settings(force_reload=True)
-        # force_reload=True bo'lsa fayldan qayta o'qiydi
-        if isinstance(s3, AppSettings):
-            tracker.ok("force_reload=True ishlaydi (AppSettings qaytaradi)")
-        else:
-            tracker.fail("force_reload", f"Turi noto'g'ri: {type(s3)}")
+        assert isinstance(s3, AppSettings)
 
-        # 7.5 visible_sections default
-        if 'completed' in settings.tz_pr_checker.visible_sections:
-            tracker.ok(f"visible_sections default: {settings.tz_pr_checker.visible_sections}")
-        else:
-            tracker.fail("visible_sections", f"Keldi: {settings.tz_pr_checker.visible_sections}")
+    def test_visible_sections_default(self):
+        from config.app_settings import AppSettings
+        settings = AppSettings()
+        assert 'completed' in settings.tz_pr_checker.visible_sections
 
-        # 7.6 Comment order qiymatlari
+    def test_comment_order_valid_value(self):
+        from config.app_settings import AppSettings
+        settings = AppSettings()
         valid_orders = ["checker_first", "testcase_first", "parallel"]
-        if settings.tz_pr_checker.comment_order in valid_orders:
-            tracker.ok(f"comment_order: '{settings.tz_pr_checker.comment_order}' (valid)")
-        else:
-            tracker.fail("comment_order", f"Noto'g'ri qiymat: {settings.tz_pr_checker.comment_order}")
+        assert settings.tz_pr_checker.comment_order in valid_orders
 
-        # 7.7 Testcase settings
-        if settings.testcase_generator.max_test_cases == 10:
-            tracker.ok("Default max_test_cases: 10")
-        else:
-            tracker.fail("Default max_test_cases", f"Keldi: {settings.testcase_generator.max_test_cases}")
+    def test_default_max_test_cases(self):
+        from config.app_settings import AppSettings
+        settings = AppSettings()
+        assert settings.testcase_generator.max_test_cases == 10
 
-        if settings.testcase_generator.default_test_types == ['positive', 'negative']:
-            tracker.ok("Default test_types: ['positive', 'negative']")
-        else:
-            tracker.fail("Default test_types", f"Keldi: {settings.testcase_generator.default_test_types}")
+    def test_default_test_types(self):
+        from config.app_settings import AppSettings
+        settings = AppSettings()
+        assert settings.testcase_generator.default_test_types == ['positive', 'negative']
 
-    except Exception as e:
-        tracker.fail("Settings test umumiy", str(e))
+    # --- Resilience test_2: settings conflicts ---
 
-
-# ============================================================================
-# 8-TEST: TESTCASE WEBHOOK HANDLER
-# ============================================================================
-
-def test_8_testcase_webhook():
-    """
-    TEST 8: Testcase webhook handler
-
-    - is_testcase_trigger_status() to'g'ri ishlayaptimi?
-    - check_and_generate_testcases() flow to'g'rimi?
-    - Auto-comment o'chirilganda skip qilishmi?
-    """
-    logger.info("\n" + "=" * 70)
-    logger.info("TEST 8: Testcase webhook handler")
-    logger.info("=" * 70)
-
-    try:
-        from services.webhook.testcase_webhook_handler import is_testcase_trigger_status
+    def test_comment_order_is_valid_value(self):
         from config.app_settings import get_app_settings
-
         settings = get_app_settings(force_reload=True)
+        valid_orders = ["checker_first", "testcase_first", "parallel"]
+        assert settings.tz_pr_checker.comment_order in valid_orders
 
-        # 8.1 Trigger status tekshirish
-        if settings.testcase_generator.auto_comment_enabled:
-            is_trigger = is_testcase_trigger_status("READY TO TEST")
-            if is_trigger:
-                tracker.ok("is_testcase_trigger_status('READY TO TEST') = True")
-            else:
-                tracker.fail("Testcase trigger", "READY TO TEST trigger emas")
-        else:
-            # auto_comment o'chirilgan bo'lsa barcha statuslar False
-            is_trigger = is_testcase_trigger_status("READY TO TEST")
-            if not is_trigger:
-                tracker.ok("is_testcase_trigger_status: auto_comment=False → False qaytaradi")
-            else:
-                tracker.fail("Testcase trigger disabled", "auto_comment=False lekin True qaytardi")
+    def test_return_threshold_range(self):
+        from config.app_settings import get_app_settings
+        settings = get_app_settings(force_reload=True)
+        threshold = settings.tz_pr_checker.return_threshold
+        assert 0 <= threshold <= 100
 
-        # 8.2 Noto'g'ri status
-        is_trigger_wrong = is_testcase_trigger_status("In Progress")
-        if not is_trigger_wrong:
-            tracker.ok("is_testcase_trigger_status('In Progress') = False (to'g'ri)")
-        else:
-            tracker.fail("Testcase wrong trigger", "In Progress True bo'lmasligi kerak")
+    def test_auto_return_threshold_not_zero(self):
+        from config.app_settings import get_app_settings
+        settings = get_app_settings(force_reload=True)
+        auto_return = settings.tz_pr_checker.auto_return_enabled
+        threshold = settings.tz_pr_checker.return_threshold
+        if auto_return:
+            assert threshold > 0, "Auto return enabled lekin threshold 0"
 
-        # 8.3 Bo'sh status
-        is_trigger_empty = is_testcase_trigger_status("")
-        if not is_trigger_empty:
-            tracker.ok("is_testcase_trigger_status('') = False (to'g'ri)")
-        else:
-            tracker.fail("Testcase empty trigger", "Bo'sh string True bo'lmasligi kerak")
+    def test_tz_triggers_not_empty(self):
+        from config.app_settings import get_app_settings
+        settings = get_app_settings(force_reload=True)
+        tz_triggers = settings.tz_pr_checker.get_trigger_statuses()
+        assert len(tz_triggers) > 0
 
-    except Exception as e:
-        tracker.fail("Testcase webhook test umumiy", str(e))
+    def test_tc_triggers_not_empty(self):
+        from config.app_settings import get_app_settings
+        settings = get_app_settings(force_reload=True)
+        tc_triggers = settings.testcase_generator.get_trigger_statuses()
+        assert len(tc_triggers) > 0
+
+    def test_task_wait_timeout_positive(self):
+        from config.app_settings import get_app_settings
+        settings = get_app_settings(force_reload=True)
+        assert settings.queue.task_wait_timeout > 0
+
+    def test_checker_testcase_delay_non_negative(self):
+        from config.app_settings import get_app_settings
+        settings = get_app_settings(force_reload=True)
+        assert settings.queue.checker_testcase_delay >= 0
+
+    def test_blocked_retry_delay_positive(self):
+        from config.app_settings import get_app_settings
+        settings = get_app_settings(force_reload=True)
+        assert settings.queue.blocked_retry_delay > 0
+
+    def test_key_freeze_duration_positive(self):
+        from config.app_settings import get_app_settings
+        settings = get_app_settings(force_reload=True)
+        assert settings.queue.key_freeze_duration > 0
+
+    def test_ai_max_input_tokens_valid_range(self):
+        from config.app_settings import get_app_settings
+        settings = get_app_settings(force_reload=True)
+        assert 0 < settings.queue.ai_max_input_tokens <= 1000000
 
 
 # ============================================================================
-# 9-TEST: BASE SERVICE
+# CLASS 8: TestDebugCapability
 # ============================================================================
 
-def test_9_base_service():
+class TestDebugCapability:
     """
-    TEST 9: BaseService funksionalligini tekshirish
-
-    - Text length calculation
-    - Text truncation
-    - Status updater
-    """
-    logger.info("\n" + "=" * 70)
-    logger.info("TEST 9: BaseService funksionalligi")
-    logger.info("=" * 70)
-
-    try:
-        from core.base_service import BaseService
-
-        service = BaseService()
-
-        # 9.1 Text length calculation
-        test_text = "Hello World" * 100  # 1100 chars
-        info = service._calculate_text_length(test_text)
-
-        if info['chars'] == 1100:
-            tracker.ok("Text length calculation: chars to'g'ri (1100)")
-        else:
-            tracker.fail("Text length chars", f"Kutilgan: 1100, Keldi: {info['chars']}")
-
-        if info['tokens'] == 275:  # 1100 / 4
-            tracker.ok("Text length calculation: tokens to'g'ri (275)")
-        else:
-            tracker.fail("Text length tokens", f"Kutilgan: 275, Keldi: {info['tokens']}")
-
-        if info['within_limit'] == True:  # 275 < 900000
-            tracker.ok("Text length: within_limit=True (limit ichida)")
-        else:
-            tracker.fail("Text length limit", "within_limit False bo'lmasligi kerak")
-
-        # 9.2 Text truncation
-        big_text = "A" * (900000 * 4 + 1000)  # Limitdan katta
-        truncated = service._truncate_text(big_text)
-
-        if len(truncated) < len(big_text):
-            tracker.ok("Text truncation ishlaydi (text qisqartirildi)")
-        else:
-            tracker.fail("Text truncation", "Text qisqartirilmadi")
-
-        if "TRUNCATED" in truncated:
-            tracker.ok("Text truncation: TRUNCATED warning qo'shilgan")
-        else:
-            tracker.fail("Text truncation warning", "TRUNCATED matni topilmadi")
-
-        # 9.3 Kichik text truncation qilinmasligi
-        small_text = "Small text"
-        result = service._truncate_text(small_text)
-        if result == small_text:
-            tracker.ok("Kichik text truncation qilinmaydi")
-        else:
-            tracker.fail("Kichik text truncation", "Kerak emas edi")
-
-        # 9.4 Status updater
-        statuses_collected = []
-        def mock_callback(status_type, message):
-            statuses_collected.append((status_type, message))
-
-        updater = service._create_status_updater(mock_callback)
-        updater("info", "Test message")
-
-        if len(statuses_collected) == 1 and statuses_collected[0] == ("info", "Test message"):
-            tracker.ok("Status updater callback ishlaydi")
-        else:
-            tracker.fail("Status updater", f"Keldi: {statuses_collected}")
-
-        # 9.5 Status updater None callback bilan
-        updater_none = service._create_status_updater(None)
-        try:
-            updater_none("info", "Test")  # Crash qilmasligi kerak
-            tracker.ok("Status updater None callback crash qilmaydi")
-        except Exception as e:
-            tracker.fail("Status updater None callback", str(e))
-
-        # 9.6 MAX_TOKENS default
-        if service.MAX_TOKENS == 900000:
-            tracker.ok("MAX_TOKENS default: 900000")
-        else:
-            tracker.fail("MAX_TOKENS", f"Keldi: {service.MAX_TOKENS}")
-
-    except Exception as e:
-        tracker.fail("BaseService test umumiy", str(e))
-
-
-# ============================================================================
-# 10-TEST: DEBUG QILISH IMKONIYATI
-# ============================================================================
-
-def test_10_debug_capability():
-    """
-    TEST 10: Debug qilish osonligi
-
+    Debug qilish osonligi (test_10)
     - Logging konfiguratsiyasi to'g'rimi?
     - Error message'lar tushunarli mi?
     - Stack trace saqlanadigmi?
     - DB'da error ma'lumot saqlanganmi?
     """
-    logger.info("\n" + "=" * 70)
-    logger.info("TEST 10: Debug qilish imkoniyati")
-    logger.info("=" * 70)
 
-    try:
-        # 10.1 Webhook log faylga yozish sozlamasi
+    def test_webhook_module_logger_exists(self):
         import services.webhook.jira_webhook_handler as webhook_module
-
-        # webhook_module'da logging sozlanganligi
         module_logger = logging.getLogger(webhook_module.__name__)
-        if module_logger:
-            tracker.ok("Webhook module logger mavjud")
-        else:
-            tracker.fail("Webhook logger", "Logger topilmadi")
+        assert module_logger is not None
 
-        # 10.2 Error message'lar tushunarli
+    def test_error_message_contains_task_key(self):
         from services.checkers.tz_pr_checker import TZPRService
-
         service = TZPRService()
         mock_jira = MagicMock()
         mock_jira.get_task_details.return_value = None
         service._jira_client = mock_jira
+        result = service.analyze_task("TEST-DEBUG-001")
+        assert "TEST-DEBUG-001" in result.error_message
 
-        result = service.analyze_task("DEBUG-001")
-
-        # Error message'da task key bor
-        if "DEBUG-001" in result.error_message:
-            tracker.ok("Error message'da task key mavjud (debug oson)")
-        else:
-            tracker.fail("Error message task key", f"Error: {result.error_message}")
-
-        # 10.3 DB da error message saqlanishi
+    def test_db_error_message_saved(self):
         from utils.database.task_db import mark_error, get_task, mark_progressing
+        mark_progressing("TEST-DEBUG-002", "READY TO TEST")
+        mark_error("TEST-DEBUG-002", "Gemini API xatosi: rate limit exceeded")
+        task = get_task("TEST-DEBUG-002")
+        assert task is not None
+        assert task['error_message'] == "Gemini API xatosi: rate limit exceeded"
 
-        mark_progressing("DEBUG-002", "READY TO TEST")
-        mark_error("DEBUG-002", "Gemini API xatosi: rate limit exceeded")
+    def test_service1_error_saved_separately(self):
+        from utils.database.task_db import mark_progressing, set_service1_error, get_task
+        mark_progressing("TEST-DEBUG-003", "READY TO TEST")
+        set_service1_error("TEST-DEBUG-003", "PR fetch timeout: 30s")
+        task = get_task("TEST-DEBUG-003")
+        assert task['service1_error'] == "PR fetch timeout: 30s"
 
-        task = get_task("DEBUG-002")
-        if task and task['error_message'] == "Gemini API xatosi: rate limit exceeded":
-            tracker.ok("DB'da error message to'liq saqlanadi (debug uchun)")
-        else:
-            tracker.fail("DB error message", f"Saqlangan: {task.get('error_message') if task else 'None'}")
+    def test_service2_error_saved_separately(self):
+        from utils.database.task_db import mark_progressing, set_service1_error, set_service2_error, get_task
+        mark_progressing("TEST-DEBUG-004", "READY TO TEST")
+        set_service1_error("TEST-DEBUG-004", "PR fetch timeout: 30s")
+        set_service2_error("TEST-DEBUG-004", "JSON parse xatosi")
+        task = get_task("TEST-DEBUG-004")
+        assert task['service2_error'] == "JSON parse xatosi"
 
-        # 10.4 Service error alohida saqlanishi
-        from utils.database.task_db import set_service1_error, set_service2_error
+    def test_updated_at_timestamp_present(self):
+        from utils.database.task_db import mark_progressing, set_service2_error, get_task, set_service1_error
+        mark_progressing("TEST-DEBUG-005", "READY TO TEST")
+        set_service1_error("TEST-DEBUG-005", "err")
+        set_service2_error("TEST-DEBUG-005", "JSON parse xatosi")
+        task = get_task("TEST-DEBUG-005")
+        assert task.get('updated_at') is not None
 
-        mark_progressing("DEBUG-003", "READY TO TEST")
-        set_service1_error("DEBUG-003", "PR fetch timeout: 30s")
+    def test_last_processed_at_present(self):
+        from utils.database.task_db import mark_progressing, get_task
+        mark_progressing("TEST-DEBUG-006", "READY TO TEST")
+        task = get_task("TEST-DEBUG-006")
+        assert task.get('last_processed_at') is not None
 
-        task = get_task("DEBUG-003")
-        if task['service1_error'] == "PR fetch timeout: 30s":
-            tracker.ok("Service1 error alohida saqlanadi")
-        else:
-            tracker.fail("Service1 error", f"Keldi: {task['service1_error']}")
-
-        # Service2 error
-        set_service2_error("DEBUG-003", "JSON parse xatosi")
-        task = get_task("DEBUG-003")
-        if task['service2_error'] == "JSON parse xatosi":
-            tracker.ok("Service2 error alohida saqlanadi")
-        else:
-            tracker.fail("Service2 error", f"Keldi: {task['service2_error']}")
-
-        # 10.5 Timestamps mavjudligi (qachon xato bo'lganini bilish)
-        if task.get('updated_at'):
-            tracker.ok("Error vaqti updated_at da saqlanadi")
-        else:
-            tracker.fail("Error timestamp", "updated_at yo'q")
-
-        if task.get('last_processed_at'):
-            tracker.ok("last_processed_at debug uchun mavjud")
-        else:
-            tracker.fail("last_processed_at", "Topilmadi")
-
-        # 10.6 TZPRAnalysisResult da warnings field
+    def test_analysis_result_warnings_field(self):
         from services.checkers.tz_pr_checker import TZPRAnalysisResult
-
         error_result = TZPRAnalysisResult(
-            task_key="DEBUG-004",
+            task_key="TEST-DEBUG-007",
             success=False,
             error_message="Test error",
             warnings=["PR topilmadi", "Figma token yo'q"]
         )
+        assert len(error_result.warnings) == 2
 
-        if len(error_result.warnings) == 2:
-            tracker.ok("TZPRAnalysisResult.warnings debug uchun mavjud")
-        else:
-            tracker.fail("Warnings", f"Count: {len(error_result.warnings)}")
-
-        # 10.7 AI retry count tracking
+    def test_analysis_result_ai_retry_count(self):
+        from services.checkers.tz_pr_checker import TZPRAnalysisResult
         success_result = TZPRAnalysisResult(
-            task_key="DEBUG-005",
+            task_key="TEST-DEBUG-008",
             success=True,
             ai_retry_count=2,
             total_prompt_size=50000
         )
+        assert success_result.ai_retry_count == 2
 
-        if success_result.ai_retry_count == 2:
-            tracker.ok("ai_retry_count debug uchun saqlanadi")
-        else:
-            tracker.fail("ai_retry_count", f"Keldi: {success_result.ai_retry_count}")
-
-        if success_result.total_prompt_size == 50000:
-            tracker.ok("total_prompt_size debug uchun saqlanadi")
-        else:
-            tracker.fail("total_prompt_size", f"Keldi: {success_result.total_prompt_size}")
-
-    except Exception as e:
-        tracker.fail("Debug test umumiy", str(e))
-
-
-# ============================================================================
-# 11-TEST: BLOCKED STATUS VA RETRY LOGIKASI (v6.0)
-# ============================================================================
-
-def test_11_blocked_status():
-    """Blocked status, xato klassifikatsiya, retry logikasi testlari"""
-    logger.info("\n" + "=" * 70)
-    logger.info("11-TEST: BLOCKED STATUS VA RETRY LOGIKASI")
-    logger.info("=" * 70)
-
-    try:
-        from utils.database.task_db import (
-            mark_progressing, mark_blocked, set_service1_blocked,
-            set_service2_blocked, set_service1_skip, set_service1_error,
-            mark_returned, get_task, get_blocked_tasks_ready_for_retry,
-            delete_task, upsert_task
+    def test_analysis_result_total_prompt_size(self):
+        from services.checkers.tz_pr_checker import TZPRAnalysisResult
+        success_result = TZPRAnalysisResult(
+            task_key="TEST-DEBUG-009",
+            success=True,
+            ai_retry_count=2,
+            total_prompt_size=50000
         )
+        assert success_result.total_prompt_size == 50000
 
-        # 11.1 Xato klassifikatsiya (inline test — fastapi import shart emas)
-        def _classify_error_test(error_msg: str) -> str:
-            """Xato klassifikatsiya — test ichida local copy"""
-            if not error_msg:
-                return 'unknown'
-            msg_lower = error_msg.lower()
-            pr_keywords = ['pr topilmadi', 'pr not found', 'no pr found']
-            if any(kw in msg_lower for kw in pr_keywords):
-                return 'pr_not_found'
-            ai_timeout_keywords = [
-                'timeout', '429', 'rate limit', 'rate_limit',
-                'overloaded', 'quota', 'resource exhausted',
-                'resource_exhausted', 'too many requests'
-            ]
-            if any(kw in msg_lower for kw in ai_timeout_keywords):
-                return 'ai_timeout'
+
+# ============================================================================
+# CLASS 9: TestBlockedRetry
+# ============================================================================
+
+class TestBlockedRetry:
+    """
+    Blocked status va retry logikasi (test_11, resilience test_3)
+    - Xato klassifikatsiya
+    - mark_blocked, set_service1_blocked, set_service2_blocked
+    - get_blocked_tasks_ready_for_retry
+    - delete_task
+    - DB v3 migration columns
+    - Blocked tasklar bilan key-1 va key-2 ishlashi
+    """
+
+    def _classify_error_local(self, error_msg: str) -> str:
+        """Local copy of error classification logic for testing"""
+        if not error_msg:
             return 'unknown'
+        msg_lower = error_msg.lower()
+        pr_keywords = ['pr topilmadi', 'pr not found', 'no pr found']
+        if any(kw in msg_lower for kw in pr_keywords):
+            return 'pr_not_found'
+        ai_timeout_keywords = [
+            'timeout', '429', 'rate limit', 'rate_limit',
+            'overloaded', 'quota', 'resource exhausted',
+            'resource_exhausted', 'too many requests'
+        ]
+        if any(kw in msg_lower for kw in ai_timeout_keywords):
+            return 'ai_timeout'
+        return 'unknown'
 
-        # PR topilmadi
-        result = _classify_error_test("Bu task uchun PR topilmadi (JIRA va GitHub'da)")
-        if result == 'pr_not_found':
-            tracker.ok("_classify_error: PR topilmadi → 'pr_not_found'")
-        else:
-            tracker.fail("_classify_error PR topilmadi", f"Kutilgan: pr_not_found, Keldi: {result}")
+    def test_classify_error_pr_not_found(self):
+        result = self._classify_error_local("Bu task uchun PR topilmadi (JIRA va GitHub'da)")
+        assert result == 'pr_not_found'
 
-        # AI timeout
-        result = _classify_error_test("AI xatolik: timeout after 60s")
-        if result == 'ai_timeout':
-            tracker.ok("_classify_error: timeout → 'ai_timeout'")
-        else:
-            tracker.fail("_classify_error timeout", f"Kutilgan: ai_timeout, Keldi: {result}")
+    def test_classify_error_timeout(self):
+        result = self._classify_error_local("AI xatolik: timeout after 60s")
+        assert result == 'ai_timeout'
 
-        # 429 rate limit
-        result = _classify_error_test("Error 429: Too Many Requests")
-        if result == 'ai_timeout':
-            tracker.ok("_classify_error: 429 → 'ai_timeout'")
-        else:
-            tracker.fail("_classify_error 429", f"Kutilgan: ai_timeout, Keldi: {result}")
+    def test_classify_error_429(self):
+        result = self._classify_error_local("Error 429: Too Many Requests")
+        assert result == 'ai_timeout'
 
-        # quota exceeded
-        result = _classify_error_test("Resource exhausted: quota exceeded")
-        if result == 'ai_timeout':
-            tracker.ok("_classify_error: quota → 'ai_timeout'")
-        else:
-            tracker.fail("_classify_error quota", f"Kutilgan: ai_timeout, Keldi: {result}")
+    def test_classify_error_quota(self):
+        result = self._classify_error_local("Resource exhausted: quota exceeded")
+        assert result == 'ai_timeout'
 
-        # Unknown error
-        result = _classify_error_test("Some random error")
-        if result == 'unknown':
-            tracker.ok("_classify_error: unknown → 'unknown'")
-        else:
-            tracker.fail("_classify_error unknown", f"Kutilgan: unknown, Keldi: {result}")
+    def test_classify_error_unknown(self):
+        result = self._classify_error_local("Some random error")
+        assert result == 'unknown'
 
-        # Empty error
-        result = _classify_error_test("")
-        if result == 'unknown':
-            tracker.ok("_classify_error: empty → 'unknown'")
-        else:
-            tracker.fail("_classify_error empty", f"Kutilgan: unknown, Keldi: {result}")
+    def test_classify_error_empty(self):
+        result = self._classify_error_local("")
+        assert result == 'unknown'
 
-        # 11.2 mark_blocked funksiyasi
-        task_id = "BLOCKED-001"
+    def test_classify_error_from_webhook_handler(self):
+        from services.webhook.jira_webhook_handler import _classify_error
+        result = _classify_error("PR topilmadi: no PR found")
+        assert result == 'pr_not_found'
+
+    def test_classify_error_timeout_from_handler(self):
+        from services.webhook.jira_webhook_handler import _classify_error
+        result = _classify_error("AI timeout: 429 rate limit exceeded")
+        assert result == 'ai_timeout'
+
+    def test_classify_error_both_keys_from_handler(self):
+        from services.webhook.jira_webhook_handler import _classify_error
+        result = _classify_error("AI xatolik: ikkala key ham ishlamadi")
+        assert result == 'ai_timeout'
+
+    def test_mark_blocked_task_status(self):
+        from utils.database.task_db import mark_progressing, mark_blocked, get_task
+        task_id = "TEST-BLOCKED-001"
         mark_progressing(task_id, "READY TO TEST")
         mark_blocked(task_id, "AI timeout: 60s", retry_minutes=5)
-
         task = get_task(task_id)
-        if task and task['task_status'] == 'blocked':
-            tracker.ok("mark_blocked: task_status = 'blocked'")
-        else:
-            tracker.fail("mark_blocked status", f"Keldi: {task.get('task_status') if task else 'None'}")
+        assert task is not None
+        assert task['task_status'] == 'blocked'
 
-        if task and task.get('block_reason') == 'AI timeout: 60s':
-            tracker.ok("mark_blocked: block_reason saqlandi")
-        else:
-            tracker.fail("mark_blocked reason", f"Keldi: {task.get('block_reason') if task else 'None'}")
+    def test_mark_blocked_reason_saved(self):
+        from utils.database.task_db import mark_progressing, mark_blocked, get_task
+        task_id = "TEST-BLOCKED-002"
+        mark_progressing(task_id, "READY TO TEST")
+        mark_blocked(task_id, "AI timeout: 60s", retry_minutes=5)
+        task = get_task(task_id)
+        assert task.get('block_reason') == 'AI timeout: 60s'
 
-        if task and task.get('blocked_at') is not None:
-            tracker.ok("mark_blocked: blocked_at saqlandi")
-        else:
-            tracker.fail("mark_blocked blocked_at", "None")
+    def test_mark_blocked_blocked_at_saved(self):
+        from utils.database.task_db import mark_progressing, mark_blocked, get_task
+        task_id = "TEST-BLOCKED-003"
+        mark_progressing(task_id, "READY TO TEST")
+        mark_blocked(task_id, "AI timeout: 60s", retry_minutes=5)
+        task = get_task(task_id)
+        assert task.get('blocked_at') is not None
 
-        if task and task.get('blocked_retry_at') is not None:
-            tracker.ok("mark_blocked: blocked_retry_at saqlandi")
-        else:
-            tracker.fail("mark_blocked blocked_retry_at", "None")
+    def test_mark_blocked_retry_at_saved(self):
+        from utils.database.task_db import mark_progressing, mark_blocked, get_task
+        task_id = "TEST-BLOCKED-004"
+        mark_progressing(task_id, "READY TO TEST")
+        mark_blocked(task_id, "AI timeout: 60s", retry_minutes=5)
+        task = get_task(task_id)
+        assert task.get('blocked_retry_at') is not None
 
-        # 11.3 set_service1_blocked
-        task_id = "BLOCKED-002"
+    def test_set_service1_blocked_status(self):
+        from utils.database.task_db import mark_progressing, set_service1_blocked, get_task
+        task_id = "TEST-BLOCKED-005"
         mark_progressing(task_id, "READY TO TEST")
         set_service1_blocked(task_id, "429 rate limit", retry_minutes=3)
-
         task = get_task(task_id)
-        if task and task['service1_status'] == 'blocked':
-            tracker.ok("set_service1_blocked: service1 = 'blocked'")
-        else:
-            tracker.fail("set_service1_blocked", f"Keldi: {task.get('service1_status') if task else 'None'}")
+        assert task['service1_status'] == 'blocked'
 
-        if task and task['service2_status'] == 'pending':
-            tracker.ok("set_service1_blocked: service2 = 'pending' (o'zgarmadi)")
-        else:
-            tracker.fail("set_service1_blocked s2", f"Keldi: {task.get('service2_status') if task else 'None'}")
-
-        if task and task['task_status'] == 'blocked':
-            tracker.ok("set_service1_blocked: task_status = 'blocked'")
-        else:
-            tracker.fail("set_service1_blocked task", f"Keldi: {task.get('task_status') if task else 'None'}")
-
-        # 11.4 set_service2_blocked
-        task_id = "BLOCKED-003"
+    def test_set_service1_blocked_service2_stays_pending(self):
+        from utils.database.task_db import mark_progressing, set_service1_blocked, get_task
+        task_id = "TEST-BLOCKED-006"
         mark_progressing(task_id, "READY TO TEST")
-        from utils.database.task_db import set_service1_done
+        set_service1_blocked(task_id, "429 rate limit", retry_minutes=3)
+        task = get_task(task_id)
+        assert task['service2_status'] == 'pending'
+
+    def test_set_service1_blocked_task_becomes_blocked(self):
+        from utils.database.task_db import mark_progressing, set_service1_blocked, get_task
+        task_id = "TEST-BLOCKED-007"
+        mark_progressing(task_id, "READY TO TEST")
+        set_service1_blocked(task_id, "429 rate limit", retry_minutes=3)
+        task = get_task(task_id)
+        assert task['task_status'] == 'blocked'
+
+    def test_set_service2_blocked_service1_stays_done(self):
+        from utils.database.task_db import (
+            mark_progressing, set_service1_done, set_service2_blocked, get_task
+        )
+        task_id = "TEST-BLOCKED-008"
+        mark_progressing(task_id, "READY TO TEST")
         set_service1_done(task_id, compliance_score=80)
         set_service2_blocked(task_id, "AI overloaded", retry_minutes=5)
-
         task = get_task(task_id)
-        if task and task['service1_status'] == 'done':
-            tracker.ok("set_service2_blocked: service1 = 'done' (o'zgarmadi)")
-        else:
-            tracker.fail("set_service2_blocked s1", f"Keldi: {task.get('service1_status') if task else 'None'}")
+        assert task['service1_status'] == 'done'
 
-        if task and task['service2_status'] == 'blocked':
-            tracker.ok("set_service2_blocked: service2 = 'blocked'")
-        else:
-            tracker.fail("set_service2_blocked s2", f"Keldi: {task.get('service2_status') if task else 'None'}")
+    def test_set_service2_blocked_status(self):
+        from utils.database.task_db import (
+            mark_progressing, set_service1_done, set_service2_blocked, get_task
+        )
+        task_id = "TEST-BLOCKED-009"
+        mark_progressing(task_id, "READY TO TEST")
+        set_service1_done(task_id, compliance_score=80)
+        set_service2_blocked(task_id, "AI overloaded", retry_minutes=5)
+        task = get_task(task_id)
+        assert task['service2_status'] == 'blocked'
 
-        # 11.5 set_service1_skip
-        task_id = "BLOCKED-004"
+    def test_set_service1_skip_status(self):
+        from utils.database.task_db import mark_progressing, set_service1_skip, get_task
+        task_id = "TEST-BLOCKED-010"
         mark_progressing(task_id, "READY TO TEST")
         set_service1_skip(task_id)
-
         task = get_task(task_id)
-        if task and task['service1_status'] == 'skip':
-            tracker.ok("set_service1_skip: service1 = 'skip'")
-        else:
-            tracker.fail("set_service1_skip", f"Keldi: {task.get('service1_status') if task else 'None'}")
+        assert task['service1_status'] == 'skip'
 
-        if task and task.get('compliance_score') == 100:
-            tracker.ok("set_service1_skip: score = 100")
-        else:
-            tracker.fail("set_service1_skip score", f"Keldi: {task.get('compliance_score') if task else 'None'}")
+    def test_set_service1_skip_score_100(self):
+        from utils.database.task_db import mark_progressing, set_service1_skip, get_task
+        task_id = "TEST-BLOCKED-011"
+        mark_progressing(task_id, "READY TO TEST")
+        set_service1_skip(task_id)
+        task = get_task(task_id)
+        assert task.get('compliance_score') == 100
 
-        if task and task.get('skip_detected') == 1:
-            tracker.ok("set_service1_skip: skip_detected = 1")
-        else:
-            tracker.fail("set_service1_skip flag", f"Keldi: {task.get('skip_detected') if task else 'None'}")
+    def test_set_service1_skip_flag(self):
+        from utils.database.task_db import mark_progressing, set_service1_skip, get_task
+        task_id = "TEST-BLOCKED-012"
+        mark_progressing(task_id, "READY TO TEST")
+        set_service1_skip(task_id)
+        task = get_task(task_id)
+        assert task.get('skip_detected') == 1
 
-        # 11.6 set_service1_error with keep_service2_pending
-        task_id = "BLOCKED-005"
+    def test_set_service1_error_keep_service2_pending(self):
+        from utils.database.task_db import mark_progressing, set_service1_error, get_task
+        task_id = "TEST-BLOCKED-013"
         mark_progressing(task_id, "READY TO TEST")
         set_service1_error(task_id, "PR topilmadi", keep_service2_pending=True)
-
         task = get_task(task_id)
-        if task and task['service1_status'] == 'error':
-            tracker.ok("set_service1_error(keep_pending): s1 = 'error'")
-        else:
-            tracker.fail("set_service1_error keep_pending s1", f"Keldi: {task.get('service1_status') if task else 'None'}")
+        assert task['service1_status'] == 'error'
+        assert task['service2_status'] == 'pending'
 
-        if task and task['service2_status'] == 'pending':
-            tracker.ok("set_service1_error(keep_pending): s2 = 'pending'")
-        else:
-            tracker.fail("set_service1_error keep_pending s2", f"Keldi: {task.get('service2_status') if task else 'None'}")
-
-        # 11.7 mark_returned: service1=done, service2=pending
-        task_id = "BLOCKED-006"
+    def test_mark_returned_service2_stays_pending(self):
+        from utils.database.task_db import (
+            mark_progressing, set_service1_done, mark_returned, get_task
+        )
+        task_id = "TEST-BLOCKED-014"
         mark_progressing(task_id, "READY TO TEST")
         set_service1_done(task_id, compliance_score=40)
         mark_returned(task_id)
-
         task = get_task(task_id)
-        if task and task['task_status'] == 'returned':
-            tracker.ok("mark_returned: task = 'returned'")
-        else:
-            tracker.fail("mark_returned task", f"Keldi: {task.get('task_status') if task else 'None'}")
+        assert task['task_status'] == 'returned'
+        assert task['service2_status'] == 'pending'
 
-        if task and task['service2_status'] == 'pending':
-            tracker.ok("mark_returned: s2 = 'pending' (error emas)")
-        else:
-            tracker.fail("mark_returned s2", f"Keldi: {task.get('service2_status') if task else 'None'}")
-
-        # 11.8 get_blocked_tasks_ready_for_retry
-        task_id = "BLOCKED-007"
+    def test_get_blocked_tasks_ready_for_retry(self):
+        from utils.database.task_db import (
+            mark_progressing, mark_blocked, get_blocked_tasks_ready_for_retry, upsert_task
+        )
+        task_id = "TEST-BLOCKED-015"
         mark_progressing(task_id, "READY TO TEST")
-        # retry_at = hozirgi vaqtdan 0 daqiqa = darhol retry
         mark_blocked(task_id, "test blocked", retry_minutes=0)
-
-        # blocked_retry_at ni o'tgan vaqtga qo'yish
-        from datetime import timedelta
         past_time = (datetime.now() - timedelta(minutes=1)).isoformat()
         upsert_task(task_id, {'blocked_retry_at': past_time})
-
         blocked_tasks = get_blocked_tasks_ready_for_retry()
         found = any(t['task_id'] == task_id for t in blocked_tasks)
-        if found:
-            tracker.ok("get_blocked_tasks_ready_for_retry: blocked task topildi")
-        else:
-            tracker.fail("get_blocked_tasks_ready_for_retry", "Blocked task topilmadi")
+        assert found
 
-        # 11.9 delete_task
-        task_id = "BLOCKED-008"
+    def test_delete_task_removes_from_db(self):
+        from utils.database.task_db import mark_progressing, delete_task, get_task
+        task_id = "TEST-BLOCKED-016"
         mark_progressing(task_id, "READY TO TEST")
-
-        task_before = get_task(task_id)
-        if task_before:
-            tracker.ok("delete_task: task oldin mavjud")
-        else:
-            tracker.fail("delete_task before", "Task yaratilmadi")
-
+        assert get_task(task_id) is not None
         result = delete_task(task_id)
-        if result:
-            tracker.ok("delete_task: True qaytardi")
-        else:
-            tracker.fail("delete_task result", "False qaytardi")
+        assert result is True
+        assert get_task(task_id) is None
 
-        task_after = get_task(task_id)
-        if task_after is None:
-            tracker.ok("delete_task: task o'chirildi")
-        else:
-            tracker.fail("delete_task after", "Task hali mavjud")
+    def test_delete_task_returns_false_for_nonexistent(self):
+        from utils.database.task_db import delete_task
+        result = delete_task("TEST-NONEXIST-99999")
+        assert result is False
 
-        # delete non-existent
-        result2 = delete_task("NONEXIST-999")
-        if not result2:
-            tracker.ok("delete_task(nonexist): False qaytardi")
-        else:
-            tracker.fail("delete_task nonexist", "True qaytardi")
-
-        # 11.10 DB migration v3 — ustunlar mavjudligi
+    def test_db_v3_migration_blocked_at_column(self):
         from utils.database.task_db import DB_FILE
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         cursor.execute("PRAGMA table_info(task_processing)")
         columns = [row[1] for row in cursor.fetchall()]
         conn.close()
+        assert 'blocked_at' in columns
 
-        for col in ['blocked_at', 'blocked_retry_at', 'block_reason']:
-            if col in columns:
-                tracker.ok(f"DB v3 migration: '{col}' ustuni mavjud")
-            else:
-                tracker.fail(f"DB v3 migration {col}", f"'{col}' ustuni topilmadi")
-
-    except Exception as e:
-        tracker.fail("Blocked status test umumiy", str(e))
-
-
-# ============================================================================
-# TEST 12: KEY FREEZE + SERVICE2 TZ-ONLY FLOW
-# ============================================================================
-
-def test_12_key_freeze_and_service2_tzonly():
-    """
-    12-TEST: Gemini Key Freeze logikasi va Service2 TZ-only flow
-
-    Tekshiradi:
-    1. GeminiHelper KEY_1 freeze logikasi
-    2. KEY_1 unfreeze (muddat tugashi)
-    3. _classify_error bilan jira_webhook_handler integratsiya
-    """
-    logger.info("\n" + "=" * 70)
-    logger.info("12-TEST: KEY FREEZE VA SERVICE2 TZ-ONLY FLOW")
-    logger.info("=" * 70)
-
-    try:
-        # ============================================================
-        # 12.1: GeminiHelper Key Freeze logikasi (inline test)
-        # ============================================================
-
-        # GeminiHelper ni import qilib bo'lmaydi (google.generativeai kerak),
-        # shuning uchun freeze logikasini inline test qilamiz
-
-        class MockGeminiHelper:
-            """GeminiHelper ning freeze logikasini test qilish uchun mock"""
-            KEY1_FREEZE_DURATION = 600  # 10 daqiqa
-
-            def __init__(self):
-                self.api_key_1 = "test_key_1"
-                self.api_key_2 = "test_key_2"
-                self.current_key = self.api_key_1
-                self.using_fallback = False
-                self._key1_frozen_until = None
-
-            def _is_key1_frozen(self):
-                if self._key1_frozen_until is None:
-                    return False
-                return time.time() < self._key1_frozen_until
-
-            def _freeze_key1(self):
-                self._key1_frozen_until = time.time() + self.KEY1_FREEZE_DURATION
-
-            def _unfreeze_key1(self):
-                self._key1_frozen_until = None
-                self.using_fallback = False
-                self.current_key = self.api_key_1
-
-            def _switch_to_fallback(self):
-                if not self.api_key_2 or self.using_fallback:
-                    return False
-                self.current_key = self.api_key_2
-                self.using_fallback = True
-                return True
-
-        helper = MockGeminiHelper()
-
-        # 12.1.1: Boshlang'ich holat — KEY_1 muzlatilmagan
-        if not helper._is_key1_frozen():
-            tracker.ok("Key freeze: boshlang'ich holat — muzlatilmagan")
-        else:
-            tracker.fail("Key freeze boshlang'ich holat", "KEY_1 muzlatilgan bo'lmasligi kerak")
-
-        # 12.1.2: KEY_1 ni muzlatish
-        helper._freeze_key1()
-        if helper._is_key1_frozen():
-            tracker.ok("Key freeze: KEY_1 muvaffaqiyatli muzlatildi")
-        else:
-            tracker.fail("Key freeze muzlatish", "KEY_1 muzlatilmadi")
-
-        # 12.1.3: Muzlatilgan paytda freeze_until mavjud
-        if helper._key1_frozen_until is not None:
-            tracker.ok("Key freeze: _key1_frozen_until timestamp saqlandi")
-        else:
-            tracker.fail("Key freeze timestamp", "_key1_frozen_until None bo'lmasligi kerak")
-
-        # 12.1.4: KEY_2 ga o'tish
-        if helper._switch_to_fallback():
-            tracker.ok("Key freeze: KEY_2 ga muvaffaqiyatli o'tildi")
-        else:
-            tracker.fail("Key freeze fallback", "KEY_2 ga o'tib bo'lmadi")
-
-        # 12.1.5: current_key = KEY_2
-        if helper.current_key == "test_key_2":
-            tracker.ok("Key freeze: current_key = KEY_2")
-        else:
-            tracker.fail("Key freeze current_key", f"KEY_2 kutilgan, {helper.current_key} olindi")
-
-        # 12.1.6: using_fallback = True
-        if helper.using_fallback:
-            tracker.ok("Key freeze: using_fallback = True")
-        else:
-            tracker.fail("Key freeze using_fallback", "True kutilgan")
-
-        # 12.1.7: Qayta fallback ga o'tib bo'lmaydi (allaqachon fallback da)
-        if not helper._switch_to_fallback():
-            tracker.ok("Key freeze: takroriy fallback bloklandi")
-        else:
-            tracker.fail("Key freeze takroriy fallback", "False kutilgan")
-
-        # 12.1.8: KEY_1 ni unfreeze qilish
-        helper._unfreeze_key1()
-        if not helper._is_key1_frozen():
-            tracker.ok("Key freeze: KEY_1 muvaffaqiyatli qayta faollashtirildi")
-        else:
-            tracker.fail("Key freeze unfreeze", "KEY_1 hali muzlatilgan")
-
-        # 12.1.9: Unfreeze dan keyin primary key ga qaytish
-        if helper.current_key == "test_key_1" and not helper.using_fallback:
-            tracker.ok("Key freeze: unfreeze dan keyin KEY_1 ga qaytdi")
-        else:
-            tracker.fail("Key freeze unfreeze state", f"key={helper.current_key}, fallback={helper.using_fallback}")
-
-        # 12.1.10: Muddat tugashi simulyatsiyasi
-        helper._freeze_key1()
-        helper._key1_frozen_until = time.time() - 1  # O'tgan vaqt
-        if not helper._is_key1_frozen():
-            tracker.ok("Key freeze: muddat tugashi to'g'ri ishlaydi")
-        else:
-            tracker.fail("Key freeze muddat", "Muddat tugagan, lekin hali frozen")
-
-        # 12.1.11: KEY_2 bo'lmaganda freeze xatosi
-        helper2 = MockGeminiHelper()
-        helper2.api_key_2 = None  # KEY_2 yo'q
-        helper2._freeze_key1()
-        if not helper2._switch_to_fallback():
-            tracker.ok("Key freeze: KEY_2 yo'q bo'lganda fallback bloklandi")
-        else:
-            tracker.fail("Key freeze no KEY_2", "Fallback False qaytarishi kerak")
-
-        # ============================================================
-        # 12.2: Service1 error → Service2 pending holat tekshiruvi
-        # ============================================================
-
-        from utils.database.task_db import (
-            mark_progressing, set_service1_error, get_task,
-            set_service2_done, DB_FILE
-        )
-
-        # 12.2.1: Service1 error (PR topilmadi) + keep_service2_pending
-        task_key = "FREEZE-001"
-        mark_progressing(task_key, "READY TO TEST", datetime.now())
-        set_service1_error(task_key, "PR topilmadi: no PR found for branch", keep_service2_pending=True)
-        task_data = get_task(task_key)
-
-        if task_data['service1_status'] == 'error':
-            tracker.ok("S1 error + S2 pending: service1 = 'error'")
-        else:
-            tracker.fail("S1 error state", f"'error' kutilgan, '{task_data['service1_status']}' olindi")
-
-        if task_data['service2_status'] == 'pending':
-            tracker.ok("S1 error + S2 pending: service2 = 'pending' (TZ-only tayyorligi)")
-        else:
-            tracker.fail("S2 pending state", f"'pending' kutilgan, '{task_data['service2_status']}' olindi")
-
-        # 12.2.2: Service1 error (unknown) + service2 HAM error
-        task_key2 = "FREEZE-002"
-        mark_progressing(task_key2, "READY TO TEST", datetime.now())
-        set_service1_error(task_key2, "Unknown critical error")
-        task_data2 = get_task(task_key2)
-
-        if task_data2['service2_status'] == 'error':
-            tracker.ok("S1 error (unknown): service2 = 'error' (to'g'ri)")
-        else:
-            tracker.fail("S2 error state", f"'error' kutilgan, '{task_data2['service2_status']}' olindi")
-
-        # 12.2.3: Service1 error (PR topilmadi) → Service2 done → task completed
-        task_key3 = "FREEZE-003"
-        mark_progressing(task_key3, "READY TO TEST", datetime.now())
-        set_service1_error(task_key3, "PR topilmadi", keep_service2_pending=True)
-        set_service2_done(task_key3)
-        task_data3 = get_task(task_key3)
-
-        if task_data3['task_status'] == 'completed':
-            tracker.ok("S1 error + S2 done: task = 'completed' (TZ-only muvaffaqiyat)")
-        else:
-            tracker.fail("TZ-only task completed", f"'completed' kutilgan, '{task_data3['task_status']}' olindi")
-
-        # ============================================================
-        # 12.3: KEY freeze duration konstantasi tekshiruvi
-        # ============================================================
-
-        if MockGeminiHelper.KEY1_FREEZE_DURATION == 600:
-            tracker.ok("Key freeze duration: 600s (10 daqiqa)")
-        else:
-            tracker.fail("Key freeze duration", f"600 kutilgan, {MockGeminiHelper.KEY1_FREEZE_DURATION} olindi")
-
-    except Exception as e:
-        tracker.fail("Key freeze test umumiy", str(e))
-
-
-# ============================================================================
-# DB CLEANUP (test ma'lumotlarini tozalash)
-# ============================================================================
-
-def cleanup_test_data():
-    """Test ma'lumotlarini DB dan tozalash"""
-    logger.info("\nTest ma'lumotlarini tozalash...")
-    try:
+    def test_db_v3_migration_blocked_retry_at_column(self):
         from utils.database.task_db import DB_FILE
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
-
-        # Test task'larni tozalash (test prefikslari bilan)
-        test_prefixes = [
-            'TEST-%', 'CONC-%', 'DB-TEST-%', 'ORDER-%',
-            'NONEXIST-%', 'NOPR-%', 'AIERR-%', 'NOTFOUND-%',
-            'DEBUG-%', 'TEST-WEBHOOK-%', 'BLOCKED-%', 'FREEZE-%'
-        ]
-
-        for prefix in test_prefixes:
-            cursor.execute("DELETE FROM task_processing WHERE task_id LIKE ?", (prefix,))
-
-        conn.commit()
-        deleted = cursor.rowcount
+        cursor.execute("PRAGMA table_info(task_processing)")
+        columns = [row[1] for row in cursor.fetchall()]
         conn.close()
+        assert 'blocked_retry_at' in columns
 
-        logger.info(f"  {deleted} ta test yozuv tozalandi")
-    except Exception as e:
-        logger.warning(f"  Tozalashda xato: {e}")
+    def test_db_v3_migration_block_reason_column(self):
+        from utils.database.task_db import DB_FILE
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(task_processing)")
+        columns = [row[1] for row in cursor.fetchall()]
+        conn.close()
+        assert 'block_reason' in columns
+
+    # --- Resilience test_3: blocked tasks key1/key2 ---
+
+    def test_service1_blocked_key1_error_simulation(self):
+        from utils.database.task_db import mark_progressing, set_service1_blocked, get_task
+        task_key = "TEST-BLOCKED-KEY1-001"
+        mark_progressing(task_key, "READY TO TEST")
+        set_service1_blocked(task_key, "AI timeout: 429 rate limit exceeded", retry_minutes=1)
+        task = get_task(task_key)
+        assert task is not None
+        assert task['service1_status'] == 'blocked'
+        assert task['task_status'] == 'blocked'
+
+    def test_service2_blocked_key2_error_simulation(self):
+        from utils.database.task_db import (
+            mark_progressing, set_service1_done, set_service2_blocked, get_task
+        )
+        task_key = "TEST-BLOCKED-KEY2-001"
+        mark_progressing(task_key, "READY TO TEST")
+        set_service1_done(task_key, compliance_score=80)
+        set_service2_blocked(task_key, "AI timeout: resource_exhausted quota exceeded", retry_minutes=1)
+        task = get_task(task_key)
+        assert task is not None
+        assert task['service2_status'] == 'blocked'
+
+    def test_both_keys_error_both_blocked(self):
+        from utils.database.task_db import (
+            mark_progressing, set_service1_blocked, set_service2_blocked, get_task
+        )
+        task_key = "TEST-BLOCKED-BOTH-001"
+        mark_progressing(task_key, "READY TO TEST")
+        set_service1_blocked(task_key, "AI timeout: 429 rate limit", retry_minutes=1)
+        set_service2_blocked(task_key, "AI timeout: ikkala key ham ishlamadi", retry_minutes=1)
+        task = get_task(task_key)
+        assert task is not None
+        assert task['service1_status'] == 'blocked'
+        assert task['service2_status'] == 'blocked'
+
+    def test_blocked_retry_at_is_in_future(self):
+        from utils.database.task_db import (
+            mark_progressing, set_service1_blocked, set_service2_blocked, get_task
+        )
+        task_key = "TEST-BLOCKED-FUTURE-001"
+        mark_progressing(task_key, "READY TO TEST")
+        set_service1_blocked(task_key, "AI timeout", retry_minutes=5)
+        set_service2_blocked(task_key, "AI timeout", retry_minutes=5)
+        task = get_task(task_key)
+        assert task.get('blocked_retry_at') is not None
+        retry_at = datetime.fromisoformat(task['blocked_retry_at'])
+        assert retry_at > datetime.now()
+
+    def test_get_blocked_tasks_includes_past_retry(self):
+        from utils.database.task_db import (
+            mark_progressing, set_service1_blocked, set_service2_blocked,
+            get_blocked_tasks_ready_for_retry, upsert_task
+        )
+        task_key1 = "TEST-BLOCKED-PAST-001"
+        task_key2 = "TEST-BLOCKED-PAST-002"
+        mark_progressing(task_key1, "READY TO TEST")
+        set_service1_blocked(task_key1, "AI timeout", retry_minutes=1)
+        mark_progressing(task_key2, "READY TO TEST")
+        set_service2_blocked(task_key2, "AI timeout", retry_minutes=1)
+        past_time = (datetime.now() - timedelta(minutes=1)).isoformat()
+        upsert_task(task_key1, {'blocked_retry_at': past_time})
+        upsert_task(task_key2, {'blocked_retry_at': past_time})
+        blocked_tasks = get_blocked_tasks_ready_for_retry()
+        found_count = sum(1 for t in blocked_tasks if t['task_id'] in [task_key1, task_key2])
+        assert found_count >= 1
 
 
 # ============================================================================
-# MAIN
+# CLASS 10: TestGeminiKeyFallback
 # ============================================================================
 
-if __name__ == "__main__":
-    logger.info("=" * 70)
-    logger.info("JIRA-AI-Analyzer TO'LIQ TIZIM TESTLARI")
-    logger.info("=" * 70)
-    logger.info(f"Vaqt: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    logger.info(f"Python: {sys.version}")
-    logger.info("=" * 70)
+class TestGeminiKeyFallback:
+    """
+    Gemini Key Freeze logikasi va Service2 TZ-only flow (test_12)
+    - GeminiHelper KEY_1 freeze logikasi
+    - KEY_1 unfreeze (muddat tugashi)
+    - Service1 error → Service2 pending holat
+    """
 
-    start_time = time.time()
+    class MockGeminiHelper:
+        KEY1_FREEZE_DURATION = 600
 
-    # Barcha testlarni ishga tushirish
-    test_1_services_individually()
-    test_2_webhook_status_change()
-    test_3_concurrent_tasks()
-    test_4_database_operations()
-    test_5_service_order()
-    test_6_error_handling()
-    test_7_settings()
-    test_8_testcase_webhook()
-    test_9_base_service()
-    test_10_debug_capability()
-    test_11_blocked_status()
-    test_12_key_freeze_and_service2_tzonly()
+        def __init__(self):
+            self.api_key_1 = "test_key_1"
+            self.api_key_2 = "test_key_2"
+            self.current_key = self.api_key_1
+            self.using_fallback = False
+            self._key1_frozen_until = None
 
-    # Tozalash
-    cleanup_test_data()
+        def _is_key1_frozen(self):
+            if self._key1_frozen_until is None:
+                return False
+            return time.time() < self._key1_frozen_until
 
-    elapsed = time.time() - start_time
+        def _freeze_key1(self):
+            self._key1_frozen_until = time.time() + self.KEY1_FREEZE_DURATION
 
-    # Yakuniy natija
-    logger.info("\n")
-    logger.info("=" * 70)
-    logger.info("YAKUNIY NATIJA")
-    logger.info("=" * 70)
+        def _unfreeze_key1(self):
+            self._key1_frozen_until = None
+            self.using_fallback = False
+            self.current_key = self.api_key_1
 
-    all_passed = tracker.summary()
+        def _switch_to_fallback(self):
+            if not self.api_key_2 or self.using_fallback:
+                return False
+            self.current_key = self.api_key_2
+            self.using_fallback = True
+            return True
 
-    logger.info(f"Vaqt: {elapsed:.2f} sekund")
-    logger.info("=" * 70)
+    def test_key1_not_frozen_initially(self):
+        helper = self.MockGeminiHelper()
+        assert not helper._is_key1_frozen()
 
-    # Exit code
-    sys.exit(0 if all_passed else 1)
+    def test_key1_frozen_after_freeze(self):
+        helper = self.MockGeminiHelper()
+        helper._freeze_key1()
+        assert helper._is_key1_frozen()
+
+    def test_frozen_until_timestamp_saved(self):
+        helper = self.MockGeminiHelper()
+        helper._freeze_key1()
+        assert helper._key1_frozen_until is not None
+
+    def test_switch_to_fallback_success(self):
+        helper = self.MockGeminiHelper()
+        helper._freeze_key1()
+        assert helper._switch_to_fallback() is True
+
+    def test_current_key_is_key2_after_fallback(self):
+        helper = self.MockGeminiHelper()
+        helper._freeze_key1()
+        helper._switch_to_fallback()
+        assert helper.current_key == "test_key_2"
+
+    def test_using_fallback_true_after_switch(self):
+        helper = self.MockGeminiHelper()
+        helper._freeze_key1()
+        helper._switch_to_fallback()
+        assert helper.using_fallback is True
+
+    def test_repeated_fallback_blocked(self):
+        helper = self.MockGeminiHelper()
+        helper._freeze_key1()
+        helper._switch_to_fallback()
+        assert helper._switch_to_fallback() is False
+
+    def test_key1_unfrozen_after_unfreeze(self):
+        helper = self.MockGeminiHelper()
+        helper._freeze_key1()
+        helper._unfreeze_key1()
+        assert not helper._is_key1_frozen()
+
+    def test_returns_to_key1_after_unfreeze(self):
+        helper = self.MockGeminiHelper()
+        helper._freeze_key1()
+        helper._switch_to_fallback()
+        helper._unfreeze_key1()
+        assert helper.current_key == "test_key_1"
+        assert helper.using_fallback is False
+
+    def test_freeze_duration_expiry(self):
+        helper = self.MockGeminiHelper()
+        helper._freeze_key1()
+        helper._key1_frozen_until = time.time() - 1  # Expired
+        assert not helper._is_key1_frozen()
+
+    def test_no_key2_blocks_fallback(self):
+        helper = self.MockGeminiHelper()
+        helper.api_key_2 = None
+        helper._freeze_key1()
+        assert helper._switch_to_fallback() is False
+
+    def test_freeze_duration_constant(self):
+        assert self.MockGeminiHelper.KEY1_FREEZE_DURATION == 600
+
+    # --- Service2 TZ-only flow ---
+
+    def test_service1_error_pr_not_found_keeps_s2_pending(self):
+        from utils.database.task_db import mark_progressing, set_service1_error, get_task
+        task_key = "TEST-FREEZE-001"
+        mark_progressing(task_key, "READY TO TEST", datetime.now())
+        set_service1_error(task_key, "PR topilmadi: no PR found for branch", keep_service2_pending=True)
+        task_data = get_task(task_key)
+        assert task_data['service1_status'] == 'error'
+        assert task_data['service2_status'] == 'pending'
+
+    def test_service1_error_unknown_sets_s2_error(self):
+        from utils.database.task_db import mark_progressing, set_service1_error, get_task
+        task_key = "TEST-FREEZE-002"
+        mark_progressing(task_key, "READY TO TEST", datetime.now())
+        set_service1_error(task_key, "Unknown critical error")
+        task_data = get_task(task_key)
+        assert task_data['service2_status'] == 'error'
+
+    def test_service1_error_pr_then_service2_done_completes(self):
+        from utils.database.task_db import (
+            mark_progressing, set_service1_error, set_service2_done, get_task
+        )
+        task_key = "TEST-FREEZE-003"
+        mark_progressing(task_key, "READY TO TEST", datetime.now())
+        set_service1_error(task_key, "PR topilmadi", keep_service2_pending=True)
+        set_service2_done(task_key)
+        task_data = get_task(task_key)
+        assert task_data['task_status'] == 'completed'
+
+
+# ============================================================================
+# CLASS 11: TestDeleteAndWebhook
+# ============================================================================
+
+class TestDeleteAndWebhook:
+    """
+    Webhook handler after delete task (test_webhook_after_delete.py)
+    - Task delete qilingandan keyin webhook kelganda yangi task sifatida qabul qilinishi
+    - Completed task'ga webhook kelganda dublikat logikasi
+    - Real problem scenariosi
+    """
+
+    def _simulate_webhook_handler_logic(self, task_key: str, new_status: str):
+        """Webhook handler logikasini simulatsiya qilish"""
+        from utils.database.task_db import get_task, mark_progressing
+        task_db = get_task(task_key)
+        if not task_db:
+            mark_progressing(task_key, new_status, datetime.now())
+            return "processing"
+        task_status = task_db.get('task_status', 'none')
+        last_jira_status = task_db.get('last_jira_status')
+        if last_jira_status == new_status and task_status in ('progressing', 'completed'):
+            return "ignored_duplicate"
+        if task_status == 'none':
+            mark_progressing(task_key, new_status, datetime.now())
+            return "processing"
+        elif task_status == 'completed':
+            mark_progressing(task_key, new_status, datetime.now())
+            return "processing"
+        elif task_status == 'progressing':
+            return "ignored_progressing"
+        return "unknown"
+
+    def test_webhook_after_manual_delete_should_process(self):
+        from utils.database.task_db import (
+            get_task, delete_task, mark_progressing, mark_completed
+        )
+        task_key = "TEST-WEBHOOK-AFTERDEL-001"
+        status = "Ready to Test"
+        mark_progressing(task_key, status, datetime.now())
+        mark_completed(task_key)
+        task = get_task(task_key)
+        assert task['task_status'] == 'completed'
+        success = delete_task(task_key)
+        assert success
+        task_after_delete = get_task(task_key)
+        assert task_after_delete is None
+        result = self._simulate_webhook_handler_logic(task_key, status)
+        assert result == "processing", f"Webhook should process as new task, got: {result}"
+        delete_task(task_key)
+
+    def test_webhook_completed_task_without_delete_is_duplicate(self):
+        from utils.database.task_db import (
+            get_task, delete_task, mark_progressing, mark_completed
+        )
+        task_key = "TEST-WEBHOOK-AFTERDEL-002"
+        status = "Ready to Test"
+        mark_progressing(task_key, status, datetime.now())
+        mark_completed(task_key)
+        task = get_task(task_key)
+        assert task['task_status'] == 'completed'
+        result = self._simulate_webhook_handler_logic(task_key, status)
+        # Same status + completed = duplicate
+        assert result == "ignored_duplicate"
+        delete_task(task_key)
+
+    def test_real_problem_scenario_delete_then_webhook(self):
+        from utils.database.task_db import (
+            get_task, delete_task, mark_progressing, mark_completed
+        )
+        task_key = "TEST-WEBHOOK-AFTERDEL-003"
+        status = "Ready to Test"
+        mark_progressing(task_key, status, datetime.now())
+        mark_completed(task_key)
+        task_before = get_task(task_key)
+        assert task_before is not None
+        delete_task(task_key)
+        task_after_delete = get_task(task_key)
+        assert task_after_delete is None
+        result = self._simulate_webhook_handler_logic(task_key, status)
+        assert result == "processing", (
+            f"After delete, webhook should process as new task, got: {result}"
+        )
+        delete_task(task_key)
+
+
+# ============================================================================
+# CLASS 12: TestSystemResilience
+# ============================================================================
+
+class TestSystemResilience:
+    """
+    Tizim bardoshliligi (resilience test_5, test_6)
+    - Queue lock mexanizmi
+    - DB concurrent access
+    - Settings reload mexanizmi
+    - Error classification mexanizmi
+    - Task status state machine
+    - Invalid payload handling
+    """
+
+    def test_queue_lock_singleton_resilience(self):
+        from services.webhook.jira_webhook_handler import _get_ai_queue_lock
+        lock1 = _get_ai_queue_lock()
+        lock2 = _get_ai_queue_lock()
+        assert lock1 is lock2
+
+    def test_error_classification_pr_not_found(self):
+        from services.webhook.jira_webhook_handler import _classify_error
+        result = _classify_error("PR topilmadi: no PR found")
+        assert result == 'pr_not_found'
+
+    def test_error_classification_ai_timeout(self):
+        from services.webhook.jira_webhook_handler import _classify_error
+        result = _classify_error("AI timeout: 429 rate limit exceeded")
+        assert result == 'ai_timeout'
+
+    def test_error_classification_both_keys(self):
+        from services.webhook.jira_webhook_handler import _classify_error
+        result = _classify_error("AI xatolik: ikkala key ham ishlamadi")
+        assert result == 'ai_timeout'
+
+    def test_task_state_machine_progressing(self):
+        from utils.database.task_db import mark_progressing, get_task
+        task_key = "TEST-MECH-001"
+        mark_progressing(task_key, "READY TO TEST")
+        task = get_task(task_key)
+        assert task is not None
+        assert task['task_status'] == 'progressing'
+
+    def test_task_state_machine_service1_done(self):
+        from utils.database.task_db import mark_progressing, set_service1_done, get_task
+        task_key = "TEST-MECH-002"
+        mark_progressing(task_key, "READY TO TEST")
+        set_service1_done(task_key, compliance_score=85)
+        task = get_task(task_key)
+        assert task['service1_status'] == 'done'
+
+    def test_task_state_machine_service2_done(self):
+        from utils.database.task_db import (
+            mark_progressing, set_service1_done, set_service2_done, get_task
+        )
+        task_key = "TEST-MECH-003"
+        mark_progressing(task_key, "READY TO TEST")
+        set_service1_done(task_key, compliance_score=85)
+        set_service2_done(task_key)
+        task = get_task(task_key)
+        assert task['service2_status'] == 'done'
+
+    def test_task_state_machine_completed(self):
+        from utils.database.task_db import (
+            mark_progressing, set_service1_done, set_service2_done,
+            mark_completed, get_task
+        )
+        task_key = "TEST-MECH-004"
+        mark_progressing(task_key, "READY TO TEST")
+        set_service1_done(task_key, compliance_score=85)
+        set_service2_done(task_key)
+        mark_completed(task_key)
+        task = get_task(task_key)
+        assert task['task_status'] == 'completed'
+
+    def test_settings_cache_same_object(self):
+        from config.app_settings import get_app_settings
+        settings1 = get_app_settings(force_reload=False)
+        settings2 = get_app_settings(force_reload=False)
+        assert settings1 is settings2
+
+    def test_settings_force_reload_creates_new(self):
+        from config.app_settings import get_app_settings
+        settings1 = get_app_settings(force_reload=False)
+        settings3 = get_app_settings(force_reload=True)
+        assert isinstance(settings3, type(settings1))
+
+    def test_db_concurrent_five_tasks(self):
+        from utils.database.task_db import mark_progressing, get_task, init_db
+        init_db()
+        task_keys = [f"TEST-CONCURRENT-{i}" for i in range(1, 6)]
+        for key in task_keys:
+            mark_progressing(key, "READY TO TEST")
+        for key in task_keys:
+            task = get_task(key)
+            assert task is not None, f"Task {key} topilmadi"
+            assert task['task_status'] == 'progressing'
+
+    def test_webhook_invalid_payload_no_crash_resilience(self):
+        from fastapi.testclient import TestClient
+        from services.webhook.jira_webhook_handler import app
+        client = TestClient(app)
+        response = client.post("/webhook/jira", json={"invalid": "data"})
+        assert response.status_code in [200, 422]
+
+    def test_webhook_empty_payload_no_crash_resilience(self):
+        from fastapi.testclient import TestClient
+        from services.webhook.jira_webhook_handler import app
+        client = TestClient(app)
+        response = client.post("/webhook/jira", json={})
+        assert response.status_code in [200, 422]
+
+    def test_webhook_null_key_resilience(self):
+        from fastapi.testclient import TestClient
+        from services.webhook.jira_webhook_handler import app
+        client = TestClient(app)
+        payload = {
+            "webhookEvent": "jira:issue_updated",
+            "issue": {"key": None},
+            "changelog": {}
+        }
+        response = client.post("/webhook/jira", json=payload)
+        if response.status_code == 200:
+            data = response.json()
+            assert data.get('status') in ['error', 'ignored']
+        else:
+            assert response.status_code in [200, 422]
+
+    def test_health_check_resilience(self):
+        from fastapi.testclient import TestClient
+        from services.webhook.jira_webhook_handler import app
+        client = TestClient(app)
+        response = client.get("/health")
+        assert response.status_code == 200
+
+    def test_nonexistent_task_returns_none_resilience(self):
+        from utils.database.task_db import get_task
+        result = get_task("TEST-NONEXISTENT-RESILIENCE-999")
+        assert result is None

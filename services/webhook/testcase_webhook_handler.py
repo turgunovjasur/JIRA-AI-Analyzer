@@ -68,7 +68,7 @@ async def check_and_generate_testcases(
             use_smart_patch=tc_settings.default_use_smart_patch,
             test_types=tc_settings.default_test_types,
             custom_context="",
-            status_callback=lambda t, m: log.info(f"[{task_key}] {t}: {m}")
+            status_callback=lambda t, m: log.info(f"[{task_key}] {t.upper()} -> {m}")
         )
 
         if not result.success:
@@ -94,7 +94,7 @@ async def check_and_generate_testcases(
 
     except Exception as e:
         error_msg = f"Testcase generation error: {str(e)}"
-        log.error(task_key, "testcase generation", str(e))
+        log.log_error(task_key, "testcase generation", str(e))
         return False, error_msg
 
 
@@ -161,7 +161,7 @@ def _write_testcases_comment(
 
     except Exception as e:
         message = f"Error writing to JIRA: {str(e)}"
-        log.error(task_key, "JIRA comment write", str(e))
+        log.log_error(task_key, "JIRA comment write", str(e))
         return False, message
 
 
@@ -205,7 +205,7 @@ def generate_testcases_sync(
                 check_and_generate_testcases(task_key, new_status)
             )
     except Exception as e:
-        log.error(task_key, "sync execution", str(e))
+        log.log_error(task_key, "sync execution", str(e))
         return False, f"Execution error: {str(e)}"
 
 
