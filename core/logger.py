@@ -9,33 +9,75 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+# Task/so'rov ajratuvchi matn — ketma-ket takrorlanmasligi uchun ishlatiladi
+SEPARATOR_MSG = "-" * 60
+_last_log_was_separator = [False]
+
+
+class _LoggerWrapper:
+    """Real logger atrofidagi wrapper: separator bo'lmagan har qator _last_log_was_separator ni False qiladi."""
+
+    def __init__(self, real_logger):
+        self._real = real_logger
+
+    def _write(self, msg, is_separator: bool):
+        if not is_separator:
+            _last_log_was_separator[0] = False
+
+    def info(self, msg, *args, **kwargs):
+        self._write(msg, msg == SEPARATOR_MSG)
+        return self._real.info(msg, *args, **kwargs)
+
+    def warning(self, msg, *args, **kwargs):
+        self._write(msg, False)
+        return self._real.warning(msg, *args, **kwargs)
+
+    def error(self, msg, *args, **kwargs):
+        self._write(msg, False)
+        return self._real.error(msg, *args, **kwargs)
+
+    def debug(self, msg, *args, **kwargs):
+        self._write(msg, False)
+        return self._real.debug(msg, *args, **kwargs)
+
 
 class ColoredFormatter(logging.Formatter):
-    """CMD-friendly formatter (ranglar ixtiyoriy)"""
+    """CMD-friendly formatter. Logger nomi dinamik: eng uzun nomdan keyin | qoyiladi."""
 
-    # Windows CMD uchun ANSI rang kodlari (ixtiyoriy)
+    _max_name_len = 0  # barcha instance'lar uchun umumiy (ustma-ust tushishi uchun)
+
     COLORS = {
-        'DEBUG': '\033[36m',    # Cyan
-        'INFO': '\033[32m',     # Green
-        'WARNING': '\033[33m',  # Yellow
-        'ERROR': '\033[31m',    # Red
+        'DEBUG': '\033[36m',
+        'INFO': '\033[32m',
+        'WARNING': '\033[33m',
+        'ERROR': '\033[31m',
         'RESET': '\033[0m'
     }
 
     def __init__(self, use_colors: bool = False):
         super().__init__(
-            fmt='%(asctime)s | %(levelname)-8s | %(name)-20s | %(message)s',
+            fmt='%(asctime)-19.19s | %(levelname)-8.8s | %(name)s | %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S'
         )
         self.use_colors = use_colors
 
     def format(self, record):
+        # Dinamik: eng uzun logger nomi — barcha formatter'lar bir xil kenglikdan foydalanadi
+        ColoredFormatter._max_name_len = max(ColoredFormatter._max_name_len, len(record.name))
+        record.name = record.name.ljust(ColoredFormatter._max_name_len)
         if self.use_colors and record.levelname in self.COLORS:
             levelname_color = self.COLORS[record.levelname]
             reset = self.COLORS['RESET']
             record.levelname = f"{levelname_color}{record.levelname}{reset}"
-
         return super().format(record)
+
+
+class _FlushingFileHandler(logging.FileHandler):
+    """Har bir log yozuvidan keyin faylni flush qiladi — RDP/background CMD da ham data/webhook.log darhol yangilanadi."""
+
+    def emit(self, record):
+        super().emit(record)
+        self.flush()
 
 
 class StructuredLogger:
@@ -50,27 +92,28 @@ class StructuredLogger:
     """
 
     def __init__(self, name: str):
-        self.logger = logging.getLogger(name)
+        self._real_logger = logging.getLogger(name)
         self._setup_handlers()
+        self.logger = _LoggerWrapper(self._real_logger)
 
     def _setup_handlers(self):
         """Logger handler'larni sozlash"""
-        if not self.logger.handlers:
-            self.logger.setLevel(logging.INFO)
+        if not self._real_logger.handlers:
+            self._real_logger.setLevel(logging.INFO)
 
             # Console handler (rang bilan, ixtiyoriy)
             console = logging.StreamHandler(sys.stdout)
             console.setFormatter(ColoredFormatter(use_colors=False))  # Windows uchun False
 
-            # File handler (rang yo'q) — absolut yo'l, istalgan joydan ishga tushsa ham to'g'ri
+            # File handler (rang yo'q) — har yozuvdan keyin flush (RDP/background CMD da ham fayl yangilansin)
             _project_root = Path(__file__).parent.parent
             log_file = _project_root / "data" / "webhook.log"
             log_file.parent.mkdir(exist_ok=True)
-            file_handler = logging.FileHandler(log_file, encoding='utf-8')
+            file_handler = _FlushingFileHandler(log_file, encoding='utf-8')
             file_handler.setFormatter(ColoredFormatter(use_colors=False))
 
-            self.logger.addHandler(console)
-            self.logger.addHandler(file_handler)
+            self._real_logger.addHandler(console)
+            self._real_logger.addHandler(file_handler)
 
     # === WEBHOOK LIFECYCLE ===
 
@@ -152,8 +195,12 @@ class StructuredLogger:
         self.logger.info(f"[{task_key}] AI-ANALYZE -> model={model} | key={key}")
 
     def ai_ready(self, model: str, key_count: int):
-        """AI tayyor"""
+        """AI tayyor — CMD ishga tushganda 1 marta (system start da)"""
         self.logger.info(f"AI-READY -> model={model} | keys={key_count}")
+
+    def ai_request(self, key: str, model: str):
+        """Har bir task oldida: qaysi key va model bilan so'rov yuborilishi"""
+        self.logger.info(f"AI-REQUEST -> key={key} | model={model}")
 
     def ai_rate_limit(self, key_name: str, retry_after: int):
         """AI rate limit"""
@@ -253,8 +300,11 @@ class StructuredLogger:
         self.logger.info(f"SETTINGS      {settings_str}")
 
     def request_separator(self):
-        """So'rov ajratuvchi"""
-        self.logger.info("-" * 60)
+        """So'rov/task ajratuvchi. Oldingi qator ham separator bo'lsa, qayta yozilmaydi."""
+        if _last_log_was_separator[0]:
+            return
+        self.logger.info(SEPARATOR_MSG)
+        _last_log_was_separator[0] = True
 
     # === GENERIC LOGGING ===
 

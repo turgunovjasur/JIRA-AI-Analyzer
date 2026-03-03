@@ -186,7 +186,7 @@ class TZHelper:
         change_keywords = [
             # O'zbekcha
             'ozgardi', 'ozgarsin', 'yangilandi', 'qoshilsin', 'qoshimcha',
-            'orniga', 'kerak emas', 'yangi', 'endi',
+            'orniga', 'kerak emas', 'yangi', 'endi', 'gaplashdik', 'kelishdik', 'keyin qiladigan boldik', 'keyingi sprintga'
             # Ruscha
             'изменилось', 'изменить', 'обновлено', 'добавить', 'дополнительно',
             'вместо', 'не нужно', 'новый', 'теперь',

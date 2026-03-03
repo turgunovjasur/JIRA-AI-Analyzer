@@ -162,6 +162,8 @@ def get_adf_formatter() -> JiraADFFormatter:
 
 # Blocked retry scheduler uchun global task (startup'da yaratiladi)
 _blocked_retry_task: Optional[asyncio.Task] = None
+# Oxirgi log qilingan task — yangi task boshida separator uchun
+_last_task_key: Optional[str] = None
 
 
 # ============================================================================
@@ -231,6 +233,12 @@ async def jira_webhook(request: Request, background_tasks: BackgroundTasks):
             log.warning("No task key found")
             return {"status": "error", "reason": "no task key"}
 
+        # Task o'zgarganda ajratuvchi — har bir yangi task (7235, 7359, ...) alohida blok
+        global _last_task_key
+        if _last_task_key is not None and _last_task_key != task_key:
+            log.request_separator()
+        _last_task_key = task_key
+
         # Changelog'dan status o'zgarishini topish (case-insensitive)
         changelog = body.get('changelog', {})
         items = changelog.get('items', [])
@@ -261,7 +269,8 @@ async def jira_webhook(request: Request, background_tasks: BackgroundTasks):
                 "reason": f"status is '{new_status}', not in {target_statuses}"
             }
 
-        log.info("-" * 60)
+        log.request_separator()
+        log.ai_request("KEY_1", os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
         log.info(f"[{task_key}] STATUS -> {old_status} => {new_status} | tahlil boshlandi")
 
         # DB holat boshqaruvi (state machine)
@@ -599,6 +608,9 @@ async def startup_event():
         auto_return=settings.auto_return_enabled,
         threshold=settings.return_threshold
     )
+    ai_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    ai_keys = 2 if os.getenv("GOOGLE_API_KEY_2") else 1
+    log.ai_ready(ai_model, ai_keys)
     log.info(f"TRIGGER       {settings.trigger_status}")
     log.info(f"RETRY-DELAY   {app_settings.queue.blocked_retry_delay} min")
 

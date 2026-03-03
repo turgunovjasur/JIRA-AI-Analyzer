@@ -66,9 +66,7 @@ class GeminiHelper:
         self.request_count = 0
         self.last_request_time = 0
 
-        # Log
-        key_count = 2 if self.api_key_2 else 1
-        log.ai_ready(self.model_name, key_count)
+        # AI-READY (keys soni) faqat system start da log qilinadi (webhook handler)
 
     def _rate_limit(self):
         """Rate limiting: max 10 req/min (settings dan)"""
@@ -157,9 +155,7 @@ class GeminiHelper:
             max_output_tokens=max_output_tokens,
         )
 
-        # Qaysi key bilan urinilayotganini log qilish
         active_key = "KEY_2" if (self.using_fallback or self._is_key1_frozen()) else "KEY_1"
-        log.info(f"AI-REQUEST -> key={active_key} | model={self.model_name}")
 
         # === 1. KEY_1 muzlatilgan — faqat KEY_2 bilan ishlash ===
         if self._is_key1_frozen():
@@ -175,10 +171,9 @@ class GeminiHelper:
 
             try:
                 response = self.model.generate_content(prompt, generation_config=generation_config)
-                log.info(f"AI-KEY -> KEY_2 success")
                 return response.text
             except Exception as e:
-                log.warning(f"AI-KEY -> KEY_2 error (KEY_1 frozen): {e}")
+                log.warning(f"AI -> model={self.model_name} | key={active_key} | error: {e}")
                 raise RuntimeError(
                     f"KEY_2 failed (KEY_1 frozen): {str(e)}"
                 ) from e
@@ -194,27 +189,23 @@ class GeminiHelper:
 
         try:
             response = self.model.generate_content(prompt, generation_config=generation_config)
-            log.info("AI-KEY -> KEY_1 success")
             return response.text
         except Exception as e:
             # === 4. KEY_1 xato — muzlatish va KEY_2 ga o'tish ===
             if self._is_fallback_error(e):
-                log.warning(f"AI-KEY -> KEY_1 error: {e}")
+                log.warning(f"AI -> model={self.model_name} | key=KEY_1 | error: {e}")
 
                 # KEY_1 ni muzlatish
                 self._freeze_key1()
 
                 if self._switch_to_fallback():
-                    log.info("AI-KEY -> retrying with KEY_2")
-
                     # KEY_2 bilan qayta urinish
                     self._rate_limit()
                     try:
                         response = self.model.generate_content(prompt, generation_config=generation_config)
-                        log.info("AI-KEY -> KEY_2 success")
                         return response.text
                     except Exception as e2:
-                        log.warning(f"AI-KEY -> KEY_2 also failed: {e2}")
+                        log.warning(f"AI -> model={self.model_name} | key=KEY_2 | error: {e2}")
                         raise RuntimeError(
                             f"Gemini API error (both keys failed): {str(e2)}"
                         ) from e2
