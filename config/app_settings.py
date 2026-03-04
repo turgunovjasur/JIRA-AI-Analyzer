@@ -181,6 +181,11 @@ class TZPRCheckerSettings:
     # AI_SKIP tekshirish uchun nechta oxirgi comment ko'riladi
     max_skip_check_comments: int = 5   # DEFAULT 5 ta comment
 
+    # ━━━ AI ga ma'lumotlar tartibi (darajasi) ━━━
+    # Sozlamadagi tartib bo'yicha AI promtiga bo'limlar qo'shiladi. Servis SHU tartibga qat'iy amal qiladi.
+    # Bo'limlar: tz, comments, figma, code
+    ai_data_section_order: List[str] = field(default_factory=lambda: ["tz", "comments", "figma", "code"])
+
     # ━━━ PR Fayl Cheklovlari ━━━
     # analyze_task() da max fayl soni (full strategiya)
     pr_max_files: int = 3              # DEFAULT: 3 ta fayl ko'rsatiladi
@@ -188,6 +193,11 @@ class TZPRCheckerSettings:
     dev_comments_max: int = 5          # DEFAULT: oxirgi 5 ta comment
 
     # Yordam matnlari
+    ai_data_section_order_help: str = (
+        "AI ga ma'lumotlar qaysi tartibda berilishi. Birinchi o'rinda eng ustun. "
+        "TZ = texnik topshiriq, comments = developer izohlari, figma = dizayn, code = kod o'zgarishlari. "
+        "Sozlamaga AI qat'iy amal qiladi."
+    )
     pr_max_files_help: str = (
         "AI ga yuboriladigan maksimal PR fayl soni. "
         "Token tejash uchun - ko'p fayl = ko'p token. 3 tavsiya etiladi."
@@ -227,6 +237,8 @@ class TZPRCheckerSettings:
         "5 = oxirgi 5 ta comment. Oshirsangiz eski commentlardan ham topadi."
     )
 
+    _AI_DATA_ORDER_ALLOWED = ("tz", "comments", "figma", "code")
+
     def __post_init__(self):
         """Sozlamalar validatsiyasi — noto'g'ri qiymatlar exception chiqaradi"""
         if not 0 <= self.return_threshold <= 100:
@@ -242,6 +254,18 @@ class TZPRCheckerSettings:
             raise ValueError(
                 f"max_skip_check_comments {self.max_skip_check_comments} noto'g'ri: 1 dan katta bo'lishi kerak"
             )
+        # ai_data_section_order: faqat ruxsat etilgan qiymatlar, takrorlanishsiz
+        order = list(dict.fromkeys(self.ai_data_section_order or []))
+        invalid = [x for x in order if x not in self._AI_DATA_ORDER_ALLOWED]
+        if invalid:
+            raise ValueError(
+                f"ai_data_section_order noto'g'ri: {invalid}. Ruxsat: {list(self._AI_DATA_ORDER_ALLOWED)}"
+            )
+        if "tz" not in order or "code" not in order:
+            raise ValueError(
+                "ai_data_section_order da 'tz' va 'code' bo'lishi shart"
+            )
+        self.ai_data_section_order = order if order else ["tz", "comments", "figma", "code"]
 
     def get_trigger_statuses(self) -> List[str]:
         """Barcha trigger statuslarni qaytarish"""
@@ -269,6 +293,15 @@ class TestcaseGeneratorSettings:
     # AI javob uchun maksimal token soni (truncation oldini olish uchun)
     ai_max_output_tokens: int = 16384
 
+    # ━━━ TZ yo'q / faqat summary ━━━
+    # Description shu belgidan qisqa bo'lsa "TZ yo'q" deb hisoblanadi — test case'lar summary + comment + kod asosida yaratiladi
+    min_tz_description_chars: int = 50
+
+    # ━━━ AI ga ma'lumotlar tartibi (darajasi) ━━━
+    # Sozlamadagi tartib bo'yicha AI promtiga bo'limlar qo'shiladi. Servis SHU tartibga qat'iy amal qiladi.
+    # Bo'limlar: tz, comments, custom_context, code
+    ai_data_section_order: List[str] = field(default_factory=lambda: ["tz", "comments", "custom_context", "code"])
+
     # ━━━ Comment O'qish ━━━
     read_comments_enabled: bool = True
     max_comments_to_read: int = 0  # 0 = barcha
@@ -294,6 +327,15 @@ class TestcaseGeneratorSettings:
     test_types_help: str = "Default test turlari: positive (asosiy), negative (xato holatlari)"
     max_test_cases_help: str = "AI yaratadigan maksimal test case soni (1-30)"
     ai_max_output_tokens_help: str = "AI javob uchun maksimal token soni (16384 tavsiya etiladi)"
+    min_tz_description_chars_help: str = (
+        "Task description shu belgidan qisqa bo'lsa testcase uchun yetarli ma'lumot yo'q deb hisoblanadi va Servis-2 to'xtatiladi. "
+        "50 = faqat summary/bo'sh description bo'lsa test case yaratilmaydi."
+    )
+    ai_data_section_order_help: str = (
+        "AI ga ma'lumotlar qaysi tartibda berilishi. Birinchi o'rinda eng ustun. "
+        "tz = TZ, comments = comment'lar, custom_context = qo'shimcha kontekst, code = kod statistikasi. "
+        "Sozlamaga AI qat'iy amal qiladi."
+    )
     read_comments_help: str = "JIRA task comment'larini AI ga yuborish. O'chirilsa faqat TZ asosida ishlaydi"
     max_comments_help: str = "AI ga yuborilgan comment'lar soni. 0 = barcha comment'lar"
     auto_comment_help: str = "Task Ready to Test statusga tushganda avtomatik test case yaratib JIRA ga yozish"
@@ -302,11 +344,27 @@ class TestcaseGeneratorSettings:
     use_adf_help: str = "ADF formatda dropdown panellar bilan chiroyli comment yozish"
     testcase_footer_help: str = "Test case comment'ning pastki qismida ko'rinadigan matn"
 
+    _AI_DATA_ORDER_ALLOWED = ("tz", "comments", "custom_context", "code")
+
     def __post_init__(self):
         """Sozlamalar validatsiyasi — noto'g'ri qiymatlar exception chiqaradi"""
         if self.max_test_cases < 1 or self.max_test_cases > 50:
             raise ValueError(
                 f"max_test_cases {self.max_test_cases} noto'g'ri: 1-50 oralig'ida bo'lishi kerak"
+            )
+        # ai_data_section_order: faqat ruxsat etilgan qiymatlar
+        order = list(dict.fromkeys(self.ai_data_section_order or []))
+        invalid = [x for x in order if x not in self._AI_DATA_ORDER_ALLOWED]
+        if invalid:
+            raise ValueError(
+                f"ai_data_section_order noto'g'ri: {invalid}. Ruxsat: {list(self._AI_DATA_ORDER_ALLOWED)}"
+            )
+        if "tz" not in order:
+            raise ValueError("ai_data_section_order da 'tz' bo'lishi shart")
+        self.ai_data_section_order = order if order else ["tz", "comments", "custom_context", "code"]
+        if self.min_tz_description_chars < 0 or self.min_tz_description_chars > 1000:
+            raise ValueError(
+                f"min_tz_description_chars {self.min_tz_description_chars} noto'g'ri: 0-1000 oralig'ida bo'lishi kerak"
             )
 
     def get_trigger_statuses(self) -> List[str]:

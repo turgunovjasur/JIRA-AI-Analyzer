@@ -59,7 +59,7 @@ class TestCaseGenerationResult:
     success: bool = True
     error_message: str = ""
     warnings: List[str] = field(default_factory=list)
-    custom_context_used: bool = False  # ✅ NEW
+    custom_context_used: bool = False
 
 
 class TestCaseGeneratorService(BaseService):
@@ -92,7 +92,7 @@ class TestCaseGeneratorService(BaseService):
             include_pr: bool = True,
             use_smart_patch: bool = True,
             test_types: List[str] = None,
-            custom_context: str = "",  # ✅ NEW PARAMETER
+            custom_context: str = "",
             status_callback: Optional[Callable[[str, str], None]] = None
     ) -> TestCaseGenerationResult:
         """
@@ -219,9 +219,23 @@ class TestCaseGeneratorService(BaseService):
                 pr_info
             )
 
-            # 5. AI bilan test case'lar yaratish (WITH CUSTOM CONTEXT)
-            from config.app_settings import get_app_settings
-            max_test_cases = get_app_settings().testcase_generator.max_test_cases
+            # 5. TZ yetarli emas bo'lsa — Servis-2 to'xtatiladi (testcase uchun yetarli ma'lumot yo'q)
+            tc_settings = get_app_settings().testcase_generator
+            max_test_cases = tc_settings.max_test_cases
+            min_tz_chars = getattr(tc_settings, 'min_tz_description_chars', 50)
+            if self._is_tz_absent_or_minimal(task_details, min_tz_chars):
+                msg = (
+                    "Testcase uchun yetarli ma'lumot yo'q. "
+                    f"(min: {min_tz_chars} belgi). Servis-2 to'xtatildi."
+                )
+                return TestCaseGenerationResult(
+                    task_key=task_key,
+                    task_summary=task_details['summary'],
+                    task_full_details=task_details,
+                    task_overview=TZHelper.create_task_overview(task_details, comment_analysis, pr_info),
+                    success=False,
+                    error_message=msg
+                )
 
             ai_result = self._generate_with_ai(
                 task_key=task_key,
@@ -230,7 +244,7 @@ class TestCaseGeneratorService(BaseService):
                 comment_analysis=comment_analysis,
                 pr_info=pr_info,
                 test_types=test_types,
-                custom_context=custom_context,  # ✅ NEW
+                custom_context=custom_context,
                 max_test_cases=max_test_cases
             )
 
@@ -277,7 +291,7 @@ class TestCaseGeneratorService(BaseService):
                 by_priority=by_priority,
                 success=True,
                 warnings=warnings,
-                custom_context_used=bool(custom_context)  # ✅ NEW
+                custom_context_used=bool(custom_context)
             )
 
         except Exception as e:
@@ -290,6 +304,15 @@ class TestCaseGeneratorService(BaseService):
                 error_message=f"Error: {str(e)}"
             )
 
+    def _is_tz_absent_or_minimal(self, task_details: Dict, min_description_chars: int = 50) -> bool:
+        """
+        Taskda batafsil TZ yo'qmi yoki faqat summary bormi aniqlash.
+
+        Description bo'sh yoki min_description_chars dan qisqa bo'lsa True.
+        """
+        description = task_details.get('description') or ''
+        return len(description.strip()) < min_description_chars
+
     def _generate_with_ai(
             self,
             task_key: str,
@@ -298,7 +321,7 @@ class TestCaseGeneratorService(BaseService):
             comment_analysis: Dict,
             pr_info: Optional[Dict],
             test_types: List[str],
-            custom_context: str = "",  # ✅ NEW
+            custom_context: str = "",
             max_test_cases: int = 10
     ) -> Dict:
         """
@@ -342,7 +365,7 @@ class TestCaseGeneratorService(BaseService):
                     ``{'success': False, 'error': 'AI xatosi: <sabab>'}``
         """
         try:
-            # Prompt yaratish (WITH CUSTOM CONTEXT)
+            # Prompt yaratish (TZ yo'q bo'lsa maxsus ko'rsatma qo'shiladi)
             prompt = self._create_test_case_prompt(
                 task_key=task_key,
                 task_details=task_details,
@@ -350,7 +373,7 @@ class TestCaseGeneratorService(BaseService):
                 comment_analysis=comment_analysis,
                 pr_info=pr_info,
                 test_types=test_types,
-                custom_context=custom_context,  # ✅ NEW
+                custom_context=custom_context,
                 max_test_cases=max_test_cases
             )
 
@@ -385,7 +408,7 @@ class TestCaseGeneratorService(BaseService):
             comment_analysis: Dict,
             pr_info: Optional[Dict],
             test_types: List[str],
-            custom_context: str = "",  # ✅ NEW
+            custom_context: str = "",
             max_test_cases: int = 10
     ) -> str:
         """
@@ -441,6 +464,117 @@ class TestCaseGeneratorService(BaseService):
 
         types_text = ', '.join([f"{t} ({test_types_desc.get(t, t)})" for t in test_types])
 
+        # Bo'limlar matni (sozlamadagi tartib bo'yicha — servis qat'iy amal qiladi)
+        tz_block = f"""
+═══════════════════════════════════════════════════════════════════════════════
+📝 TEXNIK TOPSHIRIQ (TZ)
+═══════════════════════════════════════════════════════════════════════════════
+
+{tz_content}
+"""
+        comments_block = ""
+        if comment_analysis['has_changes']:
+            comments_block = f"""
+═══════════════════════════════════════════════════════════════════════════════
+⚠️ MUHIM: COMMENT'LARDA O'ZGARISHLAR ANIQLANDI
+═══════════════════════════════════════════════════════════════════════════════
+
+{comment_analysis['summary']}
+
+Comment'lardagi o'zgarishlar test case'larda ALBATTA hisobga olinishi kerak!
+"""
+        custom_context_block = ""
+        if custom_context:
+            custom_context_block = f"""
+═══════════════════════════════════════════════════════════════════════════════
+💬 QO'SHIMCHA MA'LUMOTLAR (FOYDALANUVCHIDAN)
+═══════════════════════════════════════════════════════════════════════════════
+
+{custom_context}
+
+⚠️ **MUHIM:** Yuqoridagi qo'shimcha ma'lumotlarni test case'larda ALBATTA ishlatish kerak!
+- Product nomlari, narxlar va boshqa ma'lumotlarni test datalarida ishlating
+- Chegirmalar, limitlar va maxsus shartlarni test scenario'larda qamrab oling
+- Foydalanuvchi aytgan barcha narsalarni hisobga oling
+"""
+        code_block = ""
+        if pr_info:
+            # Kod o'zgarishlari bo'limi: servis-1 dagi kabi, ammo testcase uchun qisqaroq format
+            from config.app_settings import get_app_settings
+            tc_settings = get_app_settings().testcase_generator
+            max_files = getattr(tc_settings, "pr_max_files", None)
+
+            lines = []
+            lines.append("📊 PR Summary:")
+            lines.append(f"   PR Count: {pr_info['pr_count']}")
+            lines.append(f"   Files Changed: {pr_info['files_changed']}")
+            lines.append(f"   Additions: +{pr_info['total_additions']}")
+            lines.append(f"   Deletions: -{pr_info['total_deletions']}")
+            lines.append("")
+
+            files_to_show = pr_info["files_changed"]
+            if max_files:
+                files_to_show = min(files_to_show, max_files)
+
+            shown_files = 0
+            for pr in pr_info["pr_details"]:
+                lines.append(f"🔗 PR: {pr['title']}")
+                lines.append(f"   URL: {pr['url']}")
+                lines.append(f"   Files: {len(pr['files'])}")
+                lines.append("")
+
+                for file_data in pr["files"]:
+                    if shown_files >= files_to_show:
+                        break
+
+                    lines.append(f"📄 File: {file_data.get('filename', '')}")
+                    lines.append(f"   Status: {file_data.get('status', '')}")
+                    lines.append(f"   Changes: +{file_data.get('additions', 0)} -{file_data.get('deletions', 0)}")
+
+                    smart_ctx = file_data.get("smart_context")
+                    patch = file_data.get("patch")
+                    if smart_ctx:
+                        lines.append("")
+                        lines.append("   Smart Patch (kod konteksti):")
+                        lines.append(smart_ctx)
+                    elif patch:
+                        lines.append("")
+                        lines.append("   Patch:")
+                        lines.append(patch)
+
+                    lines.append("")
+                    shown_files += 1
+                    if shown_files >= files_to_show:
+                        break
+
+            lines_text = "\n".join(lines)
+            code_block = (
+                "═══════════════════════════════════════════════════════════════════════════════\n"
+                "💻 KOD O'ZGARISHLARI (PR dan olingan)\n"
+                "═══════════════════════════════════════════════════════════════════════════════\n\n"
+                f"{lines_text}\n\n"
+                "Test case'larni yozayotganda yuqoridagi kod o'zgarishlaridagi har bir funksionalni qamrab ol.\n"
+            )
+
+        from config.app_settings import get_app_settings
+        order = get_app_settings().testcase_generator.ai_data_section_order or [
+            "tz", "comments", "custom_context", "code"
+        ]
+        sections_map = {
+            "tz": tz_block,
+            "comments": comments_block,
+            "custom_context": custom_context_block,
+            "code": code_block,
+        }
+        data_sections_body_parts = []
+        for key in order:
+            if key not in sections_map:
+                continue
+            part = (sections_map[key] or "").strip()
+            if part:
+                data_sections_body_parts.append(part)
+        data_sections_body = "\n".join(data_sections_body_parts)
+
         prompt = f"""
 **VAZIFA:** JIRA task uchun QA test case'lar yaratish (O'ZBEK TILIDA)
 
@@ -453,64 +587,14 @@ class TestCaseGeneratorService(BaseService):
 **Type:** {task_details['type']}
 **Priority:** {task_details['priority']}
 
-═══════════════════════════════════════════════════════════════════════════════
-📝 TEXNIK TOPSHIRIQ (TZ)
-═══════════════════════════════════════════════════════════════════════════════
+{data_sections_body}
 
-{tz_content}
-
-"""
-
-        # ✅ NEW: CUSTOM CONTEXT SECTION
-        if custom_context:
-            prompt += f"""
-═══════════════════════════════════════════════════════════════════════════════
-💬 QO'SHIMCHA MA'LUMOTLAR (FOYDALANUVCHIDAN)
-═══════════════════════════════════════════════════════════════════════════════
-
-{custom_context}
-
-⚠️ **MUHIM:** Yuqoridagi qo'shimcha ma'lumotlarni test case'larda ALBATTA ishlatish kerak!
-- Product nomlari, narxlar va boshqa ma'lumotlarni test datalarida ishlating
-- Chegirmalar, limitlar va maxsus shartlarni test scenario'larda qamrab oling
-- Foydalanuvchi aytgan barcha narsalarni hisobga oling
-
-"""
-
-        # Comment analysis
-        if comment_analysis['has_changes']:
-            prompt += f"""
-═══════════════════════════════════════════════════════════════════════════════
-⚠️ MUHIM: COMMENT'LARDA O'ZGARISHLAR ANIQLANDI
-═══════════════════════════════════════════════════════════════════════════════
-
-{comment_analysis['summary']}
-
-Comment'lardagi o'zgarishlar test case'larda ALBATTA hisobga olinishi kerak!
-
-"""
-
-        # PR info
-        if pr_info:
-            prompt += f"""
-═══════════════════════════════════════════════════════════════════════════════
-💻 KOD O'ZGARISHLARI
-═══════════════════════════════════════════════════════════════════════════════
-
-- PR'lar: {pr_info['pr_count']} ta
-- Fayllar: {pr_info['files_changed']} ta
-- Qo'shilgan: +{pr_info['total_additions']} qator
-- O'chirilgan: -{pr_info['total_deletions']} qator
-
-Kod o'zgarishlarini hisobga olib test case'lar yarating.
-
-"""
-
-        prompt += f"""
 ═══════════════════════════════════════════════════════════════════════════════
 🎯 TEST CASE TALABLARI
 ═══════════════════════════════════════════════════════════════════════════════
 
+"""
+        prompt += f"""
 **Test turlari:** {types_text}
 
 **Har bir test case uchun:**

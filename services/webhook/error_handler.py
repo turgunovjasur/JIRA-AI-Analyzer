@@ -125,45 +125,71 @@ async def _write_success_comment(
         log.error(f"[{task_key}] Comment yozishda xato: {e}")
 
 
+def _build_warning_adf(
+        adf_formatter: "JiraADFFormatter",
+        service: str,
+        reason: str,
+        task_key: str,
+        panel_type: str = "warning"
+) -> dict:
+    """
+    Qisqa Warning ADF panel document qurish.
+
+    panel_type: 'warning' (sariq) — kutilgan xatoliklar uchun
+                'error'   (qizil) — kutilmagan kritik xatoliklar uchun
+    """
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
+    return {
+        "version": 1,
+        "type": "doc",
+        "content": [
+            adf_formatter._panel([
+                adf_formatter._paragraph([
+                    adf_formatter._bold_text(f"⚠️ {service} | Warning"),
+                    adf_formatter._hard_break(),
+                    adf_formatter._text_node(reason),
+                    adf_formatter._hard_break(),
+                    adf_formatter._italic_text(
+                        f"{task_key} | {timestamp} | Manual tekshirish tavsiya etiladi"
+                    )
+                ])
+            ], panel_type)
+        ]
+    }
+
+
+def format_warning_simple(service: str, reason: str, task_key: str) -> str:
+    """Qisqa Warning oddiy text fallback (ADF ishlamagan holatda)."""
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
+    return (
+        f"⚠️ *{service} | Warning*\n\n"
+        f"{reason}\n\n"
+        f"_{task_key} | {timestamp} | Manual tekshirish tavsiya etiladi_"
+    )
+
+
 async def _write_error_comment(
         task_key: str,
         error_message: str,
         new_status: str,
         settings: "TZPRCheckerSettings",
         comment_writer: "JiraCommentWriter",
-        adf_formatter: "JiraADFFormatter"
+        adf_formatter: "JiraADFFormatter",
+        service: str = "Servis-1"
 ) -> None:
     """
-    Xatolik uchun JIRA'ga error comment yozish.
-
-    ADF format mavjud bo'lsa — panel bilan chiroyli xato hujjati,
-    aks holda oddiy text format ishlatiladi.
+    Xatolik uchun JIRA'ga qisqa Warning panel comment yozish.
 
     Foydalanish holatlari:
     - PR topilmaganda
-    - AI tahlil muvaffaqiyatsiz bo'lganda (unknown xato)
+    - AI tahlil muvaffaqiyatsiz bo'lganda
     - Service1 yoki Service2 general xatosi
-
-    Args:
-        task_key: JIRA task identifikatori
-        error_message: Foydalanuvchiga ko'rsatiladigan xato xabari
-        new_status: Xato yuz bergandagi JIRA status
-        settings: TZPRCheckerSettings
-        comment_writer: JIRA API
-        adf_formatter: ADF document builder
     """
     try:
-        if settings.use_adf_format:
-            adf_doc = adf_formatter.build_error_document(task_key, error_message, new_status)
-            success = comment_writer.add_comment_adf(task_key, adf_doc)
-
-            if not success:
-                simple_comment = format_error_comment_simple(task_key, error_message, new_status)
-                comment_writer.add_comment(task_key, simple_comment)
-        else:
-            simple_comment = format_error_comment_simple(task_key, error_message, new_status)
-            comment_writer.add_comment(task_key, simple_comment)
-
+        warning_doc = _build_warning_adf(adf_formatter, service, error_message, task_key)
+        success = comment_writer.add_comment_adf(task_key, warning_doc)
+        if not success:
+            comment_writer.add_comment(task_key, format_warning_simple(service, error_message, task_key))
     except Exception as e:
         log.error(f"[{task_key}] Error comment yozishda xato: {e}")
 
@@ -177,60 +203,41 @@ async def _write_critical_error(
         adf_formatter: "JiraADFFormatter"
 ) -> None:
     """
-    Kutilmagan kritik xatolik uchun JIRA'ga critical error comment yozish.
+    Kutilmagan kritik xatolik uchun JIRA'ga qisqa Error panel comment yozish.
 
     Bu funksiya faqat Service1 ning try/except blokida except bo'lganda,
     ya'ni kod xatosi (AttributeError, ImportError, va h.k.) yuz berganda chaqiriladi.
     Oddiy API xatolari uchun _write_error_comment() ishlatiladi.
-
-    Args:
-        task_key: JIRA task identifikatori
-        error: Xato xabari (traceback yoki exception string)
-        new_status: JIRA status
-        settings: TZPRCheckerSettings
-        comment_writer: JIRA API
-        adf_formatter: ADF document builder
     """
     try:
-        if settings.use_adf_format:
-            adf_doc = adf_formatter.build_critical_error_document(task_key, error, new_status)
-            comment_writer.add_comment_adf(task_key, adf_doc)
-        else:
-            simple_comment = format_critical_error_simple(task_key, error, new_status)
-            comment_writer.add_comment(task_key, simple_comment)
-
+        # Traceback juda uzun bo'lishi mumkin — qisqartirib yozamiz
+        reason = f"Kutilmagan tizim xatosi: {error[:200]}"
+        warning_doc = _build_warning_adf(adf_formatter, "Servis-1", reason, task_key, "error")
+        success = comment_writer.add_comment_adf(task_key, warning_doc)
+        if not success:
+            comment_writer.add_comment(task_key, format_warning_simple("Servis-1", reason, task_key))
     except Exception as e:
         log.error(f"[{task_key}] Critical error comment yozishda xato: {e}")
 
 
 async def _write_timeout_error_comment(task_key: str, timeout_seconds: int) -> None:
     """
-    AI queue timeout bo'lganda JIRA'ga xabar beruvchi comment yozish.
+    AI queue timeout bo'lganda JIRA'ga qisqa Warning panel comment yozish.
 
     Bu holat: boshqa task AI queue'ni ushlab turibdi,
     yangi task belgilangan vaqt (task_wait_timeout) ichida lock ololmadi.
-    Comment foydalanuvchiga manual tekshirish kerakligini bildiradi.
-
-    Args:
-        task_key: Timeout bo'lgan JIRA task identifikatori
-        timeout_seconds: Nechtа soniya kutildi (queue.task_wait_timeout dan)
     """
     try:
         from services.webhook.jira_webhook_handler import get_adf_formatter, get_comment_writer
         adf_formatter = get_adf_formatter()
         comment_writer = get_comment_writer()
 
-        error_doc = adf_formatter.build_error_document(
-            task_key=task_key,
-            error_message=(
-                f"AI tekshirish timeout: {timeout_seconds} sekunda kutildi, "
-                f"boshqa task ishlanmoqda edi. "
-                f"Manual tekshirish kerak."
-            ),
-            new_status="Ready to Test"
-        )
-        comment_writer.add_comment_adf(task_key, error_doc)
-        log.jira_comment_added(task_key, "ADF")
+        reason = f"AI queue timeout ({timeout_seconds}s). Boshqa task ishlanmoqda edi."
+        warning_doc = _build_warning_adf(adf_formatter, "Sistem", reason, task_key)
+        success = comment_writer.add_comment_adf(task_key, warning_doc)
+        if not success:
+            comment_writer.add_comment(task_key, format_warning_simple("Sistem", reason, task_key))
+        log.jira_comment_added(task_key, "Warning ADF")
     except Exception as e:
         log.error(f"[{task_key}] Timeout error comment yozishda xato: {e}")
 
@@ -299,7 +306,7 @@ async def _write_skip_notification(
 
         if not success:
             log.warning(f"[{task_key}] Skip ADF failed, simple fallback")
-            comment_writer.add_comment(task_key, f"*{skip_text}*")
+            comment_writer.add_comment(task_key, format_warning_simple("Servis-1", skip_text, task_key))
             log.jira_comment_added(task_key, "simple")
         else:
             log.jira_comment_added(task_key, "ADF")
@@ -308,82 +315,3 @@ async def _write_skip_notification(
         log.error(f"[{task_key}] Skip notification xato: {e}")
 
 
-def format_error_comment_simple(task_key: str, error_message: str, new_status: str) -> str:
-    """
-    Xatolik uchun oddiy text format comment matni qaytarish.
-
-    ADF format ishlamagan holatlarda fallback sifatida ishlatiladi.
-    JIRA Wiki markup formatida yozilgan (bold, rule).
-
-    Args:
-        task_key: JIRA task identifikatori
-        error_message: Foydalanuvchiga ko'rsatiladigan xato tavsifi
-        new_status: Xato yuz bergandagi JIRA status
-
-    Returns:
-        JIRA Wiki Markup formatidagi comment matni
-    """
-    return f"""
-*Avtomatik TZ-PR Tekshiruvi - Xatolik*
-
-----
-
-*Task:* {task_key}
-*Vaqt:* {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-*Status:* {new_status}
-
-----
-
-*Xatolik:*
-
-{error_message}
-
-----
-
-*Mumkin sabablar:*
-* Task uchun PR topilmadi
-* GitHub access xatoligi
-* TZ (Description) bo'sh
-
-----
-
-_Manual tekshirish kerak. QA Team'ga xabar bering._
-"""
-
-
-def format_critical_error_simple(task_key: str, error: str, new_status: str) -> str:
-    """
-    Kritik xatolik uchun oddiy text format comment matni qaytarish.
-
-    Kod darajasidagi kutilmagan xatolar uchun (AttributeError, ImportError va h.k.).
-    ADF format ishlamagan yoki mavjud bo'lmagan holatlarda fallback sifatida.
-
-    Args:
-        task_key: JIRA task identifikatori
-        error: Xato xabari yoki traceback
-        new_status: JIRA status
-
-    Returns:
-        JIRA Wiki Markup formatidagi comment matni
-    """
-    return f"""
-*Avtomatik TZ-PR Tekshiruvi - Kritik Xatolik*
-
-----
-
-*Task:* {task_key}
-*Vaqt:* {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-*Status:* {new_status}
-
-----
-
-*Kritik Xatolik:*
-
-{{code}}
-{error}
-{{code}}
-
-----
-
-_System administrator'ga xabar berildi._
-"""

@@ -137,6 +137,10 @@ class JiraADFFormatter:
             "content": content
         }
 
+    def _link_text(self, text: str, href: str) -> Dict:
+        """Havola (link) text node"""
+        return self._text_node(text, [{"type": "link", "attrs": {"href": href}}])
+
     def _emoji(self, short_name: str) -> Dict:
         """Emoji node"""
         return {
@@ -351,6 +355,33 @@ class JiraADFFormatter:
         ]
         content.append(self._heading("📈 Statistika", 3))
         content.append(self._bullet_list(stats_items))
+
+        # ━━━ PR HAVOLALAR ━━━
+        pr_details = getattr(result, 'pr_details', [])
+        if pr_details:
+            pr_links_content = []
+            for pr in pr_details:
+                pr_title = pr.get('title', 'PR')
+                pr_url = pr.get('url', '')
+                pr_files = pr.get('files', [])
+                pr_file_count = len(pr_files)
+                pr_add = sum(f.get('additions', 0) for f in pr_files)
+                pr_del = sum(f.get('deletions', 0) for f in pr_files)
+
+                nodes = [self._text_node("🔗 ")]
+                if pr_url:
+                    nodes.append(self._link_text(pr_title, pr_url))
+                else:
+                    nodes.append(self._text_node(pr_title))
+                nodes += [
+                    self._text_node(f" — {pr_file_count} fayl | "),
+                    self._colored_text(f"+{pr_add}", "#36B37E"),
+                    self._text_node(" / "),
+                    self._colored_text(f"-{pr_del}", "#FF5630"),
+                ]
+                pr_links_content.append(self._paragraph(nodes))
+            content.extend(pr_links_content)
+
         content.append(self._rule())
 
         # ━━━ AI TAHLIL BO'LIMLARI (EXPAND PANELS) ━━━

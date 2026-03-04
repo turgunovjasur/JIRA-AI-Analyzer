@@ -602,19 +602,16 @@ class GitHubClient:
         Faqat 5 eng so'nggi repo tekshiriladi.
         """
         found = []
-        print(f"   🔎 Repo listing search (last resort): numeric '{numeric_part}' qidirilmoqda...")
-
+        repos = []
         try:
             repos = self._get_org_repos(max_repos=5)
             if not repos:
-                print(f"   ⚠️ Repo listing: no repos returned")
+                log.warning("Repo listing search (last resort): repo'lar olinmadi")
                 return found
 
             for repo_data in repos:
                 repo_name = repo_data.get('name', '')
                 owner = repo_data.get('owner', {}).get('login', self.org)
-                print(f"   🔍 Checking repo: {owner}/{repo_name}...")
-
                 try:
                     pr_list_url = f"{self.base_url}/repos/{owner}/{repo_name}/pulls"
                     response = self._make_request(pr_list_url, params={
@@ -622,36 +619,30 @@ class GitHubClient:
                         'per_page': 100,
                         'sort': 'updated'
                     })
-
                     if response.status_code != 200:
-                        print(f"   ⚠️ PR list error for {repo_name}: {response.status_code}")
                         continue
-
                     prs = response.json()
                     for pr in prs:
                         head_ref = pr.get('head', {}).get('ref', '')
                         if numeric_part in head_ref:
                             pr_html_url = pr.get('html_url', '')
-                            print(f"   ✅ Found in {repo_name}: PR #{pr.get('number')} branch '{head_ref}' contains '{numeric_part}'")
                             found.append({
                                 'url': pr_html_url,
                                 'title': pr.get('title', ''),
                                 'status': pr.get('state', ''),
                                 'source': f'GitHub (repo-listing:{repo_name})'
                             })
-                            break  # Found in this repo
-
-                except Exception as e:
-                    print(f"   ⚠️ Repo listing exception ({repo_name}): {e}")
+                            break
+                except Exception:
                     continue
-
                 if found:
-                    break  # Found — stop scanning repos
+                    break
 
         except Exception as e:
-            print(f"   ⚠️ Repo listing search exception: {e}")
+            log.warning(f"Repo listing search (last resort): xato — {e}")
 
         if not found:
-            print(f"   ⏭️  Repo listing: checked repos, no match")
-
+            log.warning(f"Repo listing search (last resort): numeric '{numeric_part}' — {len(repos) if repos else 0} repo tekshirildi, PR topilmadi")
+        else:
+            log.info(f"Repo listing search (last resort): numeric '{numeric_part}' — PR topildi")
         return found

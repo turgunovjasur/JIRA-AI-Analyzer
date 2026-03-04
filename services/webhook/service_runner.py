@@ -248,7 +248,7 @@ async def _run_testcase_generation(task_key: str, new_status: str) -> None:
             set_service2_done(task_key)
             log.service_done(task_key, "service_2", result=message)
         else:
-            error_msg = f"Testcase generation failed: {message}"
+            error_msg = message
             error_type = _classify_error(error_msg)
             log.service_error(task_key, "service_2", error_msg)
 
@@ -338,33 +338,25 @@ async def _handle_auto_return(
                 log.warning(
                     f"[{task_key}] RETURNED -> {settings.return_status} | score={score}% < {threshold}%"
                 )
-                # Return haqida JIRA'ga notification comment yozish
+                # Return haqida JIRA'ga qisqa Warning comment yozish
                 try:
                     from services.webhook.jira_webhook_handler import get_comment_writer, get_adf_formatter
+                    from services.webhook.error_handler import _build_warning_adf, format_warning_simple
                     comment_writer = get_comment_writer()
                     adf_formatter = get_adf_formatter()
-                    return_doc = adf_formatter.build_return_notification_document(
-                        task_key=task_key,
-                        compliance_score=score,
-                        threshold=threshold,
-                        return_status=settings.return_status,
-                        notification_text=settings.return_notification_text,
-                        ai_analysis=result.ai_analysis
+                    reason = (
+                        f"Task qaytarildi. Moslik bali: {score}% (chegarasi: {threshold}%). "
+                        f"Status: {settings.return_status}. "
+                        f"TZ talablarini tekshiring va qaytadan PR bering."
                     )
+                    return_doc = _build_warning_adf(adf_formatter, "Servis-1", reason, task_key, "warning")
                     notif_success = comment_writer.add_comment_adf(task_key, return_doc)
 
                     if not notif_success:
-                        # Fallback — oddiy text format
-                        comment_writer.add_comment(
-                            task_key,
-                            f"Task Qaytarildi\n\n"
-                            f"Moslik bali: *{score}%* (chegarasi: {threshold}%)\n\n"
-                            f"Task *{settings.return_status}* statusga qaytarildi.\n\n"
-                            f"TZ talablarini tekshiring va qaytadan PR bering."
-                        )
+                        comment_writer.add_comment(task_key, format_warning_simple("Servis-1", reason, task_key))
                         log.jira_comment_added(task_key, "simple")
                     else:
-                        log.jira_comment_added(task_key, "ADF")
+                        log.jira_comment_added(task_key, "Warning ADF")
 
                 except Exception as notif_e:
                     log.error(f"[{task_key}] Return notification xato: {notif_e}")

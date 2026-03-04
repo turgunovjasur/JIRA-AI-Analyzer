@@ -31,7 +31,7 @@ log = get_logger("tzpr.checker")
 
 SMART_PATCH_AVAILABLE = True
 
-# AI Prompt - O'ZBEK TILIDA! (WITH FIGMA SUPPORT)
+# AI Prompt - O'ZBEK TILIDA! (sozlama tartibida ma'lumotlar + scope qoidasi)
 AI_PROMPT_TEMPLATE_UZ = """
 ╔══════════════════════════════════════════════════════════════════╗
 ║ 🎯 VAZIFA: TZ VA KOD MOSLIGINI TAHLIL QILISH                     ║
@@ -40,21 +40,9 @@ AI_PROMPT_TEMPLATE_UZ = """
 📋 TASK: {task_key}
 📝 SUMMARY: {task_summary}
 
-─────────────────────────────────────────────────────────────────────
-📄 TEXNIK TOPSHIRIQ (TZ)
-─────────────────────────────────────────────────────────────────────
+{scope_instruction}
 
-{tz_content}
-
-{dev_comments_section}
-
-{figma_section}
-
-─────────────────────────────────────────────────────────────────────
-💻 GITHUB KOD O'ZGARISHLARI
-─────────────────────────────────────────────────────────────────────
-
-{code_changes}
+{data_sections_body}
 
 ╔══════════════════════════════════════════════════════════════════╗
 ║ 📝 TAHLIL QILISH TARTIBI                                         ║
@@ -75,10 +63,6 @@ AI_PROMPT_TEMPLATE_UZ = """
    - TZ da yo'q, lekin kodda bor narsalar bormi?
    - Bu o'zgarishlar zarurmi yoki ortiqchami?
 
-4. **TEST COVERAGE**
-   - Bu o'zgarishlar uchun test yozilganmi?
-   - Qanday test case'lar kerak?
-
 {figma_analysis_section}
 
 ╔══════════════════════════════════════════════════════════════════╗
@@ -94,6 +78,19 @@ AI_PROMPT_TEMPLATE_UZ = """
 Bu qatorni HECH QACHON tashlab ketma, aks holda natija noto'g'ri bo'ladi.
 
 ╚══════════════════════════════════════════════════════════════════╝
+"""
+
+# Developer comment'da "keyin qilinadi" / "keyingi sprint" deb yozilganda faqat shu PR da kutilgan ishlar bo'yicha baho
+SCOPE_INSTRUCTION_UZ = """
+─────────────────────────────────────────────────────────────────────
+⚠️ MUHIM: DEVELOPER IZOHLARI BO'YICHA TEKSHRUV DOIRASI
+─────────────────────────────────────────────────────────────────────
+
+Agar developer (izohlar bo'limida) TZ dagi ba'zi talablarni "keyingi sprintda qilinadi", "keyin qilinadi", "kelishdik shunday qilamiz" va sh.k. deb yozgan bo'lsa:
+- Faqat SHU PR da bajarilishi kerak bo'lgan talablar bo'yicha moslikni baholang.
+- Keyinga qoldirilgan talablarni "bajarilmagan" deb hisoblamang — ular bu PR doirasida emas.
+- Masalan: TZ da 10 ta ish, kodda 5 ta, dev "5 ta qilindi, qolgani keyingi sprintda" deb yozsa → faqat 5 ta ishni tekshiring, moslikni shu 5 ta bo'yicha bering.
+
 """
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -179,10 +176,8 @@ class TZPRAnalysisResult:
     files_analyzed: int = 0
     total_prompt_size: int = 0
 
-    # ✅ FIGMA INTEGRATION
     figma_data: Optional[Dict] = None  # Figma ma'lumotlari (optional)
 
-    # ✅ COMMENT ANALYSIS
     comment_analysis: Optional[Dict] = None  # TZHelper.analyze_comments() natijasi (zid commentlar)
 
 
@@ -313,7 +308,7 @@ class TZPRService(BaseService):
                 task_details,
                 tz_content,
                 pr_info,
-                figma_data,  # ✅ Pass Figma data
+                figma_data,
                 max_files,
                 show_full_diff,
                 use_smart_patch,
@@ -328,7 +323,7 @@ class TZPRService(BaseService):
                     task_summary=task_details['summary'],
                     pr_info=pr_info,
                     warnings=ai_result.get('warnings', []),
-                    figma_data=figma_data  # ✅ Include in error
+                    figma_data=figma_data
                 )
 
             # Step 5: Extract compliance score
@@ -358,8 +353,8 @@ class TZPRService(BaseService):
                 ai_retry_count=ai_result.get('retry_count', 0),
                 files_analyzed=ai_result.get('files_analyzed', 0),
                 total_prompt_size=ai_result.get('prompt_size', 0),
-                figma_data=figma_data,  # ✅ Include Figma data
-                comment_analysis=comment_analysis  # ✅ Include contradictory comments analysis
+                figma_data=figma_data,
+                comment_analysis=comment_analysis
             )
 
         except Exception as e:
@@ -369,7 +364,7 @@ class TZPRService(BaseService):
             )
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # ✅ FIGMA METHODS (NEW, FAIL-SAFE)
+    # FIGMA METHODS (NEW, FAIL-SAFE)
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     def _get_figma_data(self, task_details: Dict, update_status) -> Optional[Dict]:
@@ -571,6 +566,33 @@ class TZPRService(BaseService):
 
         return "\n".join(lines)
 
+    def _build_ordered_data_sections(
+            self,
+            order: List[str],
+            tz_content: str,
+            dev_comments_section: str,
+            figma_section: str,
+            code_changes: str
+    ) -> str:
+        """
+        Sozlamadagi ai_data_section_order bo'yicha ma'lumotlar bo'limlarini birlashtirish.
+        Servis qat'iy shu tartibga amal qiladi.
+        """
+        blocks = []
+        sep = "\n─────────────────────────────────────────────────────────────────────\n"
+        for key in order:
+            if key == "tz":
+                blocks.append(sep + "📄 TEXNIK TOPSHIRIQ (TZ)\n" + sep + "\n" + (tz_content or "").strip())
+            elif key == "comments":
+                if (dev_comments_section or "").strip():
+                    blocks.append((dev_comments_section or "").strip())
+            elif key == "figma":
+                if (figma_section or "").strip():
+                    blocks.append((figma_section or "").strip())
+            elif key == "code":
+                blocks.append(sep + "💻 GITHUB KOD O'ZGARISHLARI\n" + sep + "\n" + (code_changes or "").strip())
+        return "\n\n".join(blocks)
+
     def _get_pr_info(self, task_key: str, task_details: Dict, update_status, use_smart_patch):
         """PR ma'lumotlarini olish"""
         pr_info = self.pr_helper.get_pr_full_info(
@@ -588,7 +610,7 @@ class TZPRService(BaseService):
             task_details: Dict,
             tz_content: str,
             pr_info: Dict,
-            figma_data: Optional[Dict],  # NEW PARAMETER
+            figma_data: Optional[Dict],
             max_files: Optional[int],
             show_full_diff: bool,
             use_smart_patch: bool,
@@ -635,8 +657,8 @@ class TZPRService(BaseService):
             task_details=task_details,
             tz_content=tz_content,
             pr_info=pr_info,
-            figma_data=figma_data,  # ✅ Pass to retry logic
-            dev_comments_section=dev_comments_section,  # ✅ NEW
+            figma_data=figma_data,
+            dev_comments_section=dev_comments_section,
             max_files=max_files,
             show_full_diff=show_full_diff,
             use_smart_patch=use_smart_patch,
@@ -809,14 +831,24 @@ class TZPRService(BaseService):
                 use_smart_patch
             )
 
-            # Build final prompt with dynamic response format
+            # Sozlamadagi tartib bo'yicha ma'lumotlar bo'limini yig'ish (AI qat'iy amal qiladi)
+            from config.app_settings import get_app_settings
+            tz_settings = get_app_settings().tz_pr_checker
+            order = tz_settings.ai_data_section_order or ["tz", "comments", "figma", "code"]
+            data_sections_body = self._build_ordered_data_sections(
+                order=order,
+                tz_content=tz_content,
+                dev_comments_section=dev_comments_section,
+                figma_section=figma_section,
+                code_changes=code_changes
+            )
+
+            # Build final prompt (tartib sozlamadan, scope qoidasi qo'shilgan)
             prompt = AI_PROMPT_TEMPLATE_UZ.format(
                 task_key=task_key,
                 task_summary=task_details['summary'],
-                tz_content=tz_content,
-                dev_comments_section=dev_comments_section,  # ✅ NEW
-                code_changes=code_changes,
-                figma_section=figma_section,
+                scope_instruction=SCOPE_INSTRUCTION_UZ,
+                data_sections_body=data_sections_body,
                 figma_analysis_section=figma_analysis,
                 response_format_sections=response_format_sections
             )
@@ -825,8 +857,7 @@ class TZPRService(BaseService):
 
             # Call AI — barcha bo'limlar yoqilganda javob katta bo'ladi,
             # shuning uchun max_output_tokens settings'dan olinadi
-            from config.app_settings import get_app_settings
-            max_tokens = get_app_settings().tz_pr_checker.ai_max_output_tokens
+            max_tokens = tz_settings.ai_max_output_tokens
             analysis = self.gemini.analyze(prompt, max_output_tokens=max_tokens)
 
             return {
@@ -1011,7 +1042,7 @@ class TZPRService(BaseService):
             task_summary: str = "",
             pr_info: Optional[Dict] = None,
             warnings: Optional[List[str]] = None,
-            figma_data: Optional[Dict] = None  # ✅ NEW
+            figma_data: Optional[Dict] = None
     ) -> TZPRAnalysisResult:
         """Create error result"""
         return TZPRAnalysisResult(
@@ -1024,5 +1055,5 @@ class TZPRService(BaseService):
             success=False,
             error_message=error_message,
             warnings=warnings or [],
-            figma_data=figma_data  # ✅ Include in error
+            figma_data=figma_data
         )

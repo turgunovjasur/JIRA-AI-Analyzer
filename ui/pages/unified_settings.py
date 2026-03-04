@@ -469,6 +469,33 @@ def _render_tz_pr_settings(settings: AppSettings) -> TZPRCheckerSettings:
 
     st.markdown("---")
 
+    # ━━━ 5.1 AI ma'lumotlar darajasi (TZ-PR) ━━━
+    st.markdown("#### 📊 AI ga ma'lumotlar darajasi (tartibi)")
+    st.caption("Sozlamadagi tartib bo'yicha AI promtiga bo'limlar qo'shiladi. Servis qat'iy amal qiladi.")
+
+    _TZPR_ORDER_OPTIONS = [
+        ("tz", "📄 TZ (Texnik topshiriq)"),
+        ("comments", "💬 Comment'lar (developer izohlari)"),
+        ("figma", "🎨 Figma (dizayn)"),
+        ("code", "💻 Kod o'zgarishlari"),
+    ]
+    _tzpr_order_keys = [k for k, _ in _TZPR_ORDER_OPTIONS]
+    _tzpr_order_default = [x for x in settings.tz_pr_checker.ai_data_section_order if x in _tzpr_order_keys]
+    if not _tzpr_order_default or "tz" not in _tzpr_order_default or "code" not in _tzpr_order_default:
+        _tzpr_order_default = ["tz", "comments", "figma", "code"]
+    tzpr_data_order = st.multiselect(
+        "Tartib (birinchi o'rinda eng ustun)",
+        options=[k for k, _ in _TZPR_ORDER_OPTIONS],
+        default=_tzpr_order_default,
+        format_func=lambda k: dict(_TZPR_ORDER_OPTIONS).get(k, k),
+        key="tzpr_ai_data_order"
+    )
+    if "tz" not in tzpr_data_order or "code" not in tzpr_data_order:
+        st.warning("⚠️ Kamida TZ va Kod bo'lishi shart. Saqlashda standart tartib qo'llanadi.")
+        tzpr_data_order = _tzpr_order_default
+
+    st.markdown("---")
+
     # ━━━ 6. Comment O'qish ━━━
     st.markdown("#### 📖 Comment O'qish")
 
@@ -607,7 +634,8 @@ def _render_tz_pr_settings(settings: AppSettings) -> TZPRCheckerSettings:
         recheck_comment_text=recheck_comment_text,
         comment_order=comment_order,
         show_contradictory_comments=show_contradictory_comments,
-        visible_sections=visible_sections
+        visible_sections=visible_sections,
+        ai_data_section_order=tzpr_data_order
     )
 
 
@@ -669,6 +697,45 @@ def _render_testcase_settings(settings: AppSettings) -> TestcaseGeneratorSetting
         max_value=30,
         step=1
     )
+
+    min_tz_description_chars = _render_setting_with_help(
+        "📄 TZ yo'q hisoblash chegarasi (belgilar)",
+        getattr(settings.testcase_generator, 'min_tz_description_chars', 50),
+        getattr(settings.testcase_generator, 'min_tz_description_chars_help', ''),
+        "slider",
+        "tc_min_tz_chars",
+        min_value=0,
+        max_value=500,
+        step=10
+    )
+    st.caption("Description shu belgidan qisqa bo'lsa «testcase uchun yetarli ma'lumot yo'q» xabari chiqadi va Servis-2 to'xtatiladi.")
+
+    st.markdown("---")
+
+    # ━━━ AI ma'lumotlar darajasi (Testcase) ━━━
+    st.markdown("#### 📊 AI ga ma'lumotlar darajasi (tartibi)")
+    st.caption("Sozlamadagi tartib bo'yicha AI promtiga bo'limlar qo'shiladi. Servis qat'iy amal qiladi.")
+
+    _TC_ORDER_OPTIONS = [
+        ("tz", "📄 TZ (Texnik topshiriq)"),
+        ("comments", "💬 Comment'lar"),
+        ("custom_context", "📌 Qo'shimcha kontekst"),
+        ("code", "💻 Kod statistikasi (PR)"),
+    ]
+    _tc_order_keys = [k for k, _ in _TC_ORDER_OPTIONS]
+    _tc_order_default = [x for x in settings.testcase_generator.ai_data_section_order if x in _tc_order_keys]
+    if not _tc_order_default or "tz" not in _tc_order_default:
+        _tc_order_default = ["tz", "comments", "custom_context", "code"]
+    tc_data_order = st.multiselect(
+        "Tartib (birinchi o'rinda eng ustun)",
+        options=[k for k, _ in _TC_ORDER_OPTIONS],
+        default=_tc_order_default,
+        format_func=lambda k: dict(_TC_ORDER_OPTIONS).get(k, k),
+        key="tc_ai_data_order"
+    )
+    if "tz" not in tc_data_order:
+        st.warning("⚠️ TZ bo'lishi shart. Saqlashda standart tartib qo'llanadi.")
+        tc_data_order = _tc_order_default
 
     st.markdown("---")
 
@@ -757,6 +824,8 @@ def _render_testcase_settings(settings: AppSettings) -> TestcaseGeneratorSetting
         default_use_smart_patch=default_use_smart_patch,
         default_test_types=default_test_types if default_test_types else ['positive'],
         max_test_cases=max_test_cases,
+        min_tz_description_chars=min_tz_description_chars,
+        ai_data_section_order=tc_data_order,
         read_comments_enabled=tc_read_comments,
         max_comments_to_read=tc_max_comments,
         auto_comment_enabled=auto_comment_enabled,

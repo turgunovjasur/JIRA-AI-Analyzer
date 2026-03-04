@@ -125,6 +125,10 @@ class TestcaseADFFormatter:
             "content": content
         }
 
+    def _link_text(self, text: str, href: str) -> Dict:
+        """Havola (link) text node"""
+        return self._text_node(text, [{"type": "link", "attrs": {"href": href}}])
+
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # PRIORITY/SEVERITY COLORS
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -207,7 +211,10 @@ class TestcaseADFFormatter:
             test_cases: List[Any],
             metadata: Optional[Dict] = None,
             comment_analysis: Optional[Dict] = None,
-            footer_text: Optional[str] = None
+            footer_text: Optional[str] = None,
+            pr_details: Optional[List[Dict]] = None,
+            pr_count: int = 0,
+            files_changed: int = 0
     ) -> Dict:
         """
         Test case'lar uchun to'liq ADF document yaratish
@@ -270,6 +277,33 @@ class TestcaseADFFormatter:
             stats_items.append(f"{emoji} {t.capitalize()}: {count} ta")
 
         content.append(self._bullet_list(stats_items))
+
+        # ━━━ PR HAVOLALAR ━━━
+        if pr_details:
+            content.append(self._paragraph([
+                self._bold_text(f"🔗 PR'lar ({pr_count or len(pr_details)} ta | {files_changed} fayl o'zgargan):")
+            ]))
+            for pr in pr_details:
+                pr_title = pr.get('title', 'PR')
+                pr_url = pr.get('url', '')
+                pr_files = pr.get('files', [])
+                pr_file_count = len(pr_files)
+                pr_add = sum(f.get('additions', 0) for f in pr_files)
+                pr_del = sum(f.get('deletions', 0) for f in pr_files)
+
+                nodes = [self._text_node("🔗 ")]
+                if pr_url:
+                    nodes.append(self._link_text(pr_title, pr_url))
+                else:
+                    nodes.append(self._text_node(pr_title))
+                nodes += [
+                    self._text_node(f" — {pr_file_count} fayl | "),
+                    self._colored_text(f"+{pr_add}", "#36B37E"),
+                    self._text_node(" / "),
+                    self._colored_text(f"-{pr_del}", "#FF5630"),
+                ]
+                content.append(self._paragraph(nodes))
+
         content.append(self._rule())
 
         # ━━━ TEST CASE'LAR (EXPAND PANELS) ━━━

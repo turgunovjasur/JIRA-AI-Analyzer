@@ -72,8 +72,24 @@ async def check_and_generate_testcases(
         )
 
         if not result.success:
-            error_msg = f"Test case generation failed: {result.error_message}"
-            log.service_failed(task_key, "TestCase", error_msg)
+            error_msg = result.error_message or "Test case generation failed"
+            # TZ yetarli emas (min belgidan qisqa) bo'lsa — JIRA'ga Warning comment yozish
+            if "yetarli ma'lumot yo'q" in (error_msg or "") or "Servis-2 to'xtatildi" in (error_msg or ""):
+                try:
+                    from services.webhook.jira_webhook_handler import get_comment_writer, get_adf_formatter
+                    from services.webhook.error_handler import _build_warning_adf, format_warning_simple
+                    writer = get_comment_writer()
+                    adf_formatter = get_adf_formatter()
+                    reason = error_msg.strip() if error_msg else (
+                        "TZ (description) yetarli emas. Testcase yaratish to'xtatildi."
+                    )
+                    warning_doc = _build_warning_adf(adf_formatter, "Servis-2", reason, task_key)
+                    success = writer.add_comment_adf(task_key, warning_doc)
+                    if not success:
+                        writer.add_comment(task_key, format_warning_simple("Servis-2", reason, task_key))
+                    log.jira_comment_added(task_key, "Warning ADF")
+                except Exception as e:
+                    log.warning(f"[{task_key}] JIRA TZ ogohlantirish comment yozilmadi: {e}")
             return False, error_msg
 
         if not result.test_cases:
@@ -87,7 +103,10 @@ async def check_and_generate_testcases(
         success, message = _write_testcases_comment(
             task_key=task_key,
             result=result,
-            use_adf=tc_settings.use_adf_format
+            use_adf=tc_settings.use_adf_format,
+            pr_details=result.pr_details,
+            pr_count=result.pr_count,
+            files_changed=result.files_changed
         )
 
         return success, message
@@ -101,7 +120,10 @@ async def check_and_generate_testcases(
 def _write_testcases_comment(
         task_key: str,
         result,
-        use_adf: bool = True
+        use_adf: bool = True,
+        pr_details: list = None,
+        pr_count: int = 0,
+        files_changed: int = 0
 ) -> Tuple[bool, str]:
     """
     Test case'larni JIRA ga comment sifatida yozish
@@ -130,7 +152,10 @@ def _write_testcases_comment(
             adf_doc = formatter.build_testcase_document(
                 task_key=task_key,
                 test_cases=result.test_cases,
-                footer_text=_tc_footer
+                footer_text=_tc_footer,
+                pr_details=pr_details or [],
+                pr_count=pr_count,
+                files_changed=files_changed
             )
             success = writer.add_comment_adf(task_key, adf_doc)
 
