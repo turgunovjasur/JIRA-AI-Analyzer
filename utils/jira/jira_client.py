@@ -158,9 +158,13 @@ class JiraClient:
         pr_urls = []
 
         try:
+            # Dev Status API raqamli issueId talab qiladi, matn key emas
+            issue = self.client.issue(issue_key)
+            numeric_id = issue.id
+
             url = f"{self.server}/rest/dev-status/1.0/issue/detail"
             params = {
-                'issueId': issue_key,
+                'issueId': numeric_id,
                 'applicationType': 'GitHub',
                 'dataType': 'pullrequest'
             }

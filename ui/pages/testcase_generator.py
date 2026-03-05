@@ -97,7 +97,7 @@ def render_testcase_generator():
     # Header
     render_header(
         title="🧪 Test Case Generator",
-        subtitle="TZ, Comments va PR asosida O'zbek tilida QA test case'lar",
+        subtitle="TZ, Comments va PR asosida QA test case'lar",
         version="v5.1 DRY FIXED"
     )
 

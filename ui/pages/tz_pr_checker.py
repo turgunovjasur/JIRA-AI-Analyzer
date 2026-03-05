@@ -50,8 +50,8 @@ def render_tz_pr_checker():
 
     # Header
     render_header(
-        title="🔍 TZ-PR Moslik Tekshirish",
-        subtitle="Task TZ va GitHub kod o'zgarishlarini solishtiring",
+        title="🔍 TZ-PR Checker",
+        subtitle="Task TZ (+Figma) va GitHub kod o'zgarishlarini solishtiring",
         version="v3"
     )
 

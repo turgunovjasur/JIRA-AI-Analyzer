@@ -267,6 +267,36 @@ async def jira_webhook(request: Request, background_tasks: BackgroundTasks):
                 "reason": f"status is '{new_status}', not in {target_statuses}"
             }
 
+        # Webhook payload'dan issue fields ni olish (qo'shimcha API kerak emas)
+        issue_fields = issue.get('fields', {})
+
+        # ━━━ FILTER 1: Issue Type ━━━
+        issue_type = (issue_fields.get('issuetype') or {}).get('name', '')
+        allowed_types_raw = settings.allowed_issue_types.strip()
+        if allowed_types_raw:
+            allowed_types = [t.strip() for t in allowed_types_raw.split(',') if t.strip()]
+            if issue_type not in allowed_types:
+                log.info(f"[{task_key}] SKIP → type '{issue_type}' allowed list da yo'q {allowed_types}")
+                return {
+                    "status": "ignored",
+                    "reason": f"Issue type '{issue_type}' not in allowed list",
+                    "issue_type": issue_type,
+                    "allowed_types": allowed_types
+                }
+
+        # ━━━ FILTER 2: Assignee ━━━
+        assignee_name = (issue_fields.get('assignee') or {}).get('displayName', '')
+        excluded_raw = settings.excluded_assignees.strip()
+        if excluded_raw and assignee_name:
+            excluded = [a.strip() for a in excluded_raw.split(',') if a.strip()]
+            if assignee_name in excluded:
+                log.info(f"[{task_key}] SKIP → assignee '{assignee_name}' excluded ro'yxatida")
+                return {
+                    "status": "ignored",
+                    "reason": f"Assignee '{assignee_name}' is in excluded list",
+                    "assignee": assignee_name
+                }
+
         log.request_separator()
         log.ai_request("KEY_1", os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
         log.info(f"[{task_key}] STATUS -> {old_status} => {new_status} | tahlil boshlandi")

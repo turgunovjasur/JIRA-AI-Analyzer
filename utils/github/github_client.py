@@ -319,14 +319,10 @@ class GitHubClient:
         if not found_prs:
             log.debug(f"Branch name search...")
 
-            # Common branch patterns
+            # Common branch patterns (most common first to minimize API calls)
             branch_patterns = [
-                jira_key,  # DEV-6959
-                jira_key.lower(),  # dev-6959
-                jira_key.replace('-', '_'),  # DEV_6959
-                f"feature/{jira_key}",  # feature/DEV-6959
-                f"bugfix/{jira_key}",  # bugfix/DEV-6959
-                f"fix/{jira_key}",  # fix/DEV-6959
+                jira_key.lower().replace('-', ''),  # dev6959
+                jira_key.replace('DEV-', ''),       # 6959
             ]
 
             for pattern in branch_patterns:
@@ -520,18 +516,9 @@ class GitHubClient:
         prefix_clean = prefix_part.rstrip('-') if prefix_part else ''
 
         patterns = [
-            numeric_part,                                    # 7068
-            f"{numeric_part}b",                              # 7068b
-            f"fix-{numeric_part}",                           # fix-7068
-            f"fix/{numeric_part}",                           # fix/7068
-            f"hotfix-{numeric_part}",                        # hotfix-7068
-            f"hotfix/{numeric_part}",                        # hotfix/7068
-            f"feature-{numeric_part}",                       # feature-7068
-            f"feature/{numeric_part}",                       # feature/7068
-            f"bugfix-{numeric_part}",                        # bugfix-7068
-            f"bugfix/{numeric_part}",                        # bugfix/7068
-            f"{prefix_clean}{numeric_part}",                 # DEV7068
-            f"{prefix_clean.lower()}{numeric_part}",         # dev7068
+            f"anor{numeric_part}",                           # anor7068
+            f"trade{numeric_part}",                          # trade7068
+            f"core{numeric_part}",                           # core7068
         ]
 
         # Deduplicate while preserving order

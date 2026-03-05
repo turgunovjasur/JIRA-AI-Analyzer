@@ -162,6 +162,7 @@ class PRHelper:
                     'number': pr_number,
                     'title': pr_info.get('title', ''),
                     'state': pr_info.get('state', ''),
+                    'merged': pr_info.get('merged', False),
                     'additions': pr_info.get('additions', 0),
                     'deletions': pr_info.get('deletions', 0),
                     'files_count': len(pr_files),
@@ -173,6 +174,19 @@ class PRHelper:
             if not pr_details:
                 update_status("error", "No PR could be analyzed")
                 return None
+
+            # Merged PR prioriteti: agar merged PR mavjud bo'lsa,
+            # faqat closed (merge qilinmagan) PR'larni tahlildan chiqaramiz.
+            # Sababi: developer eski PRni yopib yangi ochgan bo'lishi mumkin.
+            merged_prs = [pr for pr in pr_details if pr.get('merged')]
+            if merged_prs and len(merged_prs) < len(pr_details):
+                skipped = [f"#{pr['number']}" for pr in pr_details if not pr.get('merged')]
+                update_status("info", f"Merged PR topildi → yopilgan PR'lar o'tkazib yuborildi: {skipped}")
+                pr_details = merged_prs
+                total_files = sum(len(pr['files']) for pr in pr_details)
+                total_additions = sum(pr['additions'] for pr in pr_details)
+                total_deletions = sum(pr['deletions'] for pr in pr_details)
+                all_files = [f for pr in pr_details for f in pr['files']]
 
             mode = "Smart Patch" if use_smart_patch else "Patch"
             update_status("success",

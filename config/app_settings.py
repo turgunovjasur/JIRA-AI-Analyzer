@@ -177,6 +177,24 @@ class TZPRCheckerSettings:
         'completed', 'partial', 'failed', 'issues', 'figma'
     ])
 
+    # ━━━ Webhook Filtrlari ━━━
+    # Faqat bu issue type'lar uchun servislar ishga tushadi (vergul bilan)
+    # Bo'sh qolsa — barcha type'lar uchun ishlaydi
+    allowed_issue_types: str = "DEV- PROD TASK,DEV-BUG,DEV-TECHTASK,DEV-CLIENT TASK"
+    allowed_issue_types_help: str = (
+        "Faqat bu issue type'lar uchun webhook servislar ishga tushadi. "
+        "Vergul bilan ajrating: 'DEV-BUG,DEV-TECHTASK,DEV- PROD TASK,DEV-CLIENT TASK'. "
+        "Bo'sh qolsa — barcha type'lar uchun ishlaydi (filter o'chiq)."
+    )
+    # Bu ro'yxatdagi assignee'lar (displayName) uchun barcha servislar skip bo'ladi
+    # Bo'sh qolsa — filter o'chiq (hammaga ishlaydi)
+    excluded_assignees: str = ""
+    excluded_assignees_help: str = (
+        "Bu ro'yxatdagi assignee'lar uchun barcha servislar ishga tushmaydi (skip). "
+        "JIRA displayName bo'yicha, vergul bilan: 'Alisher Karimov, Bobur Toshmatov'. "
+        "Bo'sh qolsa — filter o'chiq (hammaga ishlaydi)."
+    )
+
     # ━━━ Skip Code ━━━
     # AI_SKIP tekshirish uchun nechta oxirgi comment ko'riladi
     max_skip_check_comments: int = 5   # DEFAULT 5 ta comment

@@ -15,7 +15,7 @@ Author: JASUR TURGUNOV
 Version: 1.0
 """
 import streamlit as st
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 from config.app_settings import (
     AppSettings,
@@ -78,12 +78,15 @@ def render_unified_settings():
         testcase = _render_testcase_settings(settings)
 
     with tabs[5]:
-        system = _render_system_settings(settings)
+        system, allowed_issue_types_filter, excluded_assignees_filter = _render_system_settings(settings)
 
     st.markdown("---")
 
     # Saqlash tugmalari
-    _render_save_buttons(settings, modules, bug_analyzer, statistics, tz_pr, testcase, system)
+    _render_save_buttons(
+        settings, modules, bug_analyzer, statistics, tz_pr, testcase, system,
+        allowed_issue_types_filter, excluded_assignees_filter
+    )
 
 
 def _render_setting_with_help(
@@ -836,9 +839,78 @@ def _render_testcase_settings(settings: AppSettings) -> TestcaseGeneratorSetting
     )
 
 
-def _render_system_settings(settings: AppSettings) -> QueueSettings:
-    """Tizim Sozlamalari — AI Queue"""
+def _render_system_settings(settings: AppSettings):
+    """Tizim Sozlamalari — Webhook Filtrlari + AI Queue
 
+    Returns:
+        tuple: (QueueSettings, allowed_issue_types: str, excluded_assignees: str)
+    """
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # WEBHOOK FILTRLARI
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    st.markdown("### 🔒 Webhook Filtrlari")
+
+    st.markdown("""
+    <div style="background: rgba(255,171,0,0.1); padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
+        <p style="color: #8b949e; margin: 0; font-size: 0.9rem;">
+            🎯 Bu filtrllar webhook qabul qilgandan keyin, har qanday servis ishga tushishidan
+            <strong>oldin</strong> tekshiriladi. Ikkala servis (TZ-PR Checker va Test Case Generator)
+            uchun amal qiladi.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ━━━ Filter 1: Issue Type ━━━
+    st.markdown("#### 📋 Issue Type Filtri")
+    st.caption("Faqat bu type'lar uchun servislar ishga tushadi — qolganlar avtomatik o'tkazib yuboriladi")
+
+    allowed_issue_types = st.text_input(
+        "Ruxsat etilgan Issue Type'lar",
+        value=settings.tz_pr_checker.allowed_issue_types,
+        help=settings.tz_pr_checker.allowed_issue_types_help,
+        key="sys_allowed_issue_types",
+        placeholder="DEV-BUG,DEV-TECHTASK,DEV- PROD TASK,DEV-CLIENT TASK"
+    )
+
+    if allowed_issue_types.strip():
+        types_list = [t.strip() for t in allowed_issue_types.split(',') if t.strip()]
+        st.markdown(
+            "**Ruxsat etilgan type'lar:** " +
+            " · ".join([f"`{t}`" for t in types_list])
+        )
+    else:
+        st.info("ℹ️ Bo'sh — barcha issue type'lar uchun ishlaydi (filter o'chiq)")
+
+    st.markdown("---")
+
+    # ━━━ Filter 2: Excluded Assignees ━━━
+    st.markdown("#### 👤 Assignee Filtri (Istisno)")
+    st.caption("Bu assignee'lar uchun webhook signal kelsa — servislar ishga tushmaydi")
+
+    excluded_assignees = st.text_input(
+        "Istisno Assignee'lar (JIRA displayName)",
+        value=settings.tz_pr_checker.excluded_assignees,
+        help=settings.tz_pr_checker.excluded_assignees_help,
+        key="sys_excluded_assignees",
+        placeholder="Alisher Karimov, Bobur Toshmatov"
+    )
+
+    if excluded_assignees.strip():
+        assignees_list = [a.strip() for a in excluded_assignees.split(',') if a.strip()]
+        st.markdown(
+            "**Skip bo'ladigan assignee'lar:** " +
+            " · ".join([f"`{a}`" for a in assignees_list])
+        )
+    else:
+        st.info("ℹ️ Bo'sh — assignee bo'yicha filter yo'q (hammaga ishlaydi)")
+
+    st.markdown("---")
+    st.markdown("---")
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # AI QUEUE SOZLAMALARI
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     st.markdown("### ⚙️ AI Queue Sozlamalari")
 
     st.markdown("""
@@ -1088,7 +1160,7 @@ def _render_system_settings(settings: AppSettings) -> QueueSettings:
         http_timeout = settings.queue.http_timeout
         executor_timeout = settings.queue.executor_timeout
 
-    return QueueSettings(
+    queue = QueueSettings(
         queue_enabled=queue_enabled,
         task_wait_timeout=task_wait_timeout,
         checker_testcase_delay=checker_testcase_delay,
@@ -1104,6 +1176,7 @@ def _render_system_settings(settings: AppSettings) -> QueueSettings:
         http_timeout=http_timeout,
         executor_timeout=executor_timeout
     )
+    return queue, allowed_issue_types, excluded_assignees
 
 
 def _show_save_success_animation():
@@ -1173,7 +1246,9 @@ def _render_save_buttons(
         # comment_reading: CommentReadingSettings,
         tz_pr: TZPRCheckerSettings,
         testcase: TestcaseGeneratorSettings,
-        system: QueueSettings = None
+        system: QueueSettings = None,
+        allowed_issue_types_filter: str = None,
+        excluded_assignees_filter: str = None,
 ):
     """Saqlash tugmalari"""
 
@@ -1181,6 +1256,14 @@ def _render_save_buttons(
 
     with col1:
         if st.button("💾 Saqlash", type="primary", use_container_width=True):
+            # Webhook filter qiymatlarini Tizim tabidan TZ-PR sozlamalariga qo'shish
+            if allowed_issue_types_filter is not None or excluded_assignees_filter is not None:
+                tz_pr = replace(
+                    tz_pr,
+                    allowed_issue_types=allowed_issue_types_filter if allowed_issue_types_filter is not None else tz_pr.allowed_issue_types,
+                    excluded_assignees=excluded_assignees_filter if excluded_assignees_filter is not None else tz_pr.excluded_assignees,
+                )
+
             # Yangi sozlamalar yaratish
             new_settings = AppSettings(
                 modules=modules,
