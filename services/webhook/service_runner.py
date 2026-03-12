@@ -242,7 +242,16 @@ async def _run_testcase_generation(task_key: str, new_status: str) -> None:
         from services.webhook.testcase_webhook_handler import check_and_generate_testcases
         from services.webhook.error_handler import _classify_error
 
-        success, message = await check_and_generate_testcases(task_key, new_status)
+        # Servis-1 PR topa olmagan bo'lsa — Servis-2 GitHub'ni qayta qidirmasin,
+        # to'g'ridan TZ-only rejimda ishga tushirsin (takroriy API call oldini olish)
+        include_pr_override = None
+        if service1_status == 'error':
+            s1_error = task_db.get('service1_error', '') or ''
+            if _classify_error(s1_error) == 'pr_not_found':
+                log.info(f"[{task_key}] Servis-1 PR topa olmagan → Servis-2 TZ-only rejimda ishga tushadi")
+                include_pr_override = False
+
+        success, message = await check_and_generate_testcases(task_key, new_status, include_pr=include_pr_override)
 
         if success:
             set_service2_done(task_key)
