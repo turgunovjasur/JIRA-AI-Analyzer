@@ -266,47 +266,18 @@ async def _write_skip_notification(
     """
     try:
         skip_text = settings.skip_comment_text or (
-            "AI tekshirish o'chirilgan. "
+            "⏭️ AI tekshirish o'chirilgan. "
             "Dev tomanidan skip ko'rsatma berilgan. "
             "Manual tekshirish tavsiya etiladi."
         )
 
-        content = [
-            adf_formatter._heading("AI Tekshirish O'chirilgan", 2),
-            adf_formatter._rule(),
-            adf_formatter._paragraph([
-                adf_formatter._bold_text("Task: "),
-                adf_formatter._text_node(task_key),
-                adf_formatter._hard_break(),
-                adf_formatter._bold_text("Vaqt: "),
-                adf_formatter._text_node(datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
-                adf_formatter._hard_break(),
-                adf_formatter._bold_text("Skip kodi: "),
-                adf_formatter._text_node(settings.skip_code)
-            ]),
-            adf_formatter._rule(),
-            adf_formatter._panel([
-                adf_formatter._paragraph([
-                    adf_formatter._text_node(skip_text)
-                ])
-            ], "warning"),
-            adf_formatter._rule(),
-            adf_formatter._paragraph([
-                adf_formatter._italic_text("Bu notification AI tomonidan avtomatik yaratilgan.")
-            ])
-        ]
-
-        skip_doc = {
-            "version": 1,
-            "type": "doc",
-            "content": content
-        }
+        skip_doc = _build_warning_adf(adf_formatter, "AI Skip", skip_text, task_key, "note")
 
         success = comment_writer.add_comment_adf(task_key, skip_doc)
 
         if not success:
             log.warning(f"[{task_key}] Skip ADF failed, simple fallback")
-            comment_writer.add_comment(task_key, format_warning_simple("Servis-1", skip_text, task_key))
+            comment_writer.add_comment(task_key, skip_text)
             log.jira_comment_added(task_key, "simple")
         else:
             log.jira_comment_added(task_key, "ADF")
