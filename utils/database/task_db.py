@@ -778,47 +778,37 @@ def reset_service_statuses(task_id: str) -> None:
 
 def _extract_task_type(task_details: Dict) -> str:
     """
-    Extract task type from JIRA labels or issue type.
+    Extract task type from JIRA issue type.
 
-    Returns one of: product, client, bug, error, analiz, other
+    Raw JIRA issue type nomini qaytaradi — allowed_issue_types sozlamasi bilan mos keladi.
+    Masalan: 'DEV-BUG', 'DEV- PROD TASK', 'DEV-TECHTASK', 'DEV-CLIENT TASK'
+
+    Agar issue type bo'sh bo'lsa 'other' qaytaradi.
     """
-    # Priority 1: Check labels
-    labels = task_details.get('labels', [])
-    labels_lower = [label.lower() for label in labels]
-
-    type_keywords = {
-        'product': ['product', 'mahsulot', 'feature'],
-        'client': ['client', 'mijoz', 'customer'],
-        'bug': ['bug', 'xato', 'defect'],
-        'error': ['error', 'crash', 'exception'],
-        'analiz': ['analiz', 'analysis', 'research']
-    }
-
-    for task_type, keywords in type_keywords.items():
-        for keyword in keywords:
-            if any(keyword in label for label in labels_lower):
-                return task_type
-
-    # Priority 2: Issue type name
-    issue_type = task_details.get('type', '').lower()
-    if 'bug' in issue_type:
-        return 'bug'
-    elif 'error' in issue_type:
-        return 'error'
-    elif 'task' in issue_type or 'story' in issue_type:
-        return 'product'
-
-    return 'other'
+    issue_type = task_details.get('type', '') or ''
+    cleaned = issue_type.strip()
+    return cleaned if cleaned else 'other'
 
 
 def _extract_features_from_pr_files(pr_files: List[Dict]) -> tuple:
     """
     Extract feature names and tech stack from PR file paths.
 
-    Patterns:
-    - main/page/form/anor/mkpi/robot_bonus_setting.html → mkpi, HTML
-    - main/oracle/anor/mkpi/pkg_bonus.sql → mkpi, Oracle
-    - main/app/bonus/BonusService.java → bonus, Java
+    Fayl yo'llari strukturasi (debug DEV-6096 asosida):
+      main/oracle/module/{MODULE}/...           → MODULE
+      main/oracle/ui/{ORG}/{MODULE}/...         → MODULE
+      main/oracle/uis/form/{ORG}/{MODULE}/...   → MODULE
+      main/oracle/uis/{ORG}/{MODULE}/...        → MODULE
+      main/page/form/{ORG}/{MODULE}/...         → MODULE
+      main/app/{MODULE}/...                     → MODULE
+      main/oracle/migr[5toX]/...               → skip (migration)
+      main/oracle/setup/...                     → skip (setup)
+
+    Misol:
+      main/oracle/module/mkw/mkw_api.pck        → mkw, Oracle
+      main/oracle/ui/anor/mkw/purchase/...      → mkw, Oracle
+      main/oracle/uis/form/anor/mkw/purchase/.. → mkw, Oracle
+      main/page/form/anor/mkw/purchase/...      → mkw, HTML
 
     Returns:
         tuple: (feature_names_csv, tech_stack_csv) or (None, None)
@@ -828,47 +818,77 @@ def _extract_features_from_pr_files(pr_files: List[Dict]) -> tuple:
     features = set()
     technologies = set()
 
-    # Technology patterns
+    # Umumiy papkalar — feature sifatida hisoblanmaydi
+    _SKIP_NAMES = {
+        'form', 'ui', 'uis', 'app', 'src', 'main', 'oracle',
+        'module', 'setup', 'migr', 'init', 'test', 'tests',
+        'util', 'utils', 'common', 'shared', 'base', 'core',
+        'config', 'resources', 'assets', 'static', 'templates',
+        'page', 'pages', 'view', 'views', 'api', 'web',
+    }
+
+    # Skip pattern'lar — bu yo'llardan feature olinmaydi
+    _SKIP_PATH_PATTERNS = [
+        r'main/oracle/migr',       # migration fayllar
+        r'main/oracle/setup',      # setup/init fayllar
+    ]
+
+    # Technology pattern'lar
     tech_patterns = {
         'Oracle': [r'\.sql$', r'\.pks$', r'\.pkb$', r'\.pck$', r'/oracle/'],
-        'HTML': [r'\.html?$'],
-        'Java': [r'\.java$'],
+        'HTML':   [r'\.html?$'],
+        'Java':   [r'\.java$'],
         'JavaScript': [r'\.jsx?$'],
         'TypeScript': [r'\.tsx?$'],
         'Python': [r'\.py$'],
     }
 
-    # Feature extraction patterns
+    # Feature extraction pattern'lar (tartib muhim — birinchi mos kelgani ishlatiladi)
     feature_patterns = [
-        r'main/page/form/[^/]+/([^/]+)/',    # HTML forms
-        r'main/oracle/[^/]+/([^/]+)/',       # Oracle packages
-        r'main/app/([^/]+)/',                 # Java app
-        r'src/([^/]+)/',                      # Generic src
+        # main/oracle/module/{MODULE}/...
+        r'main/oracle/module/([^/]+)/',
+        # main/oracle/ui/{ORG}/{MODULE}/...
+        r'main/oracle/ui/[^/]+/([^/]+)/',
+        # main/oracle/uis/form/{ORG}/{MODULE}/...
+        r'main/oracle/uis/form/[^/]+/([^/]+)/',
+        # main/oracle/uis/{ORG}/{MODULE}/...
+        r'main/oracle/uis/[^/]+/([^/]+)/',
+        # main/page/form/{ORG}/{MODULE}/...
+        r'main/page/form/[^/]+/([^/]+)/',
+        # main/app/{MODULE}/...
+        r'main/app/([^/]+)/',
+        # src/{MODULE}/...
+        r'src/([^/]+)/',
     ]
 
     for file_data in pr_files:
         filename = file_data.get('filename', '')
 
-        # Detect technology
+        # Technology aniqlash
         for tech, patterns in tech_patterns.items():
             for pattern in patterns:
                 if re.search(pattern, filename, re.IGNORECASE):
                     technologies.add(tech)
                     break
 
-        # Extract feature
+        # Skip path tekshirish
+        if any(re.search(p, filename) for p in _SKIP_PATH_PATTERNS):
+            continue
+
+        # Feature olish — birinchi mos kelgan pattern
         for pattern in feature_patterns:
             match = re.search(pattern, filename)
             if match:
-                feature = match.group(1)
-                # Clean: lowercase, remove non-alphanumeric
-                feature = re.sub(r'[^a-z0-9_]', '', feature.lower())
-                if len(feature) > 2:  # Skip too short
+                feature = match.group(1).lower()
+                # Faqat harf va raqamlar
+                feature = re.sub(r'[^a-z0-9_]', '', feature)
+                # Umumiy papkalar va qisqa nomlarni o'tkazib yuborish
+                if len(feature) > 2 and feature not in _SKIP_NAMES:
                     features.add(feature)
+                break  # Birinchi mos kelgan pattern yetarli
 
-    # Convert to comma-separated strings
     feature_csv = ', '.join(sorted(features)) if features else None
-    tech_csv = ', '.join(sorted(technologies)) if technologies else None
+    tech_csv    = ', '.join(sorted(technologies)) if technologies else None
 
     return feature_csv, tech_csv
 

@@ -44,6 +44,8 @@ EXCLUDED_ASSIGNEES = [
     "Asadbek Akmalov",
     "Komiljon Zokirov",
     "Shahzod Mirjalolov",
+    "Ergashev Zarifjon",
+    "Shakhzodbek Abdujabborov"
 ]
 
 # So'nggi nechta task tekshirilsin

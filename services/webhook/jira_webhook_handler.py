@@ -637,7 +637,11 @@ async def startup_event():
         threshold=settings.return_threshold
     )
     ai_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-    ai_keys = 2 if os.getenv("GOOGLE_API_KEY_2") else 1
+    ai_keys = 1
+    i = 2
+    while os.getenv(f"GOOGLE_API_KEY_{i}"):
+        ai_keys += 1
+        i += 1
     log.ai_ready(ai_model, ai_keys)
     log.info(f"TRIGGER       {settings.trigger_status}")
     log.info(f"RETRY-DELAY   {app_settings.queue.blocked_retry_delay} min")
