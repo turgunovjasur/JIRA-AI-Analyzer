@@ -117,9 +117,6 @@ async def _write_success_comment(
             log.warning(f"[{task_key}] ADF failed, falling back to simple format")
             simple_comment = adf_formatter.build_simple_comment(result, new_status)
             comment_writer.add_comment(task_key, simple_comment)
-            log.jira_comment_added(task_key, "simple")
-        else:
-            log.jira_comment_added(task_key, "ADF")
 
     except Exception as e:
         log.error(f"[{task_key}] Comment yozishda xato: {e}")

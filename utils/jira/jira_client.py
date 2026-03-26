@@ -8,8 +8,10 @@ YANGI:
 """
 from jira import JIRA
 from typing import Dict, List, Optional, Any
-import json
 import requests
+from core.logger import get_logger
+
+_log = get_logger("jira.client")
 
 
 class JiraClient:
@@ -184,7 +186,7 @@ class JiraClient:
                     detail = details[0]
                     pull_requests = detail.get('pullRequests', [])
 
-                    print(f"   ✅ Dev Status API: {len(pull_requests)} ta PR topildi!")
+                    _log.info(f"Dev Status API: {len(pull_requests)} ta PR topildi")
 
                     for pr in pull_requests:
                         pr_url = pr.get('url', '')
@@ -197,7 +199,7 @@ class JiraClient:
                             })
 
         except Exception as e:
-            print(f"   ⚠️  Dev Status API error: {str(e)}")
+            _log.warning(f"Dev Status API error: {str(e)}")
 
         return pr_urls
 

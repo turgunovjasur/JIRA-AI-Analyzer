@@ -24,7 +24,6 @@ from ui.components import (
 # Reusable components
 from ui.components.pr_info_card import render_pr_info_card
 
-# ✅ DRY FIX: Umumiy PR Code Viewer komponenti
 from ui.components.pr_code_viewer import render_code_changes_tab
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

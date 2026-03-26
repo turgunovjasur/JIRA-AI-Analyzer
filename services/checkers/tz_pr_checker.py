@@ -594,13 +594,21 @@ class TZPRService(BaseService):
         return "\n\n".join(blocks)
 
     def _get_pr_info(self, task_key: str, task_details: Dict, update_status, use_smart_patch):
-        """PR ma'lumotlarini olish"""
+        """PR ma'lumotlarini olish va cache ga saqlash"""
         pr_info = self.pr_helper.get_pr_full_info(
             task_key,
             task_details,
             update_status,
             use_smart_patch=use_smart_patch
         )
+
+        # Service2 qayta qidirmasin deb cache ga saqlaymiz
+        if pr_info:
+            try:
+                from utils.pr_cache import set_pr_cache
+                set_pr_cache(task_key, pr_info)
+            except Exception:
+                pass
 
         return pr_info
 
@@ -813,7 +821,7 @@ class TZPRService(BaseService):
             pr_info: Dict,
             figma_section: str,
             figma_analysis: str,
-            dev_comments_section: str,  # NEW
+            dev_comments_section: str,
             response_format_sections: str,
             max_files: Optional[int],
             show_full_diff: bool,

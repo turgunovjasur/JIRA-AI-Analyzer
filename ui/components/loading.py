@@ -11,7 +11,7 @@ Hozir 3 ta sahifada bir xil loading pattern takrorlanardi:
 """
 
 import streamlit as st
-from typing import Optional, Callable
+from typing import Optional
 
 
 def render_loading_animation(text: str, subtext: str = "Iltimos kuting..."):

@@ -15,7 +15,6 @@ Version: 5.1 DRY FIXED
 """
 import streamlit as st
 from datetime import datetime
-from typing import Optional
 
 # UI Components
 from ui.components import (
@@ -414,7 +413,7 @@ def _display_results(
     # Tabs
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📊 Task Overview",
-        "🧪 Test Scenarios",
+        "🧪 Test Cases",
         "💻 Kod O'zgarishlari",
         "📋 Texnik Spetsifikatsiya",
         "📥 Eksport"
@@ -607,8 +606,8 @@ def _render_overview(
 
 @st.fragment
 def _render_test_scenarios(result):
-    """Test Scenarios (v5.3 - @st.fragment bilan filter sahifani qayta yuklamaydi)"""
-    st.markdown("### 🧪 Test Scenarios")
+    """Test Cases (v5.3 - @st.fragment bilan filter sahifani qayta yuklamaydi)"""
+    st.markdown("### 🧪 Test Cases")
 
     if not result.test_cases:
         st.info("Test case'lar topilmadi")

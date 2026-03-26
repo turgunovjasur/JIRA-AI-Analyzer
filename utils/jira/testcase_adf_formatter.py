@@ -209,7 +209,6 @@ class TestcaseADFFormatter:
             self,
             task_key: str,
             test_cases: List[Any],
-            metadata: Optional[Dict] = None,
             comment_analysis: Optional[Dict] = None,
             footer_text: Optional[str] = None,
             pr_details: Optional[List[Dict]] = None,
@@ -222,7 +221,6 @@ class TestcaseADFFormatter:
         Args:
             task_key: JIRA task key (masalan: DEV-1234)
             test_cases: TestCase ob'ektlari ro'yxati
-            metadata: Qo'shimcha ma'lumotlar (optional)
             comment_analysis: TZHelper.analyze_comments() natijasi (optional)
             footer_text: Settings-dan olingan footer matn (None bo'lsa default)
 
@@ -232,7 +230,7 @@ class TestcaseADFFormatter:
         content = []
 
         # ━━━ HEADER ━━━
-        content.append(self._heading("🧪 Avtomatik Test Case'lar", 2))
+        content.append(self._heading("🧪 Test Cases", 2))
         content.append(self._rule())
 
         # ━━━ META INFO ━━━
@@ -414,8 +412,7 @@ class TestcaseADFFormatter:
     def build_simple_comment(
             self,
             task_key: str,
-            test_cases: List[Any],
-            metadata: Optional[Dict] = None
+            test_cases: List[Any]
     ) -> str:
         """
         Oddiy Jira Markup formatda comment (ADF ishlamasa)

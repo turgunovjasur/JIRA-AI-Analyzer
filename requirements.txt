@@ -21,7 +21,6 @@ distro==1.9.0
 durationpy==0.10
 et_xmlfile==2.0.0
 fastapi==0.124.0
-ffmpy==1.0.0
 filelock==3.20.0
 flatbuffers==25.9.23
 fsspec==2025.10.0
@@ -34,7 +33,6 @@ google-auth==2.43.0
 google-auth-httplib2==0.2.1
 google-generativeai==0.8.5
 googleapis-common-protos==1.72.0
-groovy==0.1.2
 grpcio==1.76.0
 grpcio-status==1.71.2
 h11==0.16.0
@@ -86,8 +84,6 @@ pyasn1_modules==0.4.2
 pybase64==1.4.2
 pydantic==2.12.4
 pydantic_core==2.41.5
-pydeck==0.9.1
-pydub==0.25.1
 Pygments==2.19.2
 pyparsing==3.2.5
 PyPika==0.48.9

@@ -62,7 +62,7 @@ from services.webhook.error_handler import (
     _write_critical_error,
     _write_skip_notification,
 )
-from services.webhook.skip_detector import _check_skip_code, _detect_recheck
+from services.webhook.skip_detector import _check_skip_code
 from services.webhook.service_runner import (
     check_tz_pr_and_comment,
     _run_testcase_generation,

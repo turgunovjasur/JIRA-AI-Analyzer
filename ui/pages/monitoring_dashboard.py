@@ -11,9 +11,8 @@ Version: 1.0
 import streamlit as st
 import sqlite3
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 import os
-from typing import Dict, List, Optional
 
 from ui.components import render_header
 

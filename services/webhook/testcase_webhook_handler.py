@@ -54,8 +54,6 @@ async def check_and_generate_testcases(
     # include_pr: None → settingsdan, False → TZ-only
     use_pr = include_pr if include_pr is not None else tc_settings.default_include_pr
 
-    log.service_started(task_key, f"TestCase | status={new_status} | include_pr={use_pr}")
-
     try:
         # 3. Test case'lar yaratish
         from services.generators.testcase_generator import TestCaseGeneratorService
@@ -96,8 +94,6 @@ async def check_and_generate_testcases(
             details = f"pr_count={result.pr_count} | tz_len={len(result.tz_content) if result.tz_content else 0} | warnings={result.warnings}"
             log.warning(f"[{task_key}] No test cases generated | {details}")
             return False, "No test cases generated"
-
-        log.service_completed(task_key, "TestCase", f"generated {len(result.test_cases)} test cases")
 
         # 4. JIRA ga yozish
         success, message = _write_testcases_comment(
@@ -177,7 +173,6 @@ def _write_testcases_comment(
 
         if success:
             message = f"Successfully wrote {len(result.test_cases)} test cases to JIRA"
-            log.jira_comment_added(task_key, "TestCase ADF" if use_adf else "TestCase Simple")
             return True, message
         else:
             message = "Failed to write comment to JIRA"

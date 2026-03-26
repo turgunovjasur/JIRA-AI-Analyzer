@@ -196,7 +196,7 @@ async def _run_testcase_generation(task_key: str, new_status: str) -> None:
         new_status: JIRA'dagi yangi status (testcase trigger status)
     """
     try:
-        log.service_running(task_key, "service_2")
+        log.info(f"[{task_key}] service_2 running | status={new_status}")
 
         task_db = get_task(task_key)
         if not task_db:

@@ -193,12 +193,18 @@ class TestCaseGeneratorService(BaseService):
             pr_details_list = []
             if include_pr:
                 try:
-                    pr_info = self.pr_helper.get_pr_full_info(
-                        task_key,
-                        task_details,
-                        status_callback,
-                        use_smart_patch=use_smart_patch  # Smart Patch parametri
-                    )
+                    # Avval Service1 cache tekshiramiz (takroriy GitHub API call oldini olish)
+                    from utils.pr_cache import get_pr_cache
+                    pr_info = get_pr_cache(task_key)
+                    if pr_info:
+                        log.info(f"[{task_key}] PR cache dan foydalanildi (Service1 topgan, qayta qidirilmadi)")
+                    else:
+                        pr_info = self.pr_helper.get_pr_full_info(
+                            task_key,
+                            task_details,
+                            status_callback,
+                            use_smart_patch=use_smart_patch  # Smart Patch parametri
+                        )
                 except Exception as pr_e:
                     log.warning(f"[{task_key}] PR fetch xatosi: {pr_e}")
                     pr_info = None

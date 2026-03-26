@@ -304,7 +304,7 @@ class JiraADFFormatter:
         content = []
 
         # ━━━ HEADER ━━━
-        content.append(self._heading("🎯 Avtomatik TZ-PR Moslik Tekshiruvi", 2))
+        content.append(self._heading("🎯 TZ-PR Checker", 2))
         content.append(self._rule())
 
         # ━━━ META INFO ━━━
@@ -548,7 +548,7 @@ class JiraADFFormatter:
         status_emoji = "🎯" if "Ready" in new_status else "🧪"
 
         comment = f"""
-{status_emoji} *Avtomatik TZ-PR Moslik Tekshiruvi*
+{status_emoji} *TZ-PR Checker*
 
 ----
 

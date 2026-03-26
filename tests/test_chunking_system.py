@@ -8,10 +8,9 @@ Bu script chunking quality va embedding accuracy'ni test qiladi
 import sys
 import os
 
-from utils.ai.chunking_helper import ChunkingHelper
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from utils.ai.chunking_helper import ChunkingHelper
 from utils.database.metadata_helper import MetadataHelper
 
 
@@ -65,8 +64,8 @@ def test_root_cause_detection():
             'text': """
             Bug Report: Login fails
 
-            Root cause: The authentication service was not properly handling null 
-            tokens. Due to a race condition in the token validation logic, some 
+            Root cause: The authentication service was not properly handling null
+            tokens. Due to a race condition in the token validation logic, some
             requests were processed without valid tokens.
 
             Steps: User clicks login -> Error 500
@@ -141,7 +140,7 @@ def test_solution_extraction():
     test_cases = [
         {
             'text': """
-            Solution: Added null check in token validation. 
+            Solution: Added null check in token validation.
             Fixed by implementing proper token verification before processing requests.
             Changed the authentication flow to validate tokens first.
             """,
@@ -201,11 +200,11 @@ def test_chunk_creation():
         'description': """
         Users are unable to login to the system.
 
-        Root cause: The authentication service was not properly handling null 
-        tokens. Due to a race condition in the token validation logic, some 
+        Root cause: The authentication service was not properly handling null
+        tokens. Due to a race condition in the token validation logic, some
         requests were processed without valid tokens.
 
-        Solution: Added null check in token validation and fixed the race 
+        Solution: Added null check in token validation and fixed the race
         condition by implementing proper synchronization.
         """,
         'comments': """

@@ -243,7 +243,6 @@ class TZPRCheckerSettings:
         "JIRA ga comment yozilish tartibini nazorat qilish. "
         "'checker_first' — TZ-PR tahlil birinchi, test case ikkinchi. "
         "'testcase_first' — test case birinchi, TZ-PR tahlil ikkinchi. "
-        "'parallel' — ikkala servis parallel ishlaydi (tezroq)."
     )
     show_contradictory_comments_help: str = "Zid commentlar (TZ ni o'zgartiruvchi) panelini JIRA comment'da ko'rsatish"
     visible_sections_help: str = (

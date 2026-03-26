@@ -15,20 +15,18 @@ Author: JASUR TURGUNOV
 Version: 1.0
 """
 import streamlit as st
-from dataclasses import asdict, replace
+from dataclasses import replace
 
 from config.app_settings import (
     AppSettings,
     ModuleVisibility,
     BugAnalyzerSettings,
     StatisticsSettings,
-    CommentReadingSettings,
     TZPRCheckerSettings,
     TestcaseGeneratorSettings,
     QueueSettings,
     get_app_settings,
     save_app_settings,
-    get_settings_manager
 )
 from ui.components import render_header
 
@@ -78,14 +76,14 @@ def render_unified_settings():
         testcase = _render_testcase_settings(settings)
 
     with tabs[5]:
-        system, allowed_issue_types_filter, excluded_assignees_filter = _render_system_settings(settings)
+        system, allowed_issue_types_filter, excluded_assignees_filter, comment_order_filter = _render_system_settings(settings)
 
     st.markdown("---")
 
     # Saqlash tugmalari
     _render_save_buttons(
         settings, modules, bug_analyzer, statistics, tz_pr, testcase, system,
-        allowed_issue_types_filter, excluded_assignees_filter
+        allowed_issue_types_filter, excluded_assignees_filter, comment_order_filter
     )
 
 
@@ -447,30 +445,10 @@ def _render_tz_pr_settings(settings: AppSettings) -> TZPRCheckerSettings:
 
     st.markdown("---")
 
-    # ━━━ 5. Comment Yozilish Tartib ━━━
-    st.markdown("#### 📋 Comment Yozilish Tartib")
-
-    # Agar eski "parallel" qiymat saqlangan bo'lsa, checker_first'ga ko'chiramiz
-    current_order = settings.tz_pr_checker.comment_order
-    if current_order not in ["checker_first", "testcase_first"]:
-        current_order = "checker_first"
-
-    comment_order = _render_setting_with_help(
-        "Comment Tartib",
-        current_order,
-        settings.tz_pr_checker.comment_order_help,
-        "selectbox",
-        "tzpr_comment_order",
-        options=["checker_first", "testcase_first"]
-    )
-
-    order_labels = {
-        "checker_first": "TZ-PR Tahlil → Test Case",
-        "testcase_first": "Test Case → TZ-PR Tahlil",
-    }
-    st.caption(f"Hozirgi tartib: {order_labels.get(comment_order, comment_order)}")
-
-    st.markdown("---")
+    # comment_order Tizim tabida boshqariladi — bu yerda faqat saqlangan qiymat ishlatiladi
+    comment_order = settings.tz_pr_checker.comment_order
+    if comment_order not in ["checker_first", "testcase_first"]:
+        comment_order = "checker_first"
 
     # ━━━ 5.1 AI ma'lumotlar darajasi (TZ-PR) ━━━
     st.markdown("#### 📊 AI ga ma'lumotlar darajasi (tartibi)")
@@ -840,10 +818,10 @@ def _render_testcase_settings(settings: AppSettings) -> TestcaseGeneratorSetting
 
 
 def _render_system_settings(settings: AppSettings):
-    """Tizim Sozlamalari — Webhook Filtrlari + AI Queue
+    """Tizim Sozlamalari — Webhook Filtrlari + AI Queue + Comment Tartib
 
     Returns:
-        tuple: (QueueSettings, allowed_issue_types: str, excluded_assignees: str)
+        tuple: (QueueSettings, allowed_issue_types: str, excluded_assignees: str, comment_order: str)
     """
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -963,20 +941,38 @@ def _render_system_settings(settings: AppSettings):
 
         st.markdown("---")
 
-        # ━━━ Checker → Testcase delay ━━━
-        st.markdown("#### ⏱️ Checker → Testcase Delay")
+        # ━━━ Comment Yozilish Tartib + Checker → Testcase Delay ━━━
+        st.markdown("#### 📋 Comment Yozilish Tartib va Kutish Vaqti")
         st.markdown("""
         <div style="background: rgba(88, 166, 255, 0.08); padding: 0.7rem; border-radius: 8px; margin-bottom: 0.7rem;">
             <p style="color: #8b949e; margin: 0; font-size: 0.85rem;">
-                💡 <strong>Masalan:</strong> Task keldi → Checker comment yozildi →
-                <strong>15 sekunda kutiladi</strong> → Testcase comment yoziladi.
-                Bu Gemini API rate limit'dan himoya qiladi.
+                💡 <strong>Masalan:</strong> Checker comment yozildi → <strong>15 sekunda kutiladi</strong> → Testcase comment yoziladi.
             </p>
         </div>
         """, unsafe_allow_html=True)
 
+        # Agar eski "parallel" qiymat saqlangan bo'lsa, checker_first'ga ko'chiramiz
+        current_comment_order = settings.tz_pr_checker.comment_order
+        if current_comment_order not in ["checker_first", "testcase_first"]:
+            current_comment_order = "checker_first"
+
+        comment_order = _render_setting_with_help(
+            "Comment Tartib",
+            current_comment_order,
+            settings.tz_pr_checker.comment_order_help,
+            "selectbox",
+            "tzpr_comment_order",
+            options=["checker_first", "testcase_first"]
+        )
+
+        order_labels = {
+            "checker_first": "TZ-PR Tahlil → Test Case",
+            "testcase_first": "Test Case → TZ-PR Tahlil",
+        }
+        st.caption(f"Hozirgi tartib: {order_labels.get(comment_order, comment_order)}")
+
         checker_testcase_delay = _render_setting_with_help(
-            "Checker → Testcase Delay (sek)",
+            "Servislar Orasidagi Kutish Vaqti (sek)",
             settings.queue.checker_testcase_delay,
             settings.queue.checker_testcase_delay_help,
             "slider",
@@ -986,7 +982,7 @@ def _render_system_settings(settings: AppSettings):
             step=5
         )
 
-        st.caption(f"Checker comment yozgandan so'ng {checker_testcase_delay}s kutiladi")
+        st.caption(f"1-servis tugagandan so'ng {checker_testcase_delay}s kutiladi, keyin 2-servis ishga tushadi")
 
         st.markdown("---")
 
@@ -1159,6 +1155,9 @@ def _render_system_settings(settings: AppSettings):
         db_connection_timeout = settings.queue.db_connection_timeout
         http_timeout = settings.queue.http_timeout
         executor_timeout = settings.queue.executor_timeout
+        comment_order = settings.tz_pr_checker.comment_order
+        if comment_order not in ["checker_first", "testcase_first"]:
+            comment_order = "checker_first"
 
     queue = QueueSettings(
         queue_enabled=queue_enabled,
@@ -1176,7 +1175,7 @@ def _render_system_settings(settings: AppSettings):
         http_timeout=http_timeout,
         executor_timeout=executor_timeout
     )
-    return queue, allowed_issue_types, excluded_assignees
+    return queue, allowed_issue_types, excluded_assignees, comment_order
 
 
 def _show_save_success_animation():
@@ -1249,6 +1248,7 @@ def _render_save_buttons(
         system: QueueSettings = None,
         allowed_issue_types_filter: str = None,
         excluded_assignees_filter: str = None,
+        comment_order_filter: str = None,
 ):
     """Saqlash tugmalari"""
 
@@ -1256,13 +1256,16 @@ def _render_save_buttons(
 
     with col1:
         if st.button("💾 Saqlash", type="primary", use_container_width=True):
-            # Webhook filter qiymatlarini Tizim tabidan TZ-PR sozlamalariga qo'shish
-            if allowed_issue_types_filter is not None or excluded_assignees_filter is not None:
-                tz_pr = replace(
-                    tz_pr,
-                    allowed_issue_types=allowed_issue_types_filter if allowed_issue_types_filter is not None else tz_pr.allowed_issue_types,
-                    excluded_assignees=excluded_assignees_filter if excluded_assignees_filter is not None else tz_pr.excluded_assignees,
-                )
+            # Tizim tabidan kelgan qiymatlarni TZ-PR sozlamalariga qo'shish
+            replace_kwargs = {}
+            if allowed_issue_types_filter is not None:
+                replace_kwargs["allowed_issue_types"] = allowed_issue_types_filter
+            if excluded_assignees_filter is not None:
+                replace_kwargs["excluded_assignees"] = excluded_assignees_filter
+            if comment_order_filter is not None:
+                replace_kwargs["comment_order"] = comment_order_filter
+            if replace_kwargs:
+                tz_pr = replace(tz_pr, **replace_kwargs)
 
             # Yangi sozlamalar yaratish
             new_settings = AppSettings(
