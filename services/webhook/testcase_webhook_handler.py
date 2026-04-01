@@ -47,7 +47,7 @@ async def check_and_generate_testcases(
 
     # 2. Trigger status tekshirish
     trigger_statuses = tc_settings.get_trigger_statuses()
-    if new_status not in trigger_statuses:
+    if new_status.lower() not in [s.lower() for s in trigger_statuses]:
         log.status_ignored(task_key, new_status, f"not in trigger list: {trigger_statuses}")
         return False, f"Status '{new_status}' is not a trigger"
 
@@ -71,23 +71,32 @@ async def check_and_generate_testcases(
 
         if not result.success:
             error_msg = result.error_message or "Test case generation failed"
-            # TZ yetarli emas (min belgidan qisqa) bo'lsa — JIRA'ga Warning comment yozish
-            if "yetarli ma'lumot yo'q" in (error_msg or "") or "Servis-2 to'xtatildi" in (error_msg or ""):
+            from services.webhook.error_handler import _classify_error, _build_warning_adf, format_warning_simple
+            error_type = _classify_error(error_msg)
+
+            # TZ yetarli emas, PR merged emas yoki boshqa bloklash holatlari — JIRA'ga Warning comment yozish
+            should_write_comment = (
+                "yetarli ma'lumot yo'q" in (error_msg or "")
+                or "Servis-2 to'xtatildi" in (error_msg or "")
+                or "Servis-1 to'xtatildi" in (error_msg or "")
+                or error_type in ('pr_not_merged', 'pr_not_found', 'tz_too_short')
+            )
+            if should_write_comment:
                 try:
                     from services.webhook.jira_webhook_handler import get_comment_writer, get_adf_formatter
-                    from services.webhook.error_handler import _build_warning_adf, format_warning_simple
                     writer = get_comment_writer()
                     adf_formatter = get_adf_formatter()
                     reason = error_msg.strip() if error_msg else (
                         "TZ (description) yetarli emas. Testcase yaratish to'xtatildi."
                     )
-                    warning_doc = _build_warning_adf(adf_formatter, "Servis-2", reason, task_key)
+                    panel_type = "error" if error_type == 'pr_not_merged' else "warning"
+                    warning_doc = _build_warning_adf(adf_formatter, "Servis-2", reason, task_key, panel_type)
                     success = writer.add_comment_adf(task_key, warning_doc)
                     if not success:
                         writer.add_comment(task_key, format_warning_simple("Servis-2", reason, task_key))
-                    log.jira_comment_added(task_key, "Warning ADF")
+                    log.jira_comment_added(task_key, f"{panel_type.capitalize()} ADF")
                 except Exception as e:
-                    log.warning(f"[{task_key}] JIRA TZ ogohlantirish comment yozilmadi: {e}")
+                    log.warning(f"[{task_key}] JIRA ogohlantirish comment yozilmadi: {e}")
             return False, error_msg
 
         if not result.test_cases:
@@ -248,4 +257,4 @@ def is_testcase_trigger_status(status: str) -> bool:
         return False
 
     trigger_statuses = tc_settings.get_trigger_statuses()
-    return status in trigger_statuses
+    return status.lower() in [s.lower() for s in trigger_statuses]

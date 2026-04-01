@@ -21,7 +21,7 @@ from typing import Any
 from config.app_settings import get_app_settings, TZPRCheckerSettings
 from core.logger import get_logger
 from utils.database.task_db import (
-    get_task, mark_returned,
+    get_task, mark_returned, mark_returned_pr_not_merged,
     set_service1_done, set_service1_error, set_service1_blocked,
     set_service2_done, set_service2_error, set_service2_blocked
 )
@@ -110,17 +110,26 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str) -> None:
                 retry_minutes = get_app_settings(force_reload=False).queue.blocked_retry_delay
                 set_service1_blocked(task_key, error_msg, retry_minutes)
                 log.info(f"[{task_key}] Service1 BLOCKED: {retry_minutes} min")
-            elif error_type == 'pr_not_found':
-                # PR topilmadi — Service2 baribir TZ-only rejimda ishlashi mumkin
-                set_service1_error(task_key, error_msg, keep_service2_pending=True)
+                await _write_error_comment(
+                    task_key, error_msg, new_status,
+                    settings, comment_writer, adf_formatter
+                )
+            elif error_type in ('pr_not_found', 'pr_not_merged', 'tz_too_short'):
+                # PR yo'q / merged emas / TZ qisqa → JIRA error, task qaytariladi, DB returned
+                log.warning(f"[{task_key}] [{error_type}] → task qaytarilmoqda")
+                await _write_error_comment(
+                    task_key, error_msg, new_status,
+                    settings, comment_writer, adf_formatter
+                )
+                await _handle_pr_not_merged_return(task_key, settings)
+                mark_returned_pr_not_merged(task_key)
             else:
                 # Boshqa xatolik — Service2 ham to'xtatiladi
                 set_service1_error(task_key, error_msg)
-
-            await _write_error_comment(
-                task_key, error_msg, new_status,
-                settings, comment_writer, adf_formatter
-            )
+                await _write_error_comment(
+                    task_key, error_msg, new_status,
+                    settings, comment_writer, adf_formatter
+                )
             return
 
         # 2. Muvaffaqiyatli — ADF comment yozish (yoki oddiy format fallback)
@@ -242,16 +251,15 @@ async def _run_testcase_generation(task_key: str, new_status: str) -> None:
         from services.webhook.testcase_webhook_handler import check_and_generate_testcases
         from services.webhook.error_handler import _classify_error
 
-        # Servis-1 PR topa olmagan bo'lsa — Servis-2 GitHub'ni qayta qidirmasin,
-        # to'g'ridan TZ-only rejimda ishga tushirsin (takroriy API call oldini olish)
-        include_pr_override = None
-        if service1_status == 'error':
-            s1_error = task_db.get('service1_error', '') or ''
-            if _classify_error(s1_error) == 'pr_not_found':
-                log.info(f"[{task_key}] Servis-1 PR topa olmagan → Servis-2 TZ-only rejimda ishga tushadi")
-                include_pr_override = False
+        # Skip/PR logikasi endi skip_cache va pr_exists/merged_cache orqali boshqariladi
+        success, message = await check_and_generate_testcases(task_key, new_status)
 
-        success, message = await check_and_generate_testcases(task_key, new_status, include_pr=include_pr_override)
+        # Barcha cache yozuvlarini tozalash (task tugadi)
+        try:
+            from utils.pr_cache import clear_task_cache
+            clear_task_cache(task_key)
+        except Exception:
+            pass
 
         if success:
             set_service2_done(task_key)
@@ -266,23 +274,11 @@ async def _run_testcase_generation(task_key: str, new_status: str) -> None:
                 retry_minutes = app_settings.queue.blocked_retry_delay
                 set_service2_blocked(task_key, error_msg, retry_minutes)
                 log.info(f"[{task_key}] Service2 BLOCKED: {retry_minutes} min")
-            elif error_type == 'pr_not_found' and tc_settings.default_include_pr:
-                # PR topilmadi → TZ-only rejimda qayta urinish
-                success2, message2 = await check_and_generate_testcases(
-                    task_key, new_status, include_pr=False
-                )
-                if success2:
-                    set_service2_done(task_key)
-                    log.service_done(task_key, "service_2", result=f"{message2} (TZ-only)")
-                else:
-                    error_msg2 = f"Testcase TZ-only fallback failed: {message2}"
-                    error_type2 = _classify_error(error_msg2)
-                    if error_type2 == 'ai_timeout':
-                        retry_minutes = app_settings.queue.blocked_retry_delay
-                        set_service2_blocked(task_key, error_msg2, retry_minutes)
-                    else:
-                        set_service2_error(task_key, error_msg2)
-                    log.service_error(task_key, "service_2", error_msg2)
+            elif error_type in ('pr_not_found', 'pr_not_merged', 'tz_too_short'):
+                # PR yo'q / merged emas / TZ qisqa → task qaytariladi (comment testcase_webhook_handler da yoziladi)
+                log.warning(f"[{task_key}] Servis-2 [{error_type}] → task qaytarilmoqda")
+                await _handle_pr_not_merged_return(task_key, app_settings.tz_pr_checker)
+                mark_returned_pr_not_merged(task_key)
             else:
                 set_service2_error(task_key, error_msg)
 
@@ -374,3 +370,39 @@ async def _handle_auto_return(
 
     except Exception as e:
         log.error(f"[{task_key}] Auto-return xato: {e}")
+
+
+async def _handle_pr_not_merged_return(
+        task_key: str,
+        settings: "TZPRCheckerSettings"
+) -> None:
+    """
+    PR merged emas bo'lganda JIRA task statusini return_status ga o'zgartirish.
+
+    check_tz_pr_and_comment() tomonidan chaqiriladi — error comment yozilgandan
+    keyin, mark_returned_pr_not_merged() dan oldin.
+
+    Ishlash tartibi:
+        1. JiraStatusManager.change_status() orqali return_status ga o'tkazish
+        2. Muvaffaqiyatli bo'lsa — warning log
+        3. Muvaffaqiyatsiz bo'lsa — log (DB yangilanishi caller tomonidan baribir bo'ladi)
+
+    Args:
+        task_key: JIRA task identifikatori
+        settings: TZPRCheckerSettings — return_status olish uchun
+    """
+    try:
+        from utils.jira.jira_status_manager import get_status_manager
+        status_manager = get_status_manager()
+        return_status = settings.return_status
+
+        success, msg = status_manager.change_status(task_key, return_status)
+        if success:
+            log.warning(
+                f"[{task_key}] RETURNED (PR not merged) → {return_status}"
+            )
+        else:
+            log.warning(f"[{task_key}] PR not merged return FAILED: {msg}")
+
+    except Exception as e:
+        log.error(f"[{task_key}] PR not merged return xato: {e}")

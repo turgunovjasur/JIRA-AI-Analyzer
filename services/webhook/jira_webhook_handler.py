@@ -73,7 +73,6 @@ from services.webhook.queue_manager import (
     _wait_for_ai_slot,
     _run_task_group,
     _queued_check_tz_pr,
-    _run_sequential_tasks,
 )
 from services.webhook.retry_scheduler import (
     _retry_blocked_task,
@@ -204,10 +203,9 @@ async def jira_webhook(request: Request, background_tasks: BackgroundTasks):
        - Dublikat event (bir xil status, progressing/completed) → ignored
     5. AI_SKIP kodi borligini tekshiradi:
        - Bor → Service1 o'chiriladi, skip notification yoziladi, faqat Service2 ishlaydi
-    6. comment_order sozlamasiga qarab background task ishga tushiriladi:
-       - 'parallel' + testcase → _run_task_group() (lock ichida ikkalasi)
+    6. Background task ishga tushiriladi:
+       - testcase trigger → _run_task_group() (Service1 → delay → Service2)
        - faqat checker → _queued_check_tz_pr() (faqat Service1)
-       - 'checker_first'/'testcase_first' → _run_sequential_tasks()
 
     Returns:
         JSON response:
@@ -260,7 +258,7 @@ async def jira_webhook(request: Request, background_tasks: BackgroundTasks):
         settings = app_settings.tz_pr_checker
         target_statuses = settings.get_trigger_statuses()
 
-        if new_status not in target_statuses:
+        if new_status.lower() not in [s.lower() for s in target_statuses]:
             log.info(f"[{task_key}] SKIP -> {old_status} => {new_status} (trigger emas)")
             return {
                 "status": "ignored",
@@ -344,59 +342,51 @@ async def jira_webhook(request: Request, background_tasks: BackgroundTasks):
 
         # AI_SKIP kodi tekshiruvi
         skip_code = settings.skip_code.strip() if settings.skip_code else ""
+        from utils.pr_cache import set_skip_cache
         if skip_code:
             comment_writer = get_comment_writer()
             skip_detected = await _check_skip_code(task_key, skip_code, comment_writer)
-            if skip_detected:
-                log.service_skip(task_key, "service_1", f"skip_code='{skip_code}'")
-
-                # Service1 'skip' holatga — score=100 hisoblanadi (threshold o'tadi)
-                set_service1_skip(task_key)
-
-                # JIRA'ga skip notification yozish
-                adf_formatter = get_adf_formatter()
-                await _write_skip_notification(task_key, settings, comment_writer, adf_formatter)
-
-                # Service2 faqat testcase trigger status bo'lsa ishlaydi
-                testcase_should_run = is_testcase_trigger_status(new_status)
-                if testcase_should_run:
-                    background_tasks.add_task(
-                        _run_testcase_generation, task_key=task_key, new_status=new_status
-                    )
-                    log.service_running(task_key, "service_2")
-
-                return {
-                    "status": "skipped_service1",
-                    "task_key": task_key,
-                    "reason": f"Skip code '{skip_code}' topildi",
-                    "skipped_tasks": ["tz_pr_check"],
-                    "running_tasks": ["testcase"] if testcase_should_run else []
-                }
-
-        # Background task'lar (comment_order sozlamasiga qarab)
-        testcase_should_run = is_testcase_trigger_status(new_status)
-        comment_order = settings.comment_order
-
-        if comment_order == "parallel" or not testcase_should_run:
-            if testcase_should_run:
-                # Parallel mode: Service1 + Service2 bitta lock ichida
-                log.info(f"[{task_key}] Starting task group (parallel mode)")
-                background_tasks.add_task(
-                    _run_task_group, task_key=task_key, new_status=new_status
-                )
-            else:
-                # Faqat Service1
-                background_tasks.add_task(
-                    _queued_check_tz_pr, task_key=task_key, new_status=new_status
-                )
         else:
-            # Sequential mode: checker_first yoki testcase_first
+            skip_detected = False
+        set_skip_cache(task_key, skip_detected)
+        if skip_detected:
+            log.service_skip(task_key, "service_1", f"skip_code='{skip_code}'")
+
+            # Service1 'skip' holatga — score=100 hisoblanadi (threshold o'tadi)
+            set_service1_skip(task_key)
+
+            # JIRA'ga skip notification yozish
+            adf_formatter = get_adf_formatter()
+            await _write_skip_notification(task_key, settings, comment_writer, adf_formatter)
+
+            # Service2 faqat testcase trigger status bo'lsa ishlaydi
+            testcase_should_run = is_testcase_trigger_status(new_status)
+            if testcase_should_run:
+                background_tasks.add_task(
+                    _run_testcase_generation, task_key=task_key, new_status=new_status
+                )
+                log.service_running(task_key, "service_2")
+
+            return {
+                "status": "skipped_service1",
+                "task_key": task_key,
+                "reason": f"Skip code '{skip_code}' topildi",
+                "skipped_tasks": ["tz_pr_check"],
+                "running_tasks": ["testcase"] if testcase_should_run else []
+            }
+
+        # Background task'lar: har doim Service1 → delay → Service2
+        testcase_should_run = is_testcase_trigger_status(new_status)
+
+        if testcase_should_run:
+            # Service1 + Service2 bitta lock ichida (Service1 tugagach Service2)
             background_tasks.add_task(
-                _run_sequential_tasks,
-                task_key=task_key,
-                new_status=new_status,
-                first="checker" if comment_order == "checker_first" else "testcase",
-                run_testcase=testcase_should_run
+                _run_task_group, task_key=task_key, new_status=new_status
+            )
+        else:
+            # Faqat Service1
+            background_tasks.add_task(
+                _queued_check_tz_pr, task_key=task_key, new_status=new_status
             )
 
         return {
@@ -406,7 +396,6 @@ async def jira_webhook(request: Request, background_tasks: BackgroundTasks):
             "new_status": new_status,
             "message": "TZ-PR check started",
             "testcase_triggered": testcase_should_run,
-            "comment_order": comment_order,
             "settings": {
                 "use_adf": settings.use_adf_format,
                 "auto_return": settings.auto_return_enabled,

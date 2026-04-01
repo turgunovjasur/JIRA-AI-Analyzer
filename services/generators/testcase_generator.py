@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 import json
 
 # Core imports
-from core import BaseService, PRHelper, TZHelper
+from core import BaseService, PRHelper, PRNotMergedError, TZHelper
 from core.logger import get_logger
 
 log = get_logger("testcase.gen")
@@ -171,43 +171,66 @@ class TestCaseGeneratorService(BaseService):
                     error_message=f"{task_key} topilmadi"
                 )
 
-            # 2. TZ va Comment tahlili (TZHelper ishlatamiz)
             from config.app_settings import get_app_settings
+            from utils.pr_cache import (
+                get_skip_cache, get_pr_exists_cache, get_pr_merged_cache, get_pr_cache
+            )
 
-            # O'ZGARISH: comment_reading o'rniga testcase_generator ishlatamiz
-            tc_settings = get_app_settings().testcase_generator
+            # 2. Skip cache o'qish — AI_SKIP topilganmi?
+            skip_detected = get_skip_cache(task_key)
 
-            if not tc_settings.read_comments_enabled:
-                task_no_comments = dict(task_details)
-                task_no_comments['comments'] = []
-                tz_content, comment_analysis = TZHelper.format_tz_with_comments(task_no_comments)
-            else:
-                max_c = tc_settings.max_comments_to_read if tc_settings.max_comments_to_read > 0 else None
-                tz_content, comment_analysis = TZHelper.format_tz_with_comments(
-                    task_details, max_comments=max_c
-                )
-
-            # 3. PR ma'lumotlari (PRHelper ishlatamiz - Smart Patch bilan)
+            # 3. PR check (skip bo'lmasa)
             warnings = []
             pr_info = None
             pr_details_list = []
-            if include_pr:
-                try:
-                    # Avval Service1 cache tekshiramiz (takroriy GitHub API call oldini olish)
-                    from utils.pr_cache import get_pr_cache
-                    pr_info = get_pr_cache(task_key)
-                    if pr_info:
-                        log.info(f"[{task_key}] PR cache dan foydalanildi (Service1 topgan, qayta qidirilmadi)")
-                    else:
+
+            if skip_detected:
+                # AI_SKIP topilgan — PR check o'tkazib yuboriladi
+                log.info(f"[{task_key}] skip_cache=True → PR check o'tkazib yuborildi")
+            elif include_pr:
+                # skip yo'q — PR bor/merged natijasini cache dan olamiz
+                pr_exists = get_pr_exists_cache(task_key)
+                pr_merged = get_pr_merged_cache(task_key)
+
+                if pr_exists is False:
+                    return TestCaseGenerationResult(
+                        task_key=task_key,
+                        task_summary=task_details.get('summary', ''),
+                        success=False,
+                        error_message="Bu task uchun PR topilmadi (JIRA va GitHub'da)",
+                    )
+                if pr_merged is False:
+                    return TestCaseGenerationResult(
+                        task_key=task_key,
+                        task_summary=task_details.get('summary', ''),
+                        success=False,
+                        error_message="❌ PR merged emas. Faqat 'merged' statusdagi PR'lar qabul qilinadi.",
+                    )
+
+                # Cache dan PR info olish (Servis-1 saqlagan)
+                pr_info = get_pr_cache(task_key)
+                if pr_info:
+                    log.info(f"[{task_key}] PR cache dan foydalanildi (Servis-1 topgan, qayta qidirilmadi)")
+                else:
+                    # Cache yo'q (faqat Servis-2 standalone ishlayotgan holat)
+                    try:
                         pr_info = self.pr_helper.get_pr_full_info(
                             task_key,
                             task_details,
                             status_callback,
-                            use_smart_patch=use_smart_patch  # Smart Patch parametri
+                            use_smart_patch=use_smart_patch
                         )
-                except Exception as pr_e:
-                    log.warning(f"[{task_key}] PR fetch xatosi: {pr_e}")
-                    pr_info = None
+                    except PRNotMergedError as e:
+                        log.warning(f"[{task_key}] PR merged emas: {e}")
+                        return TestCaseGenerationResult(
+                            task_key=task_key,
+                            task_summary=task_details.get('summary', ''),
+                            success=False,
+                            error_message=str(e),
+                        )
+                    except Exception as pr_e:
+                        log.warning(f"[{task_key}] PR fetch xatosi: {pr_e}")
+                        pr_info = None
 
                 if pr_info:
                     pr_details_list = pr_info.get('pr_details', [])
@@ -218,30 +241,40 @@ class TestCaseGeneratorService(BaseService):
                     )
                     update_status("warning", "PR topilmadi, TZ asosida davom etilmoqda...")
 
-            # 4. Overview yaratish (TZHelper ishlatamiz)
-            overview = TZHelper.create_task_overview(
-                task_details,
-                comment_analysis,
-                pr_info
-            )
-
-            # 5. TZ yetarli emas bo'lsa — Servis-2 to'xtatiladi (testcase uchun yetarli ma'lumot yo'q)
+            # 4. TZ uzunlik tekshiruvi
             tc_settings = get_app_settings().testcase_generator
             max_test_cases = tc_settings.max_test_cases
-            min_tz_chars = getattr(tc_settings, 'min_tz_description_chars', 50)
-            if self._is_tz_absent_or_minimal(task_details, min_tz_chars):
+            min_tz_chars = get_app_settings().tz_pr_checker.min_tz_description_chars
+            if min_tz_chars > 0 and self._is_tz_absent_or_minimal(task_details, min_tz_chars):
                 msg = (
-                    "Testcase uchun yetarli ma'lumot yo'q. "
+                    f"TZ yetarli emas. "
                     f"(min: {min_tz_chars} belgi). Servis-2 to'xtatildi."
                 )
                 return TestCaseGenerationResult(
                     task_key=task_key,
                     task_summary=task_details['summary'],
                     task_full_details=task_details,
-                    task_overview=TZHelper.create_task_overview(task_details, comment_analysis, pr_info),
                     success=False,
                     error_message=msg
                 )
+
+            # 5. TZ va Comment tahlili
+            if not tc_settings.read_comments_enabled:
+                task_no_comments = dict(task_details)
+                task_no_comments['comments'] = []
+                tz_content, comment_analysis = TZHelper.format_tz_with_comments(task_no_comments)
+            else:
+                max_c = tc_settings.max_comments_to_read if tc_settings.max_comments_to_read > 0 else None
+                tz_content, comment_analysis = TZHelper.format_tz_with_comments(
+                    task_details, max_comments=max_c
+                )
+
+            # 6. Overview yaratish
+            overview = TZHelper.create_task_overview(
+                task_details,
+                comment_analysis,
+                pr_info
+            )
 
             ai_result = self._generate_with_ai(
                 task_key=task_key,

@@ -163,10 +163,6 @@ class TZPRCheckerSettings:
     read_comments_enabled: bool = True
     max_comments_to_read: int = 0  # 0 = barcha
 
-    # ━━━ Comment Tartib ━━━
-    # JIRA ga comment yozilish tartibini nazorat qilish
-    comment_order: str = "checker_first"  # "checker_first" | "testcase_first" | "parallel"
-
     # ━━━ Zid Commentlar ━━━
     # Zid commentlar panelini JIRA comment'da ko'rsatish
     show_contradictory_comments: bool = True
@@ -193,6 +189,16 @@ class TZPRCheckerSettings:
         "Bu ro'yxatdagi assignee'lar uchun barcha servislar ishga tushmaydi (skip). "
         "JIRA displayName bo'yicha, vergul bilan: 'Alisher Karimov, Bobur Toshmatov'. "
         "Bo'sh qolsa — filter o'chiq (hammaga ishlaydi)."
+    )
+
+    # ━━━ TZ Minimal Uzunlik ━━━
+    # Ikkala servis (Servis-1 va Servis-2) uchun: description shu belgidan qisqa bo'lsa
+    # task qaytariladi va error comment yoziladi.
+    min_tz_description_chars: int = 50
+    min_tz_description_chars_help: str = (
+        "Task description shu belgidan qisqa bo'lsa ikkala servis ham to'xtatiladi: "
+        "JIRA'ga error comment yoziladi va task qaytariladi. "
+        "50 = bo'sh yoki faqat sarlavha bo'lsa servislar ishlamaydi."
     )
 
     # ━━━ Skip Code ━━━
@@ -239,11 +245,6 @@ class TZPRCheckerSettings:
     recheck_comment_help: str = "Task qaytarildigan so'ng yana tekshirilayotgan bo'lganda ko'rinadigan xabar"
     read_comments_help: str = "JIRA task comment'larini AI ga yuborish. O'chirilsa faqat TZ asosida ishlaydi"
     max_comments_help: str = "AI ga yuborilgan comment'lar soni. 0 = barcha comment'lar"
-    comment_order_help: str = (
-        "JIRA ga comment yozilish tartibini nazorat qilish. "
-        "'checker_first' — TZ-PR tahlil birinchi, test case ikkinchi. "
-        "'testcase_first' — test case birinchi, TZ-PR tahlil ikkinchi. "
-    )
     show_contradictory_comments_help: str = "Zid commentlar (TZ ni o'zgartiruvchi) panelini JIRA comment'da ko'rsatish"
     visible_sections_help: str = (
         "JIRA comment'ga yoziladigan bo'limlar. "
@@ -261,11 +262,6 @@ class TZPRCheckerSettings:
         if not 0 <= self.return_threshold <= 100:
             raise ValueError(
                 f"return_threshold {self.return_threshold}% noto'g'ri: 0-100 oralig'ida bo'lishi kerak"
-            )
-        if self.comment_order not in ('checker_first', 'testcase_first', 'parallel'):
-            raise ValueError(
-                f"comment_order '{self.comment_order}' noto'g'ri: "
-                "'checker_first', 'testcase_first' yoki 'parallel' bo'lishi kerak"
             )
         if self.max_skip_check_comments < 1:
             raise ValueError(
@@ -310,10 +306,6 @@ class TestcaseGeneratorSettings:
     # AI javob uchun maksimal token soni (truncation oldini olish uchun)
     ai_max_output_tokens: int = 16384
 
-    # ━━━ TZ yo'q / faqat summary ━━━
-    # Description shu belgidan qisqa bo'lsa "TZ yo'q" deb hisoblanadi — test case'lar summary + comment + kod asosida yaratiladi
-    min_tz_description_chars: int = 50
-
     # ━━━ AI ga ma'lumotlar tartibi (darajasi) ━━━
     # Sozlamadagi tartib bo'yicha AI promtiga bo'limlar qo'shiladi. Servis SHU tartibga qat'iy amal qiladi.
     # Bo'limlar: tz, comments, custom_context, code
@@ -344,10 +336,6 @@ class TestcaseGeneratorSettings:
     test_types_help: str = "Default test turlari: positive (asosiy), negative (xato holatlari)"
     max_test_cases_help: str = "AI yaratadigan maksimal test case soni (1-30)"
     ai_max_output_tokens_help: str = "AI javob uchun maksimal token soni (16384 tavsiya etiladi)"
-    min_tz_description_chars_help: str = (
-        "Task description shu belgidan qisqa bo'lsa testcase uchun yetarli ma'lumot yo'q deb hisoblanadi va Servis-2 to'xtatiladi. "
-        "50 = faqat summary/bo'sh description bo'lsa test case yaratilmaydi."
-    )
     ai_data_section_order_help: str = (
         "AI ga ma'lumotlar qaysi tartibda berilishi. Birinchi o'rinda eng ustun. "
         "tz = TZ, comments = comment'lar, custom_context = qo'shimcha kontekst, code = kod statistikasi. "
@@ -379,10 +367,6 @@ class TestcaseGeneratorSettings:
         if "tz" not in order:
             raise ValueError("ai_data_section_order da 'tz' bo'lishi shart")
         self.ai_data_section_order = order if order else ["tz", "comments", "custom_context", "code"]
-        if self.min_tz_description_chars < 0 or self.min_tz_description_chars > 1000:
-            raise ValueError(
-                f"min_tz_description_chars {self.min_tz_description_chars} noto'g'ri: 0-1000 oralig'ida bo'lishi kerak"
-            )
 
     def get_trigger_statuses(self) -> List[str]:
         """Barcha trigger statuslarni qaytarish"""
@@ -616,6 +600,18 @@ class AppSettingsManager:
                         tc_data['max_comments_to_read'] = old_comment.get('max_comments_to_read', 0)
                         data['testcase_generator'] = tc_data
                     log.info("Comment reading settings migrated to modules")
+
+                # min_tz_description_chars migratsiyasi: testcase_generator → tz_pr_checker
+                tc_data = data.get('testcase_generator', {})
+                if 'min_tz_description_chars' in tc_data:
+                    tz_data = data.get('tz_pr_checker', {})
+                    if 'min_tz_description_chars' not in tz_data:
+                        tz_data['min_tz_description_chars'] = tc_data.pop('min_tz_description_chars')
+                        data['tz_pr_checker'] = tz_data
+                    else:
+                        tc_data.pop('min_tz_description_chars')
+                    data['testcase_generator'] = tc_data
+                    log.info("min_tz_description_chars testcase_generator → tz_pr_checker ga ko'chirildi")
 
                 # Nested dataclass'larni yaratish
                 settings = AppSettings(

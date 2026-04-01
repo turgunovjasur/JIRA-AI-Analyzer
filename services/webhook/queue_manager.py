@@ -1,6 +1,6 @@
 """
-Queue Manager Module - AI navbat va parallel/sequential task boshqaruvi
-=======================================================================
+Queue Manager Module - AI navbat va task boshqaruvi
+====================================================
 
 Bu modul Google Gemini AI API ga bir vaqtda ko'p so'rov ketmasligi uchun
 global navbat (queue) tizimini boshqaradi.
@@ -15,10 +15,8 @@ Yechim:
   - _wait_for_ai_slot() — so'rovlar orasida minimal interval
   - Task-level lock: Service1 → delay → Service2 (bitta lock ichida)
 
-Uchta ish rejimi:
-  1. parallel (comment_order='parallel'): Service1 + Service2 birga (lock ichida)
-  2. checker_first: Service1 tugasin, keyin Service2 (sequential, lock ichida)
-  3. testcase_first: Service2 tugasin, keyin Service1 (sequential, lock ichida)
+Ish tartibi (har doim bir xil):
+  Service1 (TZ-PR) tugaydi → checker_testcase_delay → Service2 (Testcase)
 """
 import asyncio
 import time
@@ -90,11 +88,10 @@ async def _write_timeout_error_comment(task_key: str, timeout_seconds: int) -> N
 
 async def _run_task_group(task_key: str, new_status: str) -> None:
     """
-    Parallel mode: Service1 va Service2 ni bitta lock ichida ketma-ket ishga tushirish.
+    Service1 va Service2 ni bitta lock ichida ketma-ket ishga tushirish.
 
-    Bu 'parallel' comment_order uchun ishlatiladi. Nomiga qaramay aslida sequential —
-    Service1 tugagandan KEYIN Service2 boshlanadi (chunki Service2 uchun Service1 natijasi kerak).
-    'Parallel' — bu lock'ni bir marta olish, boshqa task kutib turishi ma'nosida.
+    Har doim Service1 birinchi, so'ng Service2 (agar shartlar bajarilsa).
+    Bitta lock ichida ishlaydi — boshqa task shu vaqtda AI ishlatmaydi.
 
     Oqim:
     1. Lock olish (timeout: task_wait_timeout sekund)
@@ -209,99 +206,6 @@ async def _queued_check_tz_pr(task_key: str, new_status: str) -> None:
         lock.release()
 
 
-async def _run_sequential_tasks(
-        task_key: str,
-        new_status: str,
-        first: str,
-        run_testcase: bool = True
-) -> None:
-    """
-    Sequential mode: belgilangan tartibda Service1 va Service2 ni ishga tushirish.
-
-    checker_first (eng ko'p ishlatiladigan): Service1 → delay → Service2
-    testcase_first (kam ishlatiladi): Service2 → delay → Service1
-
-    Ikkalasi ham bitta lock ichida — boshqa task kutib turadi.
-
-    Service2 ishlamaydigan hollar (checker_first):
-    - service1_status 'done' | 'skip' emas
-    - compliance_score < threshold
-    - task_status 'returned' | 'blocked'
-    - service1='error' va service2='pending' → ishlaydi (TZ-only)
-
-    Args:
-        task_key: JIRA task identifikatori
-        new_status: JIRA yangi status
-        first: 'checker' (Service1 avval) yoki 'testcase' (Service2 avval)
-        run_testcase: False bo'lsa Service2 umuman ishlamaydi
-    """
-    from services.webhook.service_runner import check_tz_pr_and_comment, _run_testcase_generation
-    from utils.database.task_db import set_service1_error, set_service2_error
-
-    app_settings = get_app_settings(force_reload=False)
-    queue_settings = app_settings.queue
-    delay = queue_settings.checker_testcase_delay
-
-    if not queue_settings.queue_enabled:
-        await _run_sequential_no_lock(
-            task_key, new_status, first, run_testcase, delay, app_settings,
-            check_tz_pr_and_comment, _run_testcase_generation,
-            set_service1_error, set_service2_error
-        )
-        return
-
-    lock = _get_ai_queue_lock()
-    timeout = queue_settings.task_wait_timeout
-
-    try:
-        await asyncio.wait_for(lock.acquire(), timeout=timeout)
-    except asyncio.TimeoutError:
-        log.queue_timeout(task_key, timeout)
-        set_task_timeout_error(task_key, f"Queue timeout: {timeout}s")
-        await _write_timeout_error_comment(task_key, timeout)
-        return
-
-    try:
-        if first == "checker":
-            # 1) Service1
-            await _wait_for_ai_slot(task_key)
-            try:
-                await check_tz_pr_and_comment(task_key=task_key, new_status=new_status)
-            except Exception as e:
-                log.error(f"[{task_key}] Sequential Service1 error: {e}", exc_info=True)
-
-            # 2) Service1 → Service2 delay va shartlar tekshiruvi
-            if run_testcase:
-                if delay > 0:
-                    await asyncio.sleep(delay)
-
-                task_db = get_task(task_key)
-                if task_db and _can_run_service2(task_db, app_settings):
-                    await _wait_for_ai_slot(task_key)
-                    try:
-                        await _run_testcase_generation(task_key=task_key, new_status=new_status)
-                    except Exception as e:
-                        log.error(f"[{task_key}] Sequential Service2 error: {e}", exc_info=True)
-        else:
-            # testcase_first: 1) Service2 → 2) Service1
-            if run_testcase:
-                await _wait_for_ai_slot(task_key)
-                try:
-                    await _run_testcase_generation(task_key=task_key, new_status=new_status)
-                except Exception as e:
-                    log.error(f"[{task_key}] Sequential Service2 error: {e}", exc_info=True)
-
-            if delay > 0:
-                await asyncio.sleep(delay)
-            await _wait_for_ai_slot(task_key)
-            try:
-                await check_tz_pr_and_comment(task_key=task_key, new_status=new_status)
-            except Exception as e:
-                log.error(f"[{task_key}] Sequential Service1 error: {e}", exc_info=True)
-    finally:
-        lock.release()
-
-
 def _can_run_service2(task_db: dict, app_settings) -> bool:
     """
     Service2 ishlay oladimi tekshirish (DB ma'lumotlari asosida).
@@ -336,51 +240,3 @@ def _can_run_service2(task_db: dict, app_settings) -> bool:
     return False
 
 
-async def _run_sequential_no_lock(
-        task_key, new_status, first, run_testcase, delay, app_settings,
-        check_tz_pr_and_comment, _run_testcase_generation,
-        set_service1_error, set_service2_error
-) -> None:
-    """
-    Queue o'chirilgan holatda sequential ishga tushirish (lock siz).
-
-    _run_sequential_tasks() ning lock siz varianti.
-    Faqat queue_enabled=False bo'lganda chaqiriladi.
-    """
-    if first == "checker":
-        try:
-            await check_tz_pr_and_comment(task_key=task_key, new_status=new_status)
-        except Exception as e:
-            log.error(f"[{task_key}] Sequential Service1 error: {e}", exc_info=True)
-            set_service1_error(task_key, str(e))
-
-        if run_testcase:
-            task_db_seq = get_task(task_key)
-            if task_db_seq and _can_run_service2(task_db_seq, app_settings):
-                if delay > 0:
-                    await asyncio.sleep(delay)
-                try:
-                    await _run_testcase_generation(task_key=task_key, new_status=new_status)
-                except Exception as e:
-                    log.error(f"[{task_key}] Sequential Service2 error: {e}", exc_info=True)
-                    set_service2_error(task_key, str(e))
-            else:
-                if task_db_seq:
-                    s1 = task_db_seq.get('service1_status', 'pending')
-                    ts = task_db_seq.get('task_status', 'none')
-                    log.info(f"[{task_key}] Service2 skip (s1={s1}, task={ts})")
-    else:
-        if run_testcase:
-            try:
-                await _run_testcase_generation(task_key=task_key, new_status=new_status)
-            except Exception as e:
-                log.error(f"[{task_key}] Sequential Service2 error: {e}", exc_info=True)
-                set_service2_error(task_key, str(e))
-                return
-        if delay > 0:
-            await asyncio.sleep(delay)
-        try:
-            await check_tz_pr_and_comment(task_key=task_key, new_status=new_status)
-        except Exception as e:
-            log.error(f"[{task_key}] Sequential Service1 error: {e}", exc_info=True)
-            set_service1_error(task_key, str(e))

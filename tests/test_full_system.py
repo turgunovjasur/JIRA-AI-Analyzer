@@ -94,7 +94,7 @@ class TestServiceUnit:
             'summary': 'Test task summary',
             'type': 'Story',
             'priority': 'High',
-            'description': 'Test TZ mazmuni',
+            'description': 'Test TZ: Foydalanuvchi login sahifasiga kirib, username va parol kiritib tizimga kirishi kerak. Validatsiya: boʻsh maydon, notoʻgʻri parol, muvaffaqiyatli kirish. Responsiv dizayn va error handling talab qilinadi.',
             'comments': [],
             'figma_links': []
         }
@@ -136,7 +136,7 @@ class TestServiceUnit:
             'summary': 'Test task summary',
             'type': 'Story',
             'priority': 'High',
-            'description': 'Test TZ mazmuni',
+            'description': 'Test TZ: Foydalanuvchi login sahifasiga kirib, username va parol kiritib tizimga kirishi kerak. Validatsiya: boʻsh maydon, notoʻgʻri parol, muvaffaqiyatli kirish. Responsiv dizayn va error handling talab qilinadi.',
             'comments': [],
             'figma_links': []
         }
@@ -178,7 +178,7 @@ class TestServiceUnit:
             'summary': 'Test task summary',
             'type': 'Story',
             'priority': 'High',
-            'description': 'Test TZ mazmuni',
+            'description': 'Test TZ: Foydalanuvchi login sahifasiga kirib, username va parol kiritib tizimga kirishi kerak. Validatsiya: boʻsh maydon, notoʻgʻri parol, muvaffaqiyatli kirish. Responsiv dizayn va error handling talab qilinadi.',
             'comments': [],
             'figma_links': []
         }
@@ -220,7 +220,7 @@ class TestServiceUnit:
             'summary': 'Test task summary',
             'type': 'Story',
             'priority': 'High',
-            'description': 'Test TZ mazmuni',
+            'description': 'Test TZ: Foydalanuvchi login sahifasiga kirib, username va parol kiritib tizimga kirishi kerak. Validatsiya: boʻsh maydon, notoʻgʻri parol, muvaffaqiyatli kirish. Responsiv dizayn va error handling talab qilinadi.',
             'comments': [],
             'figma_links': []
         }
@@ -268,7 +268,7 @@ class TestServiceUnit:
             'summary': 'Login functionality',
             'type': 'Story',
             'priority': 'High',
-            'description': 'Login sahifasini yaratish kerak',
+            'description': 'Login sahifasini yaratish kerak. Foydalanuvchi username va parol kiritib tizimga kira olishi kerak. Validatsiya: boʻsh maydon xatosi, notoʻgʻri parol xatosi, muvaffaqiyatli kirish holatlari. Sessiya boshqaruvi ham talab qilinadi.',
             'comments': []
         }
         mock_gemini = MagicMock()
@@ -318,7 +318,7 @@ class TestServiceUnit:
             'summary': 'Login functionality',
             'type': 'Story',
             'priority': 'High',
-            'description': 'Login sahifasini yaratish kerak',
+            'description': 'Login sahifasini yaratish kerak. Foydalanuvchi username va parol kiritib tizimga kira olishi kerak. Validatsiya: boʻsh maydon xatosi, notoʻgʻri parol xatosi, muvaffaqiyatli kirish holatlari. Sessiya boshqaruvi ham talab qilinadi.',
             'comments': []
         }
         mock_gemini = MagicMock()
@@ -367,7 +367,7 @@ class TestServiceUnit:
             'summary': 'Login functionality',
             'type': 'Story',
             'priority': 'High',
-            'description': 'Login',
+            'description': 'Login sahifasi uchun texnik topshiriq. Foydalanuvchi tizimga kirish, parolni unutish va sessiya tugash holatlarini qoʻllab-quvvatlash kerak. Barcha xato holatlari uchun tegishli xabarlar koʻrsatilsin.',
             'comments': []
         }
         mock_gemini = MagicMock()
@@ -404,7 +404,7 @@ class TestServiceUnit:
             'summary': 'Widget test',
             'type': 'Story',
             'priority': 'High',
-            'description': 'desc',
+            'description': 'Widget sahifasini yaratish: komponentni ishga tushirish, sozlamalarni qabul qilish, animatsiyalar va responsiv dizayn. ACME mahsuloti uchun maxsus talablar ham mavjud. Foydalanuvchi interfeysi sezgir va qulay bo\'lishi, turli qurilmalarda to\'g\'ri ko\'rsatilishi shart.',
             'comments': []
         }
         mock_gemini = MagicMock()
@@ -592,7 +592,7 @@ class TestWebhookEndpoint:
         client = TestClient(app)
         payload = {
             "webhookEvent": "jira:issue_updated",
-            "issue": {"key": "TEST-WEBHOOK-001"},
+            "issue": {"key": "TEST-WEBHOOK-001", "fields": {"issuetype": {"name": "DEV-BUG"}}},
             "changelog": {
                 "items": [
                     {"field": "status", "fromString": "In Progress", "toString": "READY TO TEST"}
@@ -602,10 +602,9 @@ class TestWebhookEndpoint:
         with patch('services.webhook.jira_webhook_handler.check_tz_pr_and_comment', new_callable=AsyncMock):
             with patch('services.webhook.jira_webhook_handler._run_testcase_generation', new_callable=AsyncMock):
                 with patch('services.webhook.jira_webhook_handler._run_task_group', new_callable=AsyncMock):
-                    with patch('services.webhook.jira_webhook_handler._run_sequential_tasks', new_callable=AsyncMock):
-                        response = client.post("/webhook/jira", json=payload)
-                        data = response.json()
-                        assert data.get('status') == 'processing'
+                    response = client.post("/webhook/jira", json=payload)
+                    data = response.json()
+                    assert data.get('status') == 'processing'
 
     def test_correct_status_task_key_returned(self):
         from fastapi.testclient import TestClient
@@ -613,7 +612,7 @@ class TestWebhookEndpoint:
         client = TestClient(app)
         payload = {
             "webhookEvent": "jira:issue_updated",
-            "issue": {"key": "TEST-WEBHOOK-001"},
+            "issue": {"key": "TEST-WEBHOOK-001", "fields": {"issuetype": {"name": "DEV-BUG"}}},
             "changelog": {
                 "items": [
                     {"field": "status", "fromString": "In Progress", "toString": "READY TO TEST"}
@@ -623,10 +622,9 @@ class TestWebhookEndpoint:
         with patch('services.webhook.jira_webhook_handler.check_tz_pr_and_comment', new_callable=AsyncMock):
             with patch('services.webhook.jira_webhook_handler._run_testcase_generation', new_callable=AsyncMock):
                 with patch('services.webhook.jira_webhook_handler._run_task_group', new_callable=AsyncMock):
-                    with patch('services.webhook.jira_webhook_handler._run_sequential_tasks', new_callable=AsyncMock):
-                        response = client.post("/webhook/jira", json=payload)
-                        data = response.json()
-                        assert data.get('task_key') == 'TEST-WEBHOOK-001'
+                    response = client.post("/webhook/jira", json=payload)
+                    data = response.json()
+                    assert data.get('task_key') == 'TEST-WEBHOOK-001'
 
     def test_duplicate_event_ignored(self):
         from fastapi.testclient import TestClient
@@ -634,7 +632,7 @@ class TestWebhookEndpoint:
         client = TestClient(app)
         payload = {
             "webhookEvent": "jira:issue_updated",
-            "issue": {"key": "TEST-WEBHOOK-001"},
+            "issue": {"key": "TEST-WEBHOOK-001", "fields": {"issuetype": {"name": "DEV-BUG"}}},
             "changelog": {
                 "items": [
                     {"field": "status", "fromString": "In Progress", "toString": "READY TO TEST"}
@@ -644,13 +642,12 @@ class TestWebhookEndpoint:
         with patch('services.webhook.jira_webhook_handler.check_tz_pr_and_comment', new_callable=AsyncMock):
             with patch('services.webhook.jira_webhook_handler._run_testcase_generation', new_callable=AsyncMock):
                 with patch('services.webhook.jira_webhook_handler._run_task_group', new_callable=AsyncMock):
-                    with patch('services.webhook.jira_webhook_handler._run_sequential_tasks', new_callable=AsyncMock):
-                        # First request
-                        client.post("/webhook/jira", json=payload)
-                        # Duplicate request
-                        response2 = client.post("/webhook/jira", json=payload)
-                        data2 = response2.json()
-                        assert data2.get('status') == 'ignored'
+                    # First request
+                    client.post("/webhook/jira", json=payload)
+                    # Duplicate request
+                    response2 = client.post("/webhook/jira", json=payload)
+                    data2 = response2.json()
+                    assert data2.get('status') == 'ignored'
 
     def test_no_task_key_returns_error(self):
         from fastapi.testclient import TestClient
@@ -689,7 +686,8 @@ class TestWebhookEndpoint:
                     "key": task_key,
                     "fields": {
                         "summary": f"Test Task {i}",
-                        "status": {"name": "READY TO TEST"}
+                        "status": {"name": "READY TO TEST"},
+                        "issuetype": {"name": "DEV-BUG"}
                     }
                 },
                 "changelog": {
@@ -706,15 +704,14 @@ class TestWebhookEndpoint:
         with patch('services.webhook.jira_webhook_handler.check_tz_pr_and_comment', new_callable=AsyncMock):
             with patch('services.webhook.jira_webhook_handler._run_testcase_generation', new_callable=AsyncMock):
                 with patch('services.webhook.jira_webhook_handler._run_task_group', new_callable=AsyncMock):
-                    with patch('services.webhook.jira_webhook_handler._run_sequential_tasks', new_callable=AsyncMock):
-                        success_count = 0
-                        for payload in webhook_payloads:
-                            response = client.post("/webhook/jira", json=payload)
-                            if response.status_code == 200:
-                                data = response.json()
-                                if data.get('status') in ('processing', 'ignored'):
-                                    success_count += 1
-                        assert success_count == 20
+                    success_count = 0
+                    for payload in webhook_payloads:
+                        response = client.post("/webhook/jira", json=payload)
+                        if response.status_code == 200:
+                            data = response.json()
+                            if data.get('status') in ('processing', 'ignored'):
+                                success_count += 1
+                    assert success_count == 20
 
     def test_20_fake_webhooks_written_to_db(self):
         from fastapi.testclient import TestClient
@@ -727,7 +724,7 @@ class TestWebhookEndpoint:
         for i, task_key in enumerate(task_keys, 1):
             payload = {
                 "webhookEvent": "jira:issue_updated",
-                "issue": {"key": task_key},
+                "issue": {"key": task_key, "fields": {"issuetype": {"name": "DEV-BUG"}}},
                 "changelog": {
                     "items": [
                         {
@@ -742,11 +739,10 @@ class TestWebhookEndpoint:
         with patch('services.webhook.jira_webhook_handler.check_tz_pr_and_comment', new_callable=AsyncMock):
             with patch('services.webhook.jira_webhook_handler._run_testcase_generation', new_callable=AsyncMock):
                 with patch('services.webhook.jira_webhook_handler._run_task_group', new_callable=AsyncMock):
-                    with patch('services.webhook.jira_webhook_handler._run_sequential_tasks', new_callable=AsyncMock):
-                        for payload in webhook_payloads:
-                            client.post("/webhook/jira", json=payload)
-                        db_tasks_found = sum(1 for k in task_keys if get_task(k) is not None)
-                        assert db_tasks_found == 20
+                    for payload in webhook_payloads:
+                        client.post("/webhook/jira", json=payload)
+                    db_tasks_found = sum(1 for k in task_keys if get_task(k) is not None)
+                    assert db_tasks_found == 20
 
 
 # ============================================================================
@@ -1089,18 +1085,12 @@ class TestDatabaseOperations:
 
 class TestServiceOrchestration:
     """
-    Bir taskda 2 ta servis qay tartibda ishlashi (test_5, test_8)
-    - checker_first mode: Service1 -> delay -> Service2
+    Bir taskda 2 ta servis tartibi (test_5, test_8)
+    - Har doim: Service1 -> delay -> Service2
     - Service2 Service1 done bo'lguncha kutadimi?
     - Score threshold Service2 ni bloklayaptimi?
     - Testcase webhook handler
     """
-
-    def test_default_comment_order_is_valid(self):
-        from config.app_settings import get_app_settings
-        settings = get_app_settings()
-        valid_orders = ["checker_first", "testcase_first", "parallel"]
-        assert settings.tz_pr_checker.comment_order in valid_orders
 
     def test_service1_done_allows_service2(self):
         from utils.database.task_db import get_task, mark_progressing, set_service1_done
@@ -1230,7 +1220,7 @@ class TestErrorHandling:
             'summary': 'Test task',
             'type': 'Story',
             'priority': 'High',
-            'description': 'TZ content',
+            'description': 'TZ content: Sahifada komponent yaratish, stillashtirish, validatsiya qoʻshish, API bilan bogʻlash va xato holatlarini boshqarish talab qilinadi. Responsiv boʻlishi va barcha brauzerda ishlashi kerak.',
             'comments': [],
             'figma_links': []
         }
@@ -1250,7 +1240,7 @@ class TestErrorHandling:
             'summary': 'Test task',
             'type': 'Story',
             'priority': 'High',
-            'description': 'TZ content',
+            'description': 'TZ content: Sahifada komponent yaratish, stillashtirish, validatsiya qoʻshish, API bilan bogʻlash va xato holatlarini boshqarish talab qilinadi. Responsiv boʻlishi va barcha brauzerda ishlashi kerak.',
             'comments': [],
             'figma_links': []
         }
@@ -1555,12 +1545,6 @@ class TestSettingsManagement:
         settings = AppSettings()
         assert 'completed' in settings.tz_pr_checker.visible_sections
 
-    def test_comment_order_valid_value(self):
-        from config.app_settings import AppSettings
-        settings = AppSettings()
-        valid_orders = ["checker_first", "testcase_first", "parallel"]
-        assert settings.tz_pr_checker.comment_order in valid_orders
-
     def test_default_max_test_cases(self):
         from config.app_settings import AppSettings
         settings = AppSettings()
@@ -1572,12 +1556,6 @@ class TestSettingsManagement:
         assert settings.testcase_generator.default_test_types == ['positive', 'negative']
 
     # --- Resilience test_2: settings conflicts ---
-
-    def test_comment_order_is_valid_value(self):
-        from config.app_settings import get_app_settings
-        settings = get_app_settings(force_reload=True)
-        valid_orders = ["checker_first", "testcase_first", "parallel"]
-        assert settings.tz_pr_checker.comment_order in valid_orders
 
     def test_return_threshold_range(self):
         from config.app_settings import get_app_settings
@@ -1740,47 +1718,6 @@ class TestBlockedRetry:
     - DB v3 migration columns
     - Blocked tasklar bilan key-1 va key-2 ishlashi
     """
-
-    def _classify_error_local(self, error_msg: str) -> str:
-        """Local copy of error classification logic for testing"""
-        if not error_msg:
-            return 'unknown'
-        msg_lower = error_msg.lower()
-        pr_keywords = ['pr topilmadi', 'pr not found', 'no pr found']
-        if any(kw in msg_lower for kw in pr_keywords):
-            return 'pr_not_found'
-        ai_timeout_keywords = [
-            'timeout', '429', 'rate limit', 'rate_limit',
-            'overloaded', 'quota', 'resource exhausted',
-            'resource_exhausted', 'too many requests'
-        ]
-        if any(kw in msg_lower for kw in ai_timeout_keywords):
-            return 'ai_timeout'
-        return 'unknown'
-
-    def test_classify_error_pr_not_found(self):
-        result = self._classify_error_local("Bu task uchun PR topilmadi (JIRA va GitHub'da)")
-        assert result == 'pr_not_found'
-
-    def test_classify_error_timeout(self):
-        result = self._classify_error_local("AI xatolik: timeout after 60s")
-        assert result == 'ai_timeout'
-
-    def test_classify_error_429(self):
-        result = self._classify_error_local("Error 429: Too Many Requests")
-        assert result == 'ai_timeout'
-
-    def test_classify_error_quota(self):
-        result = self._classify_error_local("Resource exhausted: quota exceeded")
-        assert result == 'ai_timeout'
-
-    def test_classify_error_unknown(self):
-        result = self._classify_error_local("Some random error")
-        assert result == 'unknown'
-
-    def test_classify_error_empty(self):
-        result = self._classify_error_local("")
-        assert result == 'unknown'
 
     def test_classify_error_from_webhook_handler(self):
         from services.webhook.jira_webhook_handler import _classify_error
@@ -2270,142 +2207,481 @@ class TestDeleteAndWebhook:
 
 
 # ============================================================================
-# CLASS 12: TestSystemResilience
+# CLASS 12: TestErrorClassification
 # ============================================================================
 
-class TestSystemResilience:
+class TestErrorClassification:
     """
-    Tizim bardoshliligi (resilience test_5, test_6)
-    - Queue lock mexanizmi
-    - DB concurrent access
-    - Settings reload mexanizmi
-    - Error classification mexanizmi
-    - Task status state machine
-    - Invalid payload handling
+    _classify_error() funksiyasi barcha xato turlari uchun to'g'ri natija berishi
     """
 
-    def test_queue_lock_singleton_resilience(self):
-        from services.webhook.jira_webhook_handler import _get_ai_queue_lock
-        lock1 = _get_ai_queue_lock()
-        lock2 = _get_ai_queue_lock()
-        assert lock1 is lock2
+    def test_pr_not_found_keyword(self):
+        from services.webhook.error_handler import _classify_error
+        assert _classify_error("PR topilmadi: no PR found") == 'pr_not_found'
 
-    def test_error_classification_pr_not_found(self):
-        from services.webhook.jira_webhook_handler import _classify_error
-        result = _classify_error("PR topilmadi: no PR found")
-        assert result == 'pr_not_found'
+    def test_pr_not_found_english(self):
+        from services.webhook.error_handler import _classify_error
+        assert _classify_error("pull request not found for branch dev") == 'pr_not_found'
 
-    def test_error_classification_ai_timeout(self):
-        from services.webhook.jira_webhook_handler import _classify_error
-        result = _classify_error("AI timeout: 429 rate limit exceeded")
-        assert result == 'ai_timeout'
+    def test_pr_not_merged(self):
+        from services.webhook.error_handler import _classify_error
+        assert _classify_error("PR merged emas: hali open") == 'pr_not_merged'
 
-    def test_error_classification_both_keys(self):
-        from services.webhook.jira_webhook_handler import _classify_error
-        result = _classify_error("AI xatolik: ikkala key ham ishlamadi")
-        assert result == 'ai_timeout'
+    def test_tz_too_short(self):
+        from services.webhook.error_handler import _classify_error
+        assert _classify_error("Servis-1 to'xtatildi: TZ minimal emas") == 'tz_too_short'
 
-    def test_task_state_machine_progressing(self):
-        from utils.database.task_db import mark_progressing, get_task
-        task_key = "TEST-MECH-001"
+    def test_ai_timeout_429(self):
+        from services.webhook.error_handler import _classify_error
+        assert _classify_error("Error 429: Too Many Requests") == 'ai_timeout'
+
+    def test_ai_timeout_resource_exhausted(self):
+        from services.webhook.error_handler import _classify_error
+        assert _classify_error("resource_exhausted: quota exceeded") == 'ai_timeout'
+
+    def test_ai_timeout_both_keys(self):
+        from services.webhook.error_handler import _classify_error
+        assert _classify_error("ikkala key ham ishlamadi") == 'ai_timeout'
+
+    def test_ai_timeout_gemini_api(self):
+        from services.webhook.error_handler import _classify_error
+        assert _classify_error("Gemini API xatosi: overloaded") == 'ai_timeout'
+
+    def test_unknown_error(self):
+        from services.webhook.error_handler import _classify_error
+        assert _classify_error("AttributeError: 'NoneType' object has no attribute 'foo'") == 'unknown'
+
+    def test_empty_string(self):
+        from services.webhook.error_handler import _classify_error
+        assert _classify_error("") == 'unknown'
+
+    def test_none_message(self):
+        from services.webhook.error_handler import _classify_error
+        assert _classify_error(None) == 'unknown'
+
+
+# ============================================================================
+# CLASS 13: TestWarningADF
+# ============================================================================
+
+class TestWarningADF:
+    """
+    _build_warning_adf() va format_warning_simple() to'g'ri ADF/text qaytarishi
+    """
+
+    def _get_formatter(self):
+        from utils.jira.jira_adf_formatter import JiraADFFormatter
+        return JiraADFFormatter()
+
+    def test_build_warning_adf_returns_dict(self):
+        from services.webhook.error_handler import _build_warning_adf
+        doc = _build_warning_adf(self._get_formatter(), "Servis-1", "Test reason", "TEST-001")
+        assert isinstance(doc, dict)
+
+    def test_build_warning_adf_has_version(self):
+        from services.webhook.error_handler import _build_warning_adf
+        doc = _build_warning_adf(self._get_formatter(), "Servis-1", "Test reason", "TEST-001")
+        assert doc.get('version') == 1
+
+    def test_build_warning_adf_has_content(self):
+        from services.webhook.error_handler import _build_warning_adf
+        doc = _build_warning_adf(self._get_formatter(), "Servis-1", "Test reason", "TEST-001")
+        assert len(doc.get('content', [])) > 0
+
+    def test_build_warning_adf_panel_warning_type(self):
+        from services.webhook.error_handler import _build_warning_adf
+        doc = _build_warning_adf(self._get_formatter(), "Servis-1", "reason", "TEST-001", "warning")
+        panel = doc['content'][0]
+        assert panel.get('attrs', {}).get('panelType') == 'warning'
+
+    def test_build_warning_adf_panel_error_type(self):
+        from services.webhook.error_handler import _build_warning_adf
+        doc = _build_warning_adf(self._get_formatter(), "Servis-1", "reason", "TEST-001", "error")
+        panel = doc['content'][0]
+        assert panel.get('attrs', {}).get('panelType') == 'error'
+
+    def test_build_warning_adf_panel_note_type(self):
+        from services.webhook.error_handler import _build_warning_adf
+        doc = _build_warning_adf(self._get_formatter(), "AI Skip", "reason", "TEST-001", "note")
+        panel = doc['content'][0]
+        assert panel.get('attrs', {}).get('panelType') == 'note'
+
+    def test_format_warning_simple_contains_service(self):
+        from services.webhook.error_handler import format_warning_simple
+        text = format_warning_simple("Servis-2", "PR topilmadi", "TEST-001")
+        assert "Servis-2" in text
+
+    def test_format_warning_simple_contains_reason(self):
+        from services.webhook.error_handler import format_warning_simple
+        text = format_warning_simple("Servis-2", "PR topilmadi", "TEST-001")
+        assert "PR topilmadi" in text
+
+    def test_format_warning_simple_contains_task_key(self):
+        from services.webhook.error_handler import format_warning_simple
+        text = format_warning_simple("Servis-2", "reason", "TEST-KEY-001")
+        assert "TEST-KEY-001" in text
+
+
+# ============================================================================
+# CLASS 14: TestCanRunService2
+# ============================================================================
+
+class TestCanRunService2:
+    """
+    _can_run_service2() barcha branch'lari uchun to'g'ri True/False qaytarishi
+    """
+
+    def _settings(self):
+        from config.app_settings import get_app_settings
+        return get_app_settings()
+
+    def test_s1_done_score_above_threshold_true(self):
+        from services.webhook.queue_manager import _can_run_service2
+        task_db = {'service1_status': 'done', 'service2_status': 'pending',
+                   'compliance_score': 80, 'task_status': 'progressing'}
+        assert _can_run_service2(task_db, self._settings()) is True
+
+    def test_s1_skip_true(self):
+        from services.webhook.queue_manager import _can_run_service2
+        task_db = {'service1_status': 'skip', 'service2_status': 'pending',
+                   'compliance_score': 100, 'task_status': 'progressing'}
+        assert _can_run_service2(task_db, self._settings()) is True
+
+    def test_s1_done_score_none_true(self):
+        from services.webhook.queue_manager import _can_run_service2
+        task_db = {'service1_status': 'done', 'service2_status': 'pending',
+                   'compliance_score': None, 'task_status': 'progressing'}
+        assert _can_run_service2(task_db, self._settings()) is True
+
+    def test_s1_done_score_below_threshold_false(self):
+        from services.webhook.queue_manager import _can_run_service2
+        settings = self._settings()
+        low_score = settings.tz_pr_checker.return_threshold - 1
+        task_db = {'service1_status': 'done', 'service2_status': 'pending',
+                   'compliance_score': low_score, 'task_status': 'progressing'}
+        assert _can_run_service2(task_db, settings) is False
+
+    def test_s1_pending_false(self):
+        from services.webhook.queue_manager import _can_run_service2
+        task_db = {'service1_status': 'pending', 'service2_status': 'pending',
+                   'compliance_score': None, 'task_status': 'progressing'}
+        assert _can_run_service2(task_db, self._settings()) is False
+
+    def test_s1_blocked_false(self):
+        from services.webhook.queue_manager import _can_run_service2
+        task_db = {'service1_status': 'blocked', 'service2_status': 'pending',
+                   'compliance_score': None, 'task_status': 'blocked'}
+        assert _can_run_service2(task_db, self._settings()) is False
+
+    def test_task_returned_false(self):
+        from services.webhook.queue_manager import _can_run_service2
+        task_db = {'service1_status': 'done', 'service2_status': 'pending',
+                   'compliance_score': 90, 'task_status': 'returned'}
+        assert _can_run_service2(task_db, self._settings()) is False
+
+    def test_task_blocked_false(self):
+        from services.webhook.queue_manager import _can_run_service2
+        task_db = {'service1_status': 'done', 'service2_status': 'pending',
+                   'compliance_score': 90, 'task_status': 'blocked'}
+        assert _can_run_service2(task_db, self._settings()) is False
+
+    def test_s1_error_s2_pending_true(self):
+        # TZ-only rejim: service1 error lekin service2 pending
+        from services.webhook.queue_manager import _can_run_service2
+        task_db = {'service1_status': 'error', 'service2_status': 'pending',
+                   'compliance_score': None, 'task_status': 'error'}
+        assert _can_run_service2(task_db, self._settings()) is True
+
+    def test_s1_error_s2_error_false(self):
+        from services.webhook.queue_manager import _can_run_service2
+        task_db = {'service1_status': 'error', 'service2_status': 'error',
+                   'compliance_score': None, 'task_status': 'error'}
+        assert _can_run_service2(task_db, self._settings()) is False
+
+    def test_s2_already_done_still_true_for_can_run(self):
+        # _can_run_service2 service2_status ni TEKSHIRMAYDI — bu _run_testcase_generation da tekshiriladi
+        from services.webhook.queue_manager import _can_run_service2
+        task_db = {'service1_status': 'done', 'service2_status': 'done',
+                   'compliance_score': 90, 'task_status': 'completed'}
+        assert _can_run_service2(task_db, self._settings()) is True
+
+
+# ============================================================================
+# CLASS 15: TestReturnedReentry
+# ============================================================================
+
+class TestReturnedReentry:
+    """
+    Qaytarilgan task yana trigger statusga tushganda DB tranzitsiyalari
+    va mark_returned_pr_not_merged() holatlari
+    """
+
+    def test_returned_reentry_increments_return_count(self):
+        from utils.database.task_db import (
+            get_task, mark_progressing, set_service1_done, mark_returned, increment_return_count
+        )
+        task_key = "TEST-REENTRY-001"
+        mark_progressing(task_key, "READY TO TEST")
+        set_service1_done(task_key, compliance_score=30)
+        mark_returned(task_key)
+        increment_return_count(task_key)
+        task = get_task(task_key)
+        assert task['return_count'] == 1
+
+    def test_returned_reentry_reset_then_progressing(self):
+        from utils.database.task_db import (
+            get_task, mark_progressing, set_service1_done, mark_returned,
+            reset_service_statuses
+        )
+        task_key = "TEST-REENTRY-002"
+        mark_progressing(task_key, "READY TO TEST")
+        set_service1_done(task_key, compliance_score=30)
+        mark_returned(task_key)
+        reset_service_statuses(task_key)
         mark_progressing(task_key, "READY TO TEST")
         task = get_task(task_key)
-        assert task is not None
         assert task['task_status'] == 'progressing'
+        assert task['service1_status'] == 'pending'
+        assert task['service2_status'] == 'pending'
 
-    def test_task_state_machine_service1_done(self):
-        from utils.database.task_db import mark_progressing, set_service1_done, get_task
-        task_key = "TEST-MECH-002"
+    def test_mark_returned_pr_not_merged_task_status(self):
+        from utils.database.task_db import (
+            get_task, mark_progressing, mark_returned_pr_not_merged
+        )
+        task_key = "TEST-REENTRY-003"
         mark_progressing(task_key, "READY TO TEST")
-        set_service1_done(task_key, compliance_score=85)
+        mark_returned_pr_not_merged(task_key)
+        task = get_task(task_key)
+        assert task['task_status'] == 'returned'
+
+    def test_mark_returned_pr_not_merged_s1_pending(self):
+        # PR merged emas: service1 pending qoladi (qaytib kelganda re-check qiladi)
+        from utils.database.task_db import (
+            get_task, mark_progressing, mark_returned_pr_not_merged
+        )
+        task_key = "TEST-REENTRY-004"
+        mark_progressing(task_key, "READY TO TEST")
+        mark_returned_pr_not_merged(task_key)
+        task = get_task(task_key)
+        assert task['service1_status'] == 'pending'
+
+    def test_mark_returned_pr_not_merged_score_cleared(self):
+        from utils.database.task_db import (
+            get_task, mark_progressing, set_service1_done, mark_returned_pr_not_merged
+        )
+        task_key = "TEST-REENTRY-005"
+        mark_progressing(task_key, "READY TO TEST")
+        set_service1_done(task_key, compliance_score=45)
+        mark_returned_pr_not_merged(task_key)
+        task = get_task(task_key)
+        assert task['compliance_score'] is None
+
+    def test_mark_returned_service1_done_s2_pending(self):
+        # Score past → service1=done, service2=pending (kutilgan biznes-mantiq)
+        from utils.database.task_db import (
+            get_task, mark_progressing, set_service1_done, mark_returned
+        )
+        task_key = "TEST-REENTRY-006"
+        mark_progressing(task_key, "READY TO TEST")
+        set_service1_done(task_key, compliance_score=30)
+        mark_returned(task_key)
         task = get_task(task_key)
         assert task['service1_status'] == 'done'
+        assert task['service2_status'] == 'pending'
+        assert task['task_status'] == 'returned'
 
-    def test_task_state_machine_service2_done(self):
+    def test_returned_task_webhook_reentry_flow(self):
+        # Webhook: returned task qayta kelganda to'g'ri holat o'tishi
+        from fastapi.testclient import TestClient
+        from services.webhook.jira_webhook_handler import app
         from utils.database.task_db import (
-            mark_progressing, set_service1_done, set_service2_done, get_task
+            get_task, mark_progressing, set_service1_done, mark_returned
         )
-        task_key = "TEST-MECH-003"
+        task_key = "TEST-REENTRY-WEBHOOK-001"
         mark_progressing(task_key, "READY TO TEST")
-        set_service1_done(task_key, compliance_score=85)
-        set_service2_done(task_key)
-        task = get_task(task_key)
-        assert task['service2_status'] == 'done'
+        set_service1_done(task_key, compliance_score=30)
+        mark_returned(task_key)
+        assert get_task(task_key)['task_status'] == 'returned'
 
-    def test_task_state_machine_completed(self):
-        from utils.database.task_db import (
-            mark_progressing, set_service1_done, set_service2_done,
-            mark_completed, get_task
-        )
-        task_key = "TEST-MECH-004"
-        mark_progressing(task_key, "READY TO TEST")
-        set_service1_done(task_key, compliance_score=85)
-        set_service2_done(task_key)
-        mark_completed(task_key)
-        task = get_task(task_key)
-        assert task['task_status'] == 'completed'
-
-    def test_settings_cache_same_object(self):
-        from config.app_settings import get_app_settings
-        settings1 = get_app_settings(force_reload=False)
-        settings2 = get_app_settings(force_reload=False)
-        assert settings1 is settings2
-
-    def test_settings_force_reload_creates_new(self):
-        from config.app_settings import get_app_settings
-        settings1 = get_app_settings(force_reload=False)
-        settings3 = get_app_settings(force_reload=True)
-        assert isinstance(settings3, type(settings1))
-
-    def test_db_concurrent_five_tasks(self):
-        from utils.database.task_db import mark_progressing, get_task, init_db
-        init_db()
-        task_keys = [f"TEST-CONCURRENT-{i}" for i in range(1, 6)]
-        for key in task_keys:
-            mark_progressing(key, "READY TO TEST")
-        for key in task_keys:
-            task = get_task(key)
-            assert task is not None, f"Task {key} topilmadi"
-            assert task['task_status'] == 'progressing'
-
-    def test_webhook_invalid_payload_no_crash_resilience(self):
-        from fastapi.testclient import TestClient
-        from services.webhook.jira_webhook_handler import app
-        client = TestClient(app)
-        response = client.post("/webhook/jira", json={"invalid": "data"})
-        assert response.status_code in [200, 422]
-
-    def test_webhook_empty_payload_no_crash_resilience(self):
-        from fastapi.testclient import TestClient
-        from services.webhook.jira_webhook_handler import app
-        client = TestClient(app)
-        response = client.post("/webhook/jira", json={})
-        assert response.status_code in [200, 422]
-
-    def test_webhook_null_key_resilience(self):
-        from fastapi.testclient import TestClient
-        from services.webhook.jira_webhook_handler import app
         client = TestClient(app)
         payload = {
             "webhookEvent": "jira:issue_updated",
-            "issue": {"key": None},
-            "changelog": {}
+            "issue": {"key": task_key, "fields": {"issuetype": {"name": "DEV-BUG"}}},
+            "changelog": {
+                "items": [{"field": "status", "fromString": "Return to Dev", "toString": "READY TO TEST"}]
+            }
         }
-        response = client.post("/webhook/jira", json=payload)
-        if response.status_code == 200:
-            data = response.json()
-            assert data.get('status') in ['error', 'ignored']
-        else:
-            assert response.status_code in [200, 422]
+        with patch('services.webhook.jira_webhook_handler._run_task_group', new_callable=AsyncMock):
+            response = client.post("/webhook/jira", json=payload)
+        data = response.json()
+        assert data.get('status') == 'processing'
+        task = get_task(task_key)
+        assert task['task_status'] == 'progressing'
+        assert task['return_count'] >= 1
 
-    def test_health_check_resilience(self):
-        from fastapi.testclient import TestClient
-        from services.webhook.jira_webhook_handler import app
-        client = TestClient(app)
-        response = client.get("/health")
-        assert response.status_code == 200
 
-    def test_nonexistent_task_returns_none_resilience(self):
-        from utils.database.task_db import get_task
-        result = get_task("TEST-NONEXISTENT-RESILIENCE-999")
-        assert result is None
+# ============================================================================
+# CLASS 16: TestRecheckDetection
+# ============================================================================
+
+class TestRecheckDetection:
+    """
+    _detect_recheck() JIRA changelog'dan to'g'ri re-check aniqlashi
+    """
+
+    def _run_async(self, coro):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
+    def test_detect_recheck_true_when_from_return_status(self):
+        from services.webhook.skip_detector import _detect_recheck
+        mock_settings = MagicMock()
+        mock_settings.return_status = "Return to Dev"
+        mock_writer = MagicMock()
+        mock_writer.jira = MagicMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            'changelog': {
+                'histories': [
+                    {'items': [{'field': 'status', 'fromString': 'Return to Dev', 'toString': 'Ready to Test'}]}
+                ]
+            }
+        }
+        with patch('services.webhook.skip_detector.requests.get', return_value=mock_response):
+            result = self._run_async(_detect_recheck("TEST-RC-001", mock_settings, mock_writer))
+        assert result is True
+
+    def test_detect_recheck_false_when_from_other_status(self):
+        from services.webhook.skip_detector import _detect_recheck
+        mock_settings = MagicMock()
+        mock_settings.return_status = "Return to Dev"
+        mock_writer = MagicMock()
+        mock_writer.jira = MagicMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            'changelog': {
+                'histories': [
+                    {'items': [{'field': 'status', 'fromString': 'In Progress', 'toString': 'Ready to Test'}]}
+                ]
+            }
+        }
+        with patch('services.webhook.skip_detector.requests.get', return_value=mock_response):
+            result = self._run_async(_detect_recheck("TEST-RC-002", mock_settings, mock_writer))
+        assert result is False
+
+    def test_detect_recheck_false_when_no_jira_client(self):
+        from services.webhook.skip_detector import _detect_recheck
+        mock_settings = MagicMock()
+        mock_settings.return_status = "Return to Dev"
+        mock_writer = MagicMock()
+        mock_writer.jira = None
+        result = self._run_async(_detect_recheck("TEST-RC-003", mock_settings, mock_writer))
+        assert result is False
+
+    def test_detect_recheck_false_on_api_error(self):
+        from services.webhook.skip_detector import _detect_recheck
+        mock_settings = MagicMock()
+        mock_settings.return_status = "Return to Dev"
+        mock_writer = MagicMock()
+        mock_writer.jira = MagicMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 403
+        with patch('services.webhook.skip_detector.requests.get', return_value=mock_response):
+            result = self._run_async(_detect_recheck("TEST-RC-004", mock_settings, mock_writer))
+        assert result is False
+
+    def test_detect_recheck_false_when_empty_changelog(self):
+        from services.webhook.skip_detector import _detect_recheck
+        mock_settings = MagicMock()
+        mock_settings.return_status = "Return to Dev"
+        mock_writer = MagicMock()
+        mock_writer.jira = MagicMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {'changelog': {'histories': []}}
+        with patch('services.webhook.skip_detector.requests.get', return_value=mock_response):
+            result = self._run_async(_detect_recheck("TEST-RC-005", mock_settings, mock_writer))
+        assert result is False
+
+
+# ============================================================================
+# CLASS 17: TestSkipCodeDetection
+# ============================================================================
+
+class TestSkipCodeDetection:
+    """
+    _check_skip_code() JIRA comment'lardan to'g'ri skip aniqlashi
+    """
+
+    def _run_async(self, coro):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
+    def _make_comment(self, body: str):
+        comment = MagicMock()
+        comment.body = body
+        comment.created = "2026-01-01T00:00:00"
+        comment.author.displayName = "Test User"
+        return comment
+
+    def _make_writer_with_comments(self, comments):
+        mock_writer = MagicMock()
+        mock_issue = MagicMock()
+        mock_issue.fields.comment.comments = comments
+        mock_writer.jira.issue.return_value = mock_issue
+        return mock_writer
+
+    def test_skip_code_found_returns_true(self):
+        from services.webhook.skip_detector import _check_skip_code
+        writer = self._make_writer_with_comments([self._make_comment("AI_SKIP")])
+        with patch('config.app_settings.get_app_settings') as mock_fn:
+            mock_fn.return_value.tz_pr_checker.max_skip_check_comments = 5
+            result = self._run_async(_check_skip_code("TEST-SK-001", "AI_SKIP", writer))
+        assert result is True
+
+    def test_skip_code_not_found_returns_false(self):
+        from services.webhook.skip_detector import _check_skip_code
+        writer = self._make_writer_with_comments([self._make_comment("Normal comment")])
+        with patch('config.app_settings.get_app_settings') as mock_fn:
+            mock_fn.return_value.tz_pr_checker.max_skip_check_comments = 5
+            result = self._run_async(_check_skip_code("TEST-SK-002", "AI_SKIP", writer))
+        assert result is False
+
+    def test_skip_code_case_insensitive(self):
+        from services.webhook.skip_detector import _check_skip_code
+        writer = self._make_writer_with_comments([self._make_comment("ai_skip")])
+        with patch('config.app_settings.get_app_settings') as mock_fn:
+            mock_fn.return_value.tz_pr_checker.max_skip_check_comments = 5
+            result = self._run_async(_check_skip_code("TEST-SK-003", "AI_SKIP", writer))
+        assert result is True
+
+    def test_skip_code_no_jira_client_returns_false(self):
+        from services.webhook.skip_detector import _check_skip_code
+        mock_writer = MagicMock()
+        mock_writer.jira = None
+        result = self._run_async(_check_skip_code("TEST-SK-004", "AI_SKIP", mock_writer))
+        assert result is False
+
+    def test_skip_code_only_checks_last_n_comments(self):
+        # max_skip_check_comments=2: skip code 3-chi commentda — topilmasligi kerak
+        from services.webhook.skip_detector import _check_skip_code
+        comments = [
+            self._make_comment("Normal 1"),
+            self._make_comment("Normal 2"),
+            self._make_comment("AI_SKIP"),  # 3rd — max_comments=2 da ko'rinmaydi
+        ]
+        writer = self._make_writer_with_comments(comments)
+        with patch('config.app_settings.get_app_settings') as mock_fn:
+            mock_fn.return_value.tz_pr_checker.max_skip_check_comments = 2
+            result = self._run_async(_check_skip_code("TEST-SK-005", "AI_SKIP", writer))
+        assert result is False

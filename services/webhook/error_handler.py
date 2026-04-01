@@ -50,6 +50,16 @@ def _classify_error(error_msg: str) -> str:
     if any(kw in msg_lower for kw in pr_keywords):
         return 'pr_not_found'
 
+    # PR merged emas (open yoki closed/cancelled)
+    pr_not_merged_keywords = ['pr merged emas', 'merged emas', 'not merged', 'pr not merged']
+    if any(kw in msg_lower for kw in pr_not_merged_keywords):
+        return 'pr_not_merged'
+
+    # TZ yetarli emas (description belgilangan chegaradan qisqa)
+    tz_too_short_keywords = ['tz yetarli emas', 'tz kam', 'description yetarli emas', 'servis-1 to\'xtatildi', "servis-2 to'xtatildi", 'tz minimal']
+    if any(kw in msg_lower for kw in tz_too_short_keywords):
+        return 'tz_too_short'
+
     # AI timeout / rate limit / 429 (ikkala key ham ishlamadi ham kiradi)
     ai_timeout_keywords = [
         'timeout', '429', 'rate limit', 'rate_limit',

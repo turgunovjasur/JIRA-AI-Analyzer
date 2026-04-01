@@ -367,6 +367,38 @@ def mark_returned(task_id: str) -> None:
     })
 
 
+def mark_returned_pr_not_merged(task_id: str) -> None:
+    """
+    PR merged emas sababli task qaytarilganda DB holatini belgilash.
+
+    Holat o'tishi (state transition):
+        ``progressing`` → ``returned``
+
+    mark_returned() dan farqi:
+        - ``service1_status`` = ``'pending'`` (done emas!) — task qaytib kelganda
+          Service1 qaytadan ishlashi kerak, chunki PR merge qilingan bo'ladi.
+        - ``compliance_score`` = None — oldingi bali tozalanadi.
+        - ``service1_error`` = None — xato holati tozalanadi.
+
+    Qayta kelganda nima bo'ladi:
+        Task yana trigger statusga o'tganda (developer PR merge qilib, taskni
+        qayta jo'natganda) service1_status='pending' bo'lgani uchun
+        check_tz_pr_and_comment() qaytadan to'liq ishlaydi.
+
+    Args:
+        task_id: JIRA task identifikatori (masalan: DEV-1234)
+    """
+    upsert_task(task_id, {
+        'task_status': 'returned',
+        'service1_status': 'pending',   # Qayta kelganda re-check uchun
+        'service2_status': 'pending',
+        'service1_error': None,         # Eski xato tozalanadi
+        'service2_error': None,
+        'compliance_score': None,       # Eski ball tozalanadi
+        'last_processed_at': datetime.now().isoformat()
+    })
+
+
 def mark_error(task_id: str, error_message: str):
     """
     Task holatini 'error' ga o'zgartirish

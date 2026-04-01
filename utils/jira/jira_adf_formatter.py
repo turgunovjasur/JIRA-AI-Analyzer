@@ -15,6 +15,8 @@ from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 import logging
 
+from utils.jira.base_adf_formatter import BaseADFFormatter
+
 logger = logging.getLogger(__name__)
 
 
@@ -27,8 +29,10 @@ class AnalysisSection:
     section_type: str  # 'completed', 'partial', 'failed', 'issues'
 
 
-class JiraADFFormatter:
+class JiraADFFormatter(BaseADFFormatter):
     """Jira ADF formatda comment yaratish"""
+
+    _contradictory_action_text = "ishlov bering!"
 
     def __init__(self):
         """Initialize formatter"""
@@ -47,105 +51,6 @@ class JiraADFFormatter:
             'failed': ('❌ Bajarilmagan talablar', 'failed'),
             'issues': ('🐛 Potensial muammolar', 'issues'),
             'figma': ('🎨 Figma dizayn mosligi', 'figma')
-        }
-
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # ADF NODE BUILDERS
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-    def _text_node(self, text: str, marks: Optional[List[Dict]] = None) -> Dict:
-        """Text node yaratish"""
-        node = {"type": "text", "text": text}
-        if marks:
-            node["marks"] = marks
-        return node
-
-    def _bold_text(self, text: str) -> Dict:
-        """Bold text node"""
-        return self._text_node(text, [{"type": "strong"}])
-
-    def _italic_text(self, text: str) -> Dict:
-        """Italic text node"""
-        return self._text_node(text, [{"type": "em"}])
-
-    def _colored_text(self, text: str, color: str) -> Dict:
-        """Rangli text node"""
-        return self._text_node(text, [{"type": "textColor", "attrs": {"color": color}}])
-
-    def _paragraph(self, content: List[Dict]) -> Dict:
-        """Paragraph node"""
-        return {"type": "paragraph", "content": content}
-
-    def _hard_break(self) -> Dict:
-        """Line break"""
-        return {"type": "hardBreak"}
-
-    def _rule(self) -> Dict:
-        """Horizontal rule (chiziq)"""
-        return {"type": "rule"}
-
-    def _bullet_list(self, items: List[str]) -> Dict:
-        """Bullet list yaratish"""
-        list_items = []
-        for item in items:
-            list_items.append({
-                "type": "listItem",
-                "content": [
-                    self._paragraph([self._text_node(item)])
-                ]
-            })
-        return {"type": "bulletList", "content": list_items}
-
-    def _expand_panel(self, title: str, content: List[Dict]) -> Dict:
-        """
-        Expand panel (dropdown/collapsible) yaratish
-
-        Bu ADF ning eng muhim qismi - foydalanuvchi ko'rmoqchi bo'lgan
-        bo'limni ochib ko'radi, qolganlari yopiq turadi.
-        """
-        return {
-            "type": "expand",
-            "attrs": {"title": title},
-            "content": content
-        }
-
-    def _heading(self, text: str, level: int = 3) -> Dict:
-        """Heading node"""
-        return {
-            "type": "heading",
-            "attrs": {"level": level},
-            "content": [self._text_node(text)]
-        }
-
-    def _code_block(self, text: str, language: str = "") -> Dict:
-        """Code block"""
-        return {
-            "type": "codeBlock",
-            "attrs": {"language": language},
-            "content": [self._text_node(text)]
-        }
-
-    def _panel(self, content: List[Dict], panel_type: str = "info") -> Dict:
-        """
-        Panel node
-
-        panel_type: info, note, warning, error, success
-        """
-        return {
-            "type": "panel",
-            "attrs": {"panelType": panel_type},
-            "content": content
-        }
-
-    def _link_text(self, text: str, href: str) -> Dict:
-        """Havola (link) text node"""
-        return self._text_node(text, [{"type": "link", "attrs": {"href": href}}])
-
-    def _emoji(self, short_name: str) -> Dict:
-        """Emoji node"""
-        return {
-            "type": "emoji",
-            "attrs": {"shortName": f":{short_name}:"}
         }
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -190,18 +95,15 @@ class JiraADFFormatter:
         """Matndan item'larni ajratib olish"""
         items = []
 
-        # Bo'sh bo'lsa
         if not content or content.strip() in ['yo\'q', 'yoq', '-', 'none', 'n/a']:
             return items
 
-        # Har bir qatorni tekshirish
         lines = content.split('\n')
         for line in lines:
             line = line.strip()
             if not line:
                 continue
 
-            # Marker'larni olib tashlash: -, *, •, 1., 2., etc.
             cleaned = re.sub(r'^[-*•]\s*', '', line)
             cleaned = re.sub(r'^\d+\.\s*', '', cleaned)
             cleaned = cleaned.strip()
@@ -213,63 +115,15 @@ class JiraADFFormatter:
 
     def extract_compliance_score(self, ai_analysis: str) -> Optional[int]:
         """Moslik balini ajratib olish"""
-        # Pattern 1: COMPLIANCE_SCORE: XX%
         match = re.search(r'COMPLIANCE_SCORE:\s*(\d+)%', ai_analysis, re.IGNORECASE)
         if match:
             return int(match.group(1))
 
-        # Pattern 2: **XX%** yoki XX%
         match = re.search(r'\*?\*?(\d+)%\*?\*?', ai_analysis)
         if match:
             return int(match.group(1))
 
         return None
-
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # CONTRADICTORY COMMENTS PANEL BUILDER
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-    def _build_contradictory_comments_panel(self, comment_analysis: Dict) -> Optional[Dict]:
-        """
-        Zid commentlar uchun expand panel yaratish
-
-        Args:
-            comment_analysis: TZHelper.analyze_comments() natijasi
-
-        Returns:
-            ADF expand panel node yoki None (agar zid comment yo'q bo'lsa)
-        """
-        if not comment_analysis or not comment_analysis.get('has_changes'):
-            return None
-
-        change_count = comment_analysis['change_count']
-        panel_title = f"🚨 ZID COMMENTLAR ({change_count} ta)"
-
-        panel_content = []
-
-        # Warning text
-        warning_para = [
-            self._colored_text("⚠️ DIQQAT: ", "#FF5630"),
-            self._text_node("Quyidagi comment'larda TZ'ni o'zgartiruvchi yoki bekor qiluvchi kalit so'zlar topildi. "),
-            self._text_node("Eng so'nggi talablar asosida ishlov bering!")
-        ]
-        panel_content.append(self._paragraph(warning_para))
-
-        # Comment'larni ko'rsatish
-        for idx, comment in enumerate(comment_analysis.get('important_comments', []), 1):
-            # Comment header
-            comment_header = [
-                self._bold_text(f"Comment #{idx}:"),
-                self._text_node(f" {comment['author']} - {comment['created']}")
-            ]
-            panel_content.append(self._paragraph(comment_header))
-
-            # Comment text
-            comment_text = comment['full_text']
-            # Code block for better readability
-            panel_content.append(self._code_block(comment_text))
-
-        return self._expand_panel(panel_title, panel_content)
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # COMMENT DOCUMENT BUILDER
@@ -332,14 +186,14 @@ class JiraADFFormatter:
             content.append(self._paragraph(score_content))
         content.append(self._rule())
 
-        # ━━━ RE-CHECK PANEL (task qaytarildigan so'ng yana tekshirilayotgan) ━━━
+        # ━━━ RE-CHECK PANEL ━━━
         if is_recheck and recheck_text:
             content.append(self._panel([
                 self._paragraph([self._text_node(recheck_text)])
             ], "note"))
             content.append(self._rule())
 
-        # ━━━ ZID COMMENTLAR PANEL (agar mavjud bo'lsa) ━━━
+        # ━━━ ZID COMMENTLAR PANEL ━━━
         if comment_analysis:
             contradictory_panel = self._build_contradictory_comments_panel(comment_analysis)
             if contradictory_panel:
@@ -387,7 +241,6 @@ class JiraADFFormatter:
         # ━━━ AI TAHLIL BO'LIMLARI (EXPAND PANELS) ━━━
         sections = self.parse_ai_analysis(result.ai_analysis)
 
-        # Faqat yoqilgan bo'limlarni ko'rsatish (token tejash sozlamasi)
         _visible = visible_sections if visible_sections else [
             'completed', 'partial', 'failed', 'issues', 'figma'
         ]
@@ -398,32 +251,20 @@ class JiraADFFormatter:
             if section_key in sections:
                 section = sections[section_key]
                 if section.items:
-                    # Expand panel title with count
                     panel_title = f"{section.title} ({len(section.items)} ta)"
-
-                    # Panel ichidagi content
                     panel_content = [self._bullet_list(section.items)]
-
                     content.append(self._expand_panel(panel_title, panel_content))
 
         content.append(self._rule())
 
         # ━━━ FOOTER ━━━
-        # footer_text parametr berilgan bo'lsa settings-dan, yo'q bo'lsa default
         actual_footer = footer_text if footer_text else (
             "🤖 Bu komment AI tomonidan avtomatik yaratilgan. "
             "Savollar bo'lsa QA Team ga murojaat qiling."
         )
-        content.append(self._paragraph([
-            self._italic_text(actual_footer)
-        ]))
+        content.append(self._paragraph([self._italic_text(actual_footer)]))
 
-        # ━━━ TO'LIQ DOCUMENT ━━━
-        return {
-            "version": 1,
-            "type": "doc",
-            "content": content
-        }
+        return {"version": 1, "type": "doc", "content": content}
 
     def build_return_notification_document(
             self,
@@ -436,9 +277,6 @@ class JiraADFFormatter:
     ) -> Dict:
         """
         Auto-return notification uchun ADF document yaratish.
-
-        Moslik bali past bo'lsa task qaytarilgani xaqida
-        alohida warning panel comment sifatida JIRA ga yoziladi.
 
         Args:
             task_key: JIRA task key (DEV-1234)
@@ -512,11 +350,7 @@ class JiraADFFormatter:
             self._italic_text("🤖 Bu notification AI tomonidan avtomatik yaratilgan.")
         ]))
 
-        return {
-            "version": 1,
-            "type": "doc",
-            "content": content
-        }
+        return {"version": 1, "type": "doc", "content": content}
 
     def _get_score_color(self, score: int) -> str:
         """Moslik bali uchun rang"""
@@ -544,7 +378,6 @@ class JiraADFFormatter:
         """
         from datetime import datetime
 
-        # Emoji va status
         status_emoji = "🎯" if "Ready" in new_status else "🧪"
 
         comment = f"""
@@ -559,7 +392,6 @@ class JiraADFFormatter:
 ----
 """
 
-        # Moslik bali
         if result.compliance_score is not None:
             comment += f"\n*📊 Moslik Bali:* *{result.compliance_score}%*\n"
 
@@ -627,11 +459,7 @@ _Bu komment AI tomonidan avtomatik yaratilgan. Savollar bo'lsa QA Team ga muroja
             ])
         ]
 
-        return {
-            "version": 1,
-            "type": "doc",
-            "content": content
-        }
+        return {"version": 1, "type": "doc", "content": content}
 
     def build_critical_error_document(
             self,
@@ -666,8 +494,4 @@ _Bu komment AI tomonidan avtomatik yaratilgan. Savollar bo'lsa QA Team ga muroja
             ])
         ]
 
-        return {
-            "version": 1,
-            "type": "doc",
-            "content": content
-        }
+        return {"version": 1, "type": "doc", "content": content}

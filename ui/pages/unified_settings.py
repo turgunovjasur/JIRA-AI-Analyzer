@@ -76,14 +76,14 @@ def render_unified_settings():
         testcase = _render_testcase_settings(settings)
 
     with tabs[5]:
-        system, allowed_issue_types_filter, excluded_assignees_filter, comment_order_filter = _render_system_settings(settings)
+        system, allowed_issue_types_filter, excluded_assignees_filter, min_tz_chars_filter = _render_system_settings(settings)
 
     st.markdown("---")
 
     # Saqlash tugmalari
     _render_save_buttons(
         settings, modules, bug_analyzer, statistics, tz_pr, testcase, system,
-        allowed_issue_types_filter, excluded_assignees_filter, comment_order_filter
+        allowed_issue_types_filter, excluded_assignees_filter, min_tz_chars_filter
     )
 
 
@@ -445,11 +445,6 @@ def _render_tz_pr_settings(settings: AppSettings) -> TZPRCheckerSettings:
 
     st.markdown("---")
 
-    # comment_order Tizim tabida boshqariladi — bu yerda faqat saqlangan qiymat ishlatiladi
-    comment_order = settings.tz_pr_checker.comment_order
-    if comment_order not in ["checker_first", "testcase_first"]:
-        comment_order = "checker_first"
-
     # ━━━ 5.1 AI ma'lumotlar darajasi (TZ-PR) ━━━
     st.markdown("#### 📊 AI ga ma'lumotlar darajasi (tartibi)")
     st.caption("Sozlamadagi tartib bo'yicha AI promtiga bo'limlar qo'shiladi. Servis qat'iy amal qiladi.")
@@ -613,7 +608,6 @@ def _render_tz_pr_settings(settings: AppSettings) -> TZPRCheckerSettings:
         skip_code=skip_code,
         skip_comment_text=skip_comment_text,
         recheck_comment_text=recheck_comment_text,
-        comment_order=comment_order,
         show_contradictory_comments=show_contradictory_comments,
         visible_sections=visible_sections,
         ai_data_section_order=tzpr_data_order
@@ -678,18 +672,6 @@ def _render_testcase_settings(settings: AppSettings) -> TestcaseGeneratorSetting
         max_value=30,
         step=1
     )
-
-    min_tz_description_chars = _render_setting_with_help(
-        "📄 TZ yo'q hisoblash chegarasi (belgilar)",
-        getattr(settings.testcase_generator, 'min_tz_description_chars', 50),
-        getattr(settings.testcase_generator, 'min_tz_description_chars_help', ''),
-        "slider",
-        "tc_min_tz_chars",
-        min_value=0,
-        max_value=500,
-        step=10
-    )
-    st.caption("Description shu belgidan qisqa bo'lsa «testcase uchun yetarli ma'lumot yo'q» xabari chiqadi va Servis-2 to'xtatiladi.")
 
     st.markdown("---")
 
@@ -805,7 +787,6 @@ def _render_testcase_settings(settings: AppSettings) -> TestcaseGeneratorSetting
         default_use_smart_patch=default_use_smart_patch,
         default_test_types=default_test_types if default_test_types else ['positive'],
         max_test_cases=max_test_cases,
-        min_tz_description_chars=min_tz_description_chars,
         ai_data_section_order=tc_data_order,
         read_comments_enabled=tc_read_comments,
         max_comments_to_read=tc_max_comments,
@@ -818,10 +799,10 @@ def _render_testcase_settings(settings: AppSettings) -> TestcaseGeneratorSetting
 
 
 def _render_system_settings(settings: AppSettings):
-    """Tizim Sozlamalari — Webhook Filtrlari + AI Queue + Comment Tartib
+    """Tizim Sozlamalari — Webhook Filtrlari + AI Queue
 
     Returns:
-        tuple: (QueueSettings, allowed_issue_types: str, excluded_assignees: str, comment_order: str)
+        tuple: (QueueSettings, allowed_issue_types: str, excluded_assignees: str, min_tz_chars: int)
     """
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -884,6 +865,27 @@ def _render_system_settings(settings: AppSettings):
         st.info("ℹ️ Bo'sh — assignee bo'yicha filter yo'q (hammaga ishlaydi)")
 
     st.markdown("---")
+
+    # ━━━ Filter 3: TZ Minimal Uzunlik ━━━
+    st.markdown("#### 📄 TZ Minimal Uzunlik Filtri")
+    st.caption("Ikkala servis uchun: description shu belgidan qisqa bo'lsa task qaytariladi va JIRA'ga error yoziladi")
+
+    min_tz_description_chars = _render_setting_with_help(
+        "📄 TZ minimal uzunlik (belgilar)",
+        getattr(settings.tz_pr_checker, 'min_tz_description_chars', 50),
+        getattr(settings.tz_pr_checker, 'min_tz_description_chars_help', ''),
+        "slider",
+        "sys_min_tz_chars",
+        min_value=0,
+        max_value=500,
+        step=10
+    )
+    if min_tz_description_chars == 0:
+        st.info("ℹ️ 0 — TZ uzunlik filtri o'chiq (har qanday uzunlikda ishlaydi)")
+    else:
+        st.warning(f"⚠️ {min_tz_description_chars} belgidan qisqa TZ → task qaytariladi (ikkala servis)")
+
+    st.markdown("---")
     st.markdown("---")
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -941,35 +943,15 @@ def _render_system_settings(settings: AppSettings):
 
         st.markdown("---")
 
-        # ━━━ Comment Yozilish Tartib + Checker → Testcase Delay ━━━
-        st.markdown("#### 📋 Comment Yozilish Tartib va Kutish Vaqti")
+        # ━━━ Servislar Orasidagi Kutish Vaqti ━━━
+        st.markdown("#### ⏱️ Servislar Orasidagi Kutish Vaqti")
         st.markdown("""
         <div style="background: rgba(88, 166, 255, 0.08); padding: 0.7rem; border-radius: 8px; margin-bottom: 0.7rem;">
             <p style="color: #8b949e; margin: 0; font-size: 0.85rem;">
-                💡 <strong>Masalan:</strong> Checker comment yozildi → <strong>15 sekunda kutiladi</strong> → Testcase comment yoziladi.
+                💡 TZ-PR Tahlil (Servis-1) tugagandan so'ng <strong>N sekunda kutiladi</strong>, keyin Test Case (Servis-2) ishga tushadi.
             </p>
         </div>
         """, unsafe_allow_html=True)
-
-        # Agar eski "parallel" qiymat saqlangan bo'lsa, checker_first'ga ko'chiramiz
-        current_comment_order = settings.tz_pr_checker.comment_order
-        if current_comment_order not in ["checker_first", "testcase_first"]:
-            current_comment_order = "checker_first"
-
-        comment_order = _render_setting_with_help(
-            "Comment Tartib",
-            current_comment_order,
-            settings.tz_pr_checker.comment_order_help,
-            "selectbox",
-            "tzpr_comment_order",
-            options=["checker_first", "testcase_first"]
-        )
-
-        order_labels = {
-            "checker_first": "TZ-PR Tahlil → Test Case",
-            "testcase_first": "Test Case → TZ-PR Tahlil",
-        }
-        st.caption(f"Hozirgi tartib: {order_labels.get(comment_order, comment_order)}")
 
         checker_testcase_delay = _render_setting_with_help(
             "Servislar Orasidagi Kutish Vaqti (sek)",
@@ -1155,10 +1137,6 @@ def _render_system_settings(settings: AppSettings):
         db_connection_timeout = settings.queue.db_connection_timeout
         http_timeout = settings.queue.http_timeout
         executor_timeout = settings.queue.executor_timeout
-        comment_order = settings.tz_pr_checker.comment_order
-        if comment_order not in ["checker_first", "testcase_first"]:
-            comment_order = "checker_first"
-
     queue = QueueSettings(
         queue_enabled=queue_enabled,
         task_wait_timeout=task_wait_timeout,
@@ -1175,7 +1153,7 @@ def _render_system_settings(settings: AppSettings):
         http_timeout=http_timeout,
         executor_timeout=executor_timeout
     )
-    return queue, allowed_issue_types, excluded_assignees, comment_order
+    return queue, allowed_issue_types, excluded_assignees, min_tz_description_chars
 
 
 def _show_save_success_animation():
@@ -1248,7 +1226,7 @@ def _render_save_buttons(
         system: QueueSettings = None,
         allowed_issue_types_filter: str = None,
         excluded_assignees_filter: str = None,
-        comment_order_filter: str = None,
+        min_tz_chars_filter: int = None,
 ):
     """Saqlash tugmalari"""
 
@@ -1262,8 +1240,8 @@ def _render_save_buttons(
                 replace_kwargs["allowed_issue_types"] = allowed_issue_types_filter
             if excluded_assignees_filter is not None:
                 replace_kwargs["excluded_assignees"] = excluded_assignees_filter
-            if comment_order_filter is not None:
-                replace_kwargs["comment_order"] = comment_order_filter
+            if min_tz_chars_filter is not None:
+                replace_kwargs["min_tz_description_chars"] = min_tz_chars_filter
             if replace_kwargs:
                 tz_pr = replace(tz_pr, **replace_kwargs)
 

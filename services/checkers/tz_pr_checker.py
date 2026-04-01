@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 import re
 
 # Core imports
-from core import BaseService, PRHelper, TZHelper
+from core import BaseService, PRHelper, PRNotMergedError, TZHelper
 from core.logger import get_logger
 
 # Initialize logger
@@ -282,27 +282,53 @@ class TZPRService(BaseService):
                     f"❌ Task {task_key} topilmadi yoki access yo'q"
                 )
 
-            # Step 2: Get TZ content
+            # Step 2: PR bor? merged? (birinchi tekshiruv — keraksiz ishni oldini olish)
+            from utils.pr_cache import set_pr_exists_cache, set_pr_merged_cache
+            try:
+                pr_info = self._get_pr_info(task_key, task_details, update_status, use_smart_patch)
+            except PRNotMergedError as e:
+                set_pr_exists_cache(task_key, True)
+                set_pr_merged_cache(task_key, False)
+                return self._create_error_result(
+                    task_key,
+                    str(e),
+                    task_summary=task_details['summary'],
+                )
+            if not pr_info:
+                set_pr_exists_cache(task_key, False)
+                return self._create_error_result(
+                    task_key,
+                    "Bu task uchun PR topilmadi (JIRA va GitHub'da)",
+                    task_summary=task_details['summary'],
+                    warnings=["JIRA da PR link yo'q", "GitHub search natija bermadi"]
+                )
+            set_pr_exists_cache(task_key, True)
+            set_pr_merged_cache(task_key, True)
+
+            # Step 3: TZ uzunlik tekshiruvi
+            from config.app_settings import get_app_settings
+            min_tz = get_app_settings().tz_pr_checker.min_tz_description_chars
+            if min_tz > 0 and self._is_tz_too_short(task_details, min_tz):
+                msg = (
+                    f"TZ yetarli emas. "
+                    f"(min: {min_tz} belgi). Servis-1 to'xtatildi."
+                )
+                update_status("error", msg)
+                return self._create_error_result(
+                    task_key, msg,
+                    task_summary=task_details['summary']
+                )
+
+            # Step 4: Get TZ content
             tz_content, comment_analysis = self._get_tz_content(
                 task_details,
                 update_status
             )
 
-            # Step 3: Get PR information
-            pr_info = self._get_pr_info(task_key, task_details, update_status, use_smart_patch)
-            if not pr_info:
-                return self._create_error_result(
-                    task_key,
-                    "Bu task uchun PR topilmadi (JIRA va GitHub'da)",
-                    tz_content=tz_content,
-                    task_summary=task_details['summary'],
-                    warnings=["JIRA da PR link yo'q", "GitHub search natija bermadi"]
-                )
-
-            # Step 3.5: Get Figma data (OPTIONAL, FAIL-SAFE)
+            # Step 5: Get Figma data (OPTIONAL, FAIL-SAFE)
             figma_data = self._get_figma_data(task_details, update_status)
 
-            # Step 4: AI analysis (with Figma if available)
+            # Step 6: AI analysis (with Figma if available)
             ai_result = self._perform_ai_analysis(
                 task_key,
                 task_details,
@@ -592,6 +618,11 @@ class TZPRService(BaseService):
             elif key == "code":
                 blocks.append(sep + "💻 GITHUB KOD O'ZGARISHLARI\n" + sep + "\n" + (code_changes or "").strip())
         return "\n\n".join(blocks)
+
+    def _is_tz_too_short(self, task_details: Dict, min_chars: int) -> bool:
+        """TZ (description) belgilangan minimal uzunlikdan qisqami aniqlash."""
+        description = task_details.get('description') or ''
+        return len(description.strip()) < min_chars
 
     def _get_pr_info(self, task_key: str, task_details: Dict, update_status, use_smart_patch):
         """PR ma'lumotlarini olish va cache ga saqlash"""
@@ -1024,15 +1055,6 @@ class TZPRService(BaseService):
         log.debug(f"AI Response preview: {analysis[:500]}...")
 
         return None
-
-    def _create_status_updater(self, callback: Optional[Callable]):
-        """Create status updater function"""
-
-        def update(status_type: str, message: str):
-            if callback:
-                callback(status_type, message)
-
-        return update
 
     def _log_smart_patch_status(self, use_smart_patch: bool, update_status):
         """Log Smart Patch availability"""

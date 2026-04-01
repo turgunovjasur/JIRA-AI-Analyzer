@@ -8,6 +8,14 @@ from utils.github.github_client import GitHubClient
 from utils.github.smart_patch_helper import SmartPatchHelper, SmartPatchConfig
 
 
+class PRNotMergedError(Exception):
+    """
+    PR topildi, lekin hech biri merged emas (open yoki closed/cancelled).
+    Faqat merged statusdagi PR'lar qabul qilinadi.
+    """
+    pass
+
+
 class PRHelper:
     """
     Pull Request olish va tahlil qilish (UNIVERSAL Smart Patch)
@@ -29,6 +37,22 @@ class PRHelper:
         """
         self.github = github_client
 
+    @staticmethod
+    def _make_updater(status_callback: Optional[Callable[[str, str], None]]) -> Callable[[str, str], None]:
+        """
+        Status callback uchun wrapper yaratish.
+
+        Args:
+            status_callback: Optional callback function
+
+        Returns:
+            Wrapper function: (stype, msg) -> None
+        """
+        def update_status(stype: str, msg: str):
+            if status_callback:
+                status_callback(stype, msg)
+        return update_status
+
     def get_pr_urls(
             self,
             task_key: str,
@@ -49,10 +73,7 @@ class PRHelper:
         Returns:
             List[str]: PR URL'lar ro'yxati
         """
-
-        def update_status(stype: str, msg: str):
-            if status_callback:
-                status_callback(stype, msg)
+        update_status = self._make_updater(status_callback)
 
         # 1. JIRA dan PR URLs
         pr_urls = task_details.get('pr_urls', [])
@@ -103,10 +124,7 @@ class PRHelper:
                 'all_files': List[Dict]
             }
         """
-
-        def update_status(stype: str, msg: str):
-            if status_callback:
-                status_callback(stype, msg)
+        update_status = self._make_updater(status_callback)
 
         try:
             # 1. PR URL'larni olish
@@ -175,18 +193,32 @@ class PRHelper:
                 update_status("error", "No PR could be analyzed")
                 return None
 
-            # Merged PR prioriteti: agar merged PR mavjud bo'lsa,
-            # faqat closed (merge qilinmagan) PR'larni tahlildan chiqaramiz.
-            # Sababi: developer eski PRni yopib yangi ochgan bo'lishi mumkin.
+            # Faqat MERGED PR'larni qabul qilamiz.
+            # Open yoki closed (merge qilinmagan) PR'lar rad etiladi.
             merged_prs = [pr for pr in pr_details if pr.get('merged')]
-            if merged_prs and len(merged_prs) < len(pr_details):
+            if not merged_prs:
+                # Hech qaysi PR merged emas — xato
+                statuses = ", ".join(
+                    f"#{pr['number']} ({pr.get('state', '?')}{'→merged' if pr.get('merged') else ''})"
+                    for pr in pr_details
+                )
+                error_msg = (
+                    f"❌ PR merged emas. Faqat 'merged' statusdagi PR'lar qabul qilinadi.\n"
+                    f"Topilgan PR'lar: {statuses}\n"
+                    f"PR'ni merge qilib qayta urinib ko'ring."
+                )
+                update_status("error", error_msg)
+                raise PRNotMergedError(error_msg)
+
+            if len(merged_prs) < len(pr_details):
                 skipped = [f"#{pr['number']}" for pr in pr_details if not pr.get('merged')]
-                update_status("info", f"Merged PR topildi → yopilgan PR'lar o'tkazib yuborildi: {skipped}")
-                pr_details = merged_prs
-                total_files = sum(len(pr['files']) for pr in pr_details)
-                total_additions = sum(pr['additions'] for pr in pr_details)
-                total_deletions = sum(pr['deletions'] for pr in pr_details)
-                all_files = [f for pr in pr_details for f in pr['files']]
+                update_status("info", f"Merged PR topildi → merged bo'lmagan PR'lar o'tkazib yuborildi: {skipped}")
+
+            pr_details = merged_prs
+            total_files = sum(len(pr['files']) for pr in pr_details)
+            total_additions = sum(pr['additions'] for pr in pr_details)
+            total_deletions = sum(pr['deletions'] for pr in pr_details)
+            all_files = [f for pr in pr_details for f in pr['files']]
 
             mode = "Smart Patch" if use_smart_patch else "Patch"
             update_status("success",
@@ -203,6 +235,8 @@ class PRHelper:
                 'all_files': all_files
             }
 
+        except PRNotMergedError:
+            raise
         except Exception as e:
             update_status("error", f"❌ PR tahlil xatosi: {str(e)}")
             import traceback
