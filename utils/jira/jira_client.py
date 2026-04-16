@@ -303,3 +303,111 @@ class JiraClient:
         except Exception as e:
             print(f"❌ Search xatolik: {e}")
             return []
+
+    # ================================================================
+    # SPRINT API METODLARI (Agile REST API)
+    # ================================================================
+
+    def get_boards(self, project_key: str = 'DEV') -> List[Dict]:
+        """
+        JIRA boardlarni olish.
+        Returns: [{'id': 123, 'name': 'DEV board', 'type': 'scrum'}, ...]
+        """
+        try:
+            boards = self.client.boards()
+            results = []
+            for b in boards:
+                if not project_key or (
+                    hasattr(b, 'location') and
+                    getattr(b.location, 'projectKey', '') == project_key
+                ):
+                    results.append({
+                        'id': b.id,
+                        'name': b.name,
+                        'type': getattr(b, 'type', 'unknown'),
+                    })
+            return results
+        except Exception as e:
+            _log.warning(f"get_boards error: {e}")
+            return []
+
+    def get_sprints(self, board_id: int, state: str = 'active,closed') -> List[Dict]:
+        """
+        Board dagi sprintlar ro'yxati.
+        Args:
+            board_id: JIRA board ID
+            state: 'active', 'closed', 'future' yoki kombinatsiya
+        Returns: [{'id', 'name', 'state', 'start_date', 'end_date'}, ...]
+        """
+        try:
+            sprints = self.client.sprints(board_id, state=state)
+            results = []
+            for s in sprints:
+                results.append({
+                    'id': s.id,
+                    'name': s.name,
+                    'state': s.state,
+                    'start_date': getattr(s, 'startDate', None),
+                    'end_date': getattr(s, 'endDate', None),
+                    'complete_date': getattr(s, 'completeDate', None),
+                })
+            return results
+        except Exception as e:
+            _log.warning(f"get_sprints error: {e}")
+            return []
+
+    def get_sprint_issues_full(self, sprint_id: int) -> List[Dict]:
+        """
+        Sprint dagi barcha tasklar — story points, assignee, status, changelog bilan.
+        Bu dashboard uchun asosiy data source.
+
+        Returns: [{
+            'key', 'summary', 'type', 'status', 'assignee',
+            'story_points', 'created', 'updated',
+            'transitions': [{'from', 'to', 'timestamp', 'author'}, ...]
+        }, ...]
+        """
+        try:
+            jql = f'sprint = {sprint_id} ORDER BY created ASC'
+            issues = self.client.search_issues(
+                jql, maxResults=500, expand='changelog',
+                fields='summary,issuetype,status,assignee,'
+                       f'{self.story_points_field},created,updated,resolutiondate'
+            )
+
+            results = []
+            for issue in issues:
+                fields = issue.fields
+
+                # Transitions (changelog dan)
+                transitions = []
+                if hasattr(issue, 'changelog') and issue.changelog:
+                    for history in issue.changelog.histories:
+                        for item in history.items:
+                            if item.field == 'status':
+                                transitions.append({
+                                    'from_status': item.fromString or '',
+                                    'to_status': item.toString or '',
+                                    'timestamp': history.created,
+                                    'author': getattr(history.author, 'displayName', 'Unknown'),
+                                })
+
+                results.append({
+                    'key': issue.key,
+                    'summary': fields.summary or '',
+                    'type': getattr(fields.issuetype, 'name', '') if fields.issuetype else '',
+                    'status': getattr(fields.status, 'name', '') if fields.status else '',
+                    'assignee': getattr(fields.assignee, 'displayName', 'Unassigned') if fields.assignee else 'Unassigned',
+                    'story_points': getattr(fields, self.story_points_field, None) or 0,
+                    'created': fields.created[:19] if fields.created else '',
+                    'updated': fields.updated[:19] if fields.updated else '',
+                    'resolved': fields.resolutiondate[:19] if fields.resolutiondate else None,
+                    'transitions': transitions,
+                })
+
+            _log.info(f"Sprint {sprint_id}: {len(results)} task yuklandi")
+            return results
+
+        except Exception as e:
+            _log.warning(f"get_sprint_issues_full error: {e}")
+            return []

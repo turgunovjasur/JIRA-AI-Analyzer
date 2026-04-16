@@ -197,7 +197,8 @@ class GeminiHelper:
                 if not self._is_fallback_error(e):
                     raise RuntimeError(f"Gemini API error: {str(e)}") from e
 
-                log.warning(f"AI -> model={self.model_name} | key={current_name} | error: {e}")
+                error_first_line = str(e).splitlines()[0] if str(e) else str(e)
+                log.warning(f"AI -> model={self.model_name} | key={current_name} | error: {error_first_line}")
 
                 # Joriy keyni freeze qilish
                 self._freeze(current_idx)

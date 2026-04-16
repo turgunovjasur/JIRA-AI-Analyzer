@@ -309,9 +309,10 @@ class TZPRService(BaseService):
             from config.app_settings import get_app_settings
             min_tz = get_app_settings().tz_pr_checker.min_tz_description_chars
             if min_tz > 0 and self._is_tz_too_short(task_details, min_tz):
+                actual_chars = len((task_details.get('description') or '').strip())
                 msg = (
                     f"TZ yetarli emas. "
-                    f"(min: {min_tz} belgi). Servis-1 to'xtatildi."
+                    f"(mavjud: {actual_chars} belgi, min: {min_tz} belgi). Servis-1 to'xtatildi."
                 )
                 update_status("error", msg)
                 return self._create_error_result(

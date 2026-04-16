@@ -51,7 +51,8 @@ from utils.database.task_db import (
     mark_blocked, increment_return_count, set_skip_detected,
     set_service1_done, set_service1_error, set_service1_skip, set_service1_blocked,
     set_service2_done, set_service2_error, set_service2_blocked,
-    set_task_timeout_error, reset_service_statuses, get_blocked_tasks_ready_for_retry
+    set_task_timeout_error, reset_service_statuses, get_blocked_tasks_ready_for_retry,
+    log_status_change,
 )
 
 # Yangi modullar (biznes logika shu fayllarda)
@@ -298,6 +299,26 @@ async def jira_webhook(request: Request, background_tasks: BackgroundTasks):
         log.request_separator()
         log.ai_request("KEY_1", os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
         log.info(f"[{task_key}] STATUS -> {old_status} => {new_status} | tahlil boshlandi")
+
+        # Story points (JIRA customfield_10016)
+        from config.settings import settings as _cfg_settings
+        sp_field = getattr(_cfg_settings, 'STORY_POINTS_FIELD', 'customfield_10016')
+        raw_sp = issue_fields.get(sp_field)
+        try:
+            story_points = float(raw_sp) if raw_sp is not None else None
+        except (TypeError, ValueError):
+            story_points = None
+
+        # Status o'zgarishini tarixga yozish (sprint report uchun)
+        log_status_change(
+            task_id=task_key,
+            from_status=old_status,
+            to_status=new_status,
+            changed_at=datetime.now(),
+            assignee=assignee_name or None,
+            story_points=story_points,
+            issue_type=issue_type or None,
+        )
 
         # DB holat boshqaruvi (state machine)
         task_db = get_task(task_key)

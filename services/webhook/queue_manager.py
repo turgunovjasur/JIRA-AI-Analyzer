@@ -24,7 +24,7 @@ from typing import Optional
 
 from config.app_settings import get_app_settings
 from core.logger import get_logger
-from utils.database.task_db import get_task, set_task_timeout_error
+from utils.database.task_db import get_task, mark_blocked
 
 log = get_logger("webhook.queue_manager")
 
@@ -136,7 +136,7 @@ async def _run_task_group(task_key: str, new_status: str) -> None:
         await asyncio.wait_for(lock.acquire(), timeout=timeout)
     except asyncio.TimeoutError:
         log.queue_timeout(task_key, timeout)
-        set_task_timeout_error(task_key, f"Queue timeout: {timeout}s")
+        mark_blocked(task_key, f"Queue timeout: {timeout}s", retry_minutes=5)
         await _write_timeout_error_comment(task_key, timeout)
         return
 
@@ -195,7 +195,7 @@ async def _queued_check_tz_pr(task_key: str, new_status: str) -> None:
         await asyncio.wait_for(lock.acquire(), timeout=timeout)
     except asyncio.TimeoutError:
         log.queue_timeout(task_key, timeout)
-        set_task_timeout_error(task_key, f"Queue timeout: {timeout}s")
+        mark_blocked(task_key, f"Queue timeout: {timeout}s", retry_minutes=5)
         await _write_timeout_error_comment(task_key, timeout)
         return
 

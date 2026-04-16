@@ -135,18 +135,47 @@ def init_db() -> None:
 
         # Index yaratish (tez qidirish uchun)
         cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_task_status 
+            CREATE INDEX IF NOT EXISTS idx_task_status
             ON task_processing(task_status)
         """)
 
         cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_service1_status 
+            CREATE INDEX IF NOT EXISTS idx_service1_status
             ON task_processing(service1_status)
         """)
 
         cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_service2_status 
+            CREATE INDEX IF NOT EXISTS idx_service2_status
             ON task_processing(service2_status)
+        """)
+
+        # v4: task_status_history jadvali — har bir JIRA status o'zgarishini saqlash
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS task_status_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                from_status TEXT,
+                to_status TEXT NOT NULL,
+                changed_at DATETIME NOT NULL,
+                assignee TEXT,
+                story_points REAL,
+                issue_type TEXT
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_history_task_id
+            ON task_status_history(task_id)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_history_changed_at
+            ON task_status_history(changed_at)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_history_assignee
+            ON task_status_history(assignee)
         """)
 
         conn.commit()
@@ -1025,6 +1054,103 @@ def get_stuck_tasks(timeout_minutes: int = 30) -> List[Dict[str, Any]]:
 
     except Exception as e:
         log.warning(f"get_stuck_tasks error: {e}")
+        return []
+
+
+def log_status_change(
+    task_id: str,
+    from_status: Optional[str],
+    to_status: str,
+    changed_at: datetime,
+    assignee: Optional[str] = None,
+    story_points: Optional[float] = None,
+    issue_type: Optional[str] = None,
+) -> None:
+    """
+    JIRA task status o'zgarishini task_status_history jadvaliga yozish.
+
+    Har bir webhook kelganda (status o'zgarsa) bu funksiya chaqiriladi.
+    Sprint report uchun vaqt tahlili shu jadval asosida quriladi.
+
+    Args:
+        task_id: JIRA task identifikatori (masalan: DEV-1234)
+        from_status: Oldingi JIRA status (birinchi tranzitsiyada None bo'lishi mumkin)
+        to_status: Yangi JIRA status
+        changed_at: Status o'zgargan aniq vaqt (webhook'dan olinadi)
+        assignee: Task ijrochisi (JIRA displayName)
+        story_points: Task story point qiymati (JIRA customfield_10016)
+        issue_type: Task turi (masalan: DEV-PROD TASK)
+    """
+    try:
+        settings = _get_db_settings()
+        conn = sqlite3.connect(DB_FILE, timeout=settings.db_connection_timeout)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            INSERT INTO task_status_history
+                (task_id, from_status, to_status, changed_at, assignee, story_points, issue_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            task_id,
+            from_status,
+            to_status,
+            changed_at.isoformat(),
+            assignee,
+            story_points,
+            issue_type,
+        ))
+
+        conn.commit()
+        conn.close()
+
+    except Exception as e:
+        log.warning(f"[{task_id}] log_status_change error: {e}")
+
+
+def get_status_history_for_report(days: int = 30) -> List[Dict[str, Any]]:
+    """
+    Sprint report uchun status o'zgarishlar tarixini o'qish.
+
+    Har bir qator: task_id, from_status, to_status, changed_at, assignee,
+    story_points, issue_type.
+
+    Natija vaqt bo'yicha o'sib boruvchi tartibda — time-in-status hisoblash
+    uchun kerakli ketma-ketlik saqlanadi.
+
+    Args:
+        days: Necha kunlik tarix (bugundan orqaga)
+
+    Returns:
+        List[Dict]: Tarix qatorlari ro'yxati
+    """
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+
+        cursor.execute("""
+            SELECT
+                id,
+                task_id,
+                from_status,
+                to_status,
+                changed_at,
+                assignee,
+                story_points,
+                issue_type
+            FROM task_status_history
+            WHERE changed_at >= ?
+            ORDER BY task_id, changed_at ASC
+        """, (cutoff,))
+
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    except Exception as e:
+        log.warning(f"get_status_history_for_report error: {e}")
         return []
 
 

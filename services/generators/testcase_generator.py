@@ -246,9 +246,10 @@ class TestCaseGeneratorService(BaseService):
             max_test_cases = tc_settings.max_test_cases
             min_tz_chars = get_app_settings().tz_pr_checker.min_tz_description_chars
             if min_tz_chars > 0 and self._is_tz_absent_or_minimal(task_details, min_tz_chars):
+                actual_chars = len((task_details.get('description') or '').strip())
                 msg = (
                     f"TZ yetarli emas. "
-                    f"(min: {min_tz_chars} belgi). Servis-2 to'xtatildi."
+                    f"(mavjud: {actual_chars} belgi, min: {min_tz_chars} belgi). Servis-2 to'xtatildi."
                 )
                 return TestCaseGenerationResult(
                     task_key=task_key,

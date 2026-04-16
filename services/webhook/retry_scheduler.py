@@ -76,7 +76,9 @@ async def _retry_blocked_task(task_id: str) -> None:
         mark_progressing(task_id, last_jira_status, datetime.now())
 
         # Qaysi servislar qayta ishlashi kerak?
-        need_service1 = (service1_status == 'blocked')
+        # 'pending': queue timeout sababli service1 umuman ishlamagan
+        # 'blocked': service1 ishlab, AI xatosi bergan
+        need_service1 = (service1_status in ('blocked', 'pending'))
         need_service2 = (service2_status in ('blocked', 'pending'))
 
         if need_service1:

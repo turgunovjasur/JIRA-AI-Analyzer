@@ -66,7 +66,8 @@ def _classify_error(error_msg: str) -> str:
         'overloaded', 'quota', 'resource exhausted',
         'resource_exhausted', 'too many requests',
         'ikkala key ham ishlamadi', 'both keys failed',
-        'gemini api xatosi'
+        'gemini api xatosi',
+        'freeze holatida', 'barcha api keylar', 'all keys frozen'
     ]
     if any(kw in msg_lower for kw in ai_timeout_keywords):
         return 'ai_timeout'

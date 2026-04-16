@@ -1,473 +1,658 @@
 """
-Sprint Report Page - Streamlit UI
+Sprint Monitoring Dashboard — Streamlit UI
 
-Sprint bo'yicha task statistikasi va tahlil
+JIRA API dan sprint ma'lumotlarini olish va vizualizatsiya.
+6 ta asosiy bo'lim (tab):
+  1. Sprint Overview — umumiy holat, burndown, progress
+  2. Developer Performance — samaradorlik, kechikish, velocity
+  3. Task Pipeline — kanban ko'rinish
+  4. Bottleneck Analyzer — tiqilish nuqtalari
+  5. QA & Testing — test statistikasi
+  6. Sprint Comparison — sprintlarni taqqoslash
 
 Author: JASUR TURGUNOV
-Version: 1.2
+Version: 2.0
 """
-import sys
-import os
+
 import streamlit as st
-import sqlite3
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
+from datetime import datetime
+from typing import Dict, List, Any
 
-# DB fayl yo'li - project root/data papkasi
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-_DB_FILE = os.path.join(_PROJECT_ROOT, 'data', 'processing.db')
-
-
-def _get_issue_types() -> list:
-    """
-    Sozlamalardan ruxsat etilgan issue type'larni olish.
-    TZPRCheckerSettings.allowed_issue_types dan o'qiladi.
-
-    Qaytaradi: ['DEV-BUG', 'DEV- PROD TASK', 'DEV-TECHTASK', 'DEV-CLIENT TASK']
-    """
-    try:
-        if _PROJECT_ROOT not in sys.path:
-            sys.path.insert(0, _PROJECT_ROOT)
-        from config.app_settings import get_app_settings
-        settings = get_app_settings()
-        raw = settings.tz_pr_checker.allowed_issue_types
-        if raw and raw.strip():
-            return [t.strip() for t in raw.split(',') if t.strip()]
-    except Exception:
-        pass
-    return []
+from services.sprint_data_service import (
+    SprintDataService, WORK_HOURS_PER_DAY, STATUS_PIPELINE, STATUS_EXCEPTION,
+    _status_group,
+)
 
 
-# Feature nomlaridan shovqinli (ma'nosiz) papkalar filtri
-_NOISE_FEATURES = {
-    # Til fayllari
-    'lang_ru', 'lang_en', 'lang_uz', 'lang_ar', 'lang_kk',
-    'lang_ro', 'lang_tr', 'lang_de', 'lang_fr', 'lang_zh',
-    # Umumiy papkalar
-    'form', 'init', 'src', 'main', 'rep', 'pref', 'setup',
-    'migr', 'test', 'tests', 'util', 'utils', 'common',
-    'shared', 'base', 'core', 'config', 'resources',
-    'assets', 'static', 'templates', 'page', 'pages',
-    'view', 'views', 'api', 'web', 'module', 'ui', 'uis',
-}
+# ═════════════════════════════════════════════════════════════════════════════
+# CACHE — API chaqiruvlarini kamaytirir
+# ═════════════════════════════════════════════════════════════════════════════
+
+@st.cache_resource(ttl=300)
+def _get_service() -> SprintDataService:
+    return SprintDataService()
 
 
-def _load_data_from_db(days: int, limit: int, issue_types: list) -> dict:
-    """SQLite DB dan sprint ma'lumotlarini to'g'ridan-to'g'ri o'qish"""
-    conn = sqlite3.connect(_DB_FILE)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
+@st.cache_data(ttl=300)
+def _fetch_boards(project_key: str):
+    return _get_service().get_boards(project_key)
 
-    cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
 
-    # 1. Jami tasklar soni
-    cursor.execute(
-        "SELECT COUNT(*) as total FROM task_processing WHERE created_at >= ?",
-        (cutoff_date,)
-    )
-    total_tasks = cursor.fetchone()['total']
+@st.cache_data(ttl=300)
+def _fetch_sprints(board_id: int, state: str):
+    return _get_service().get_sprints(board_id, state)
 
-    # 2. Task turi bo'yicha taqsimot — DB dagi barcha haqiqiy qiymatlar
-    cursor.execute("""
-        SELECT
-            COALESCE(task_type, 'Noma''lum') as task_type,
-            COUNT(*) as count
-        FROM task_processing
-        WHERE created_at >= ?
-        GROUP BY task_type
-        ORDER BY count DESC
-    """, (cutoff_date,))
-    task_by_type = [
-        {
-            'task_type': row['task_type'],
-            'count': row['count'],
-            'percentage': round(row['count'] / total_tasks * 100, 2) if total_tasks > 0 else 0
-        }
-        for row in cursor.fetchall()
-    ]
 
-    # 3. Top features — feature_name CSV ni split qilib individual modullarni hisoblash
-    # feature_name DB da: "anor, mkw, mfm" → split → anor +1, mkw +1, mfm +1
-    cursor.execute("""
-        SELECT
-            feature_name,
-            COALESCE(task_type, 'Noma''lum') as task_type,
-            COUNT(*) as task_count
-        FROM task_processing
-        WHERE created_at >= ?
-          AND feature_name IS NOT NULL
-          AND feature_name != ''
-        GROUP BY feature_name, task_type
-    """, (cutoff_date,))
-    raw_rows = cursor.fetchall()
+@st.cache_data(ttl=300)
+def _fetch_sprint_issues(sprint_id: int):
+    svc = _get_service()
+    return svc.jira.get_sprint_issues_full(sprint_id)
 
-    # Pivot: {module_name: {task_type: count, '_total': n}}
-    feature_data: dict = {}
-    all_task_types: set = set()
 
-    for row in raw_rows:
-        feature_csv = row['feature_name']
-        ttype       = row['task_type']
-        cnt         = row['task_count']
-
-        # CSV string → individual modullar
-        modules = [m.strip() for m in feature_csv.split(',') if m.strip()]
-
-        for mod in modules:
-            # Shovqinli va juda qisqa nomlarni o'tkazib yuborish
-            if mod in _NOISE_FEATURES or len(mod) <= 2:
-                continue
-            if mod not in feature_data:
-                feature_data[mod] = {'_total': 0}
-            feature_data[mod][ttype]  = feature_data[mod].get(ttype, 0) + cnt
-            feature_data[mod]['_total'] += cnt
-            all_task_types.add(ttype)
-
-    # Total bo'yicha tartiblash va limit qo'llash
-    sorted_features = sorted(
-        feature_data.items(),
-        key=lambda x: x[1]['_total'],
-        reverse=True
-    )[:limit]
-
-    # Ustunlar tartibi: settings → DB → fallback
-    known_types = [t for t in issue_types if t in all_task_types]
-    if not known_types:
-        # Eski format (product/error/bug) yoki settings mos kelmasa
-        known_types = sorted(all_task_types - {'Noma\'lum'})
-        if 'Noma\'lum' in all_task_types:
-            known_types.append('Noma\'lum')
-
-    top_features = []
-    for fname, types in sorted_features:
-        entry = {'feature_name': fname, 'total_tasks': types['_total']}
-        known_sum = 0
-        for itype in known_types:
-            val = types.get(itype, 0)
-            entry[itype] = val
-            known_sum += val
-        other_val = types['_total'] - known_sum
-        if other_val > 0:
-            entry['other'] = other_val
-        top_features.append(entry)
-
-    actual_types = known_types
-
-    # 4. PR topilmagan tasklar
-    cursor.execute("""
-        SELECT COUNT(*) as n
-        FROM task_processing
-        WHERE created_at >= ?
-          AND service1_status = 'error'
-          AND service1_error LIKE '%PR topilmadi%'
-    """, (cutoff_date,))
-    no_pr_count = cursor.fetchone()['n']
-
-    # 5. Developer workload — DB dagi haqiqiy status qiymatlariga moslashgan
-    cursor.execute("""
-        SELECT
-            COALESCE(assignee, 'Unassigned') as assignee,
-            COUNT(*) as total_tasks,
-            SUM(CASE WHEN task_status = 'completed'   THEN 1 ELSE 0 END) as completed,
-            SUM(CASE WHEN task_status = 'progressing' THEN 1 ELSE 0 END) as in_progress,
-            SUM(CASE WHEN task_status = 'returned'    THEN 1 ELSE 0 END) as returned,
-            SUM(CASE WHEN task_status = 'error'       THEN 1 ELSE 0 END) as processing_error,
-            AVG(compliance_score) as avg_compliance_score
-        FROM task_processing
-        WHERE created_at >= ?
-          AND assignee IS NOT NULL
-        GROUP BY assignee
-        ORDER BY total_tasks DESC
-    """, (cutoff_date,))
-    developer_workload = [
-        {
-            'assignee':            row['assignee'],
-            'total_tasks':         row['total_tasks'],
-            'completed':           row['completed'],
-            'in_progress':         row['in_progress'],
-            'returned':            row['returned'],
-            'processing_error':    row['processing_error'],
-            'avg_compliance_score': round(row['avg_compliance_score'], 2)
-                                    if row['avg_compliance_score'] else None
-        }
-        for row in cursor.fetchall()
-    ]
-
-    conn.close()
-
-    return {
-        'period':             f"So'nggi {days} kun",
-        'total_tasks':        total_tasks,
-        'no_pr_count':        no_pr_count,
-        'task_by_type':       task_by_type,
-        'top_features':       top_features,
-        'developer_workload': developer_workload,
-        'issue_types':        issue_types,
-        'actual_types':       actual_types,
-        'generated_at':       datetime.now().isoformat()
-    }
-
+# ═════════════════════════════════════════════════════════════════════════════
+# MAIN ENTRY POINT
+# ═════════════════════════════════════════════════════════════════════════════
 
 def render_sprint_report():
-    """Main entry point for Sprint Report page"""
-    st.title("📈 Sprint Report")
-    st.markdown("Sprint bo'yicha task statistikasi va tahlil")
+    st.title("📈 Sprint Monitoring Dashboard")
 
-    # Issue types sozlamalardan
-    issue_types = _get_issue_types()
+    svc = _get_service()
 
-    # Sidebar controls
+    # ── SIDEBAR — Sprint tanlash ────────────────────────────────────────
     with st.sidebar:
-        st.subheader("⚙️ Sozlamalar")
-        days = st.slider("Davr (kunlar)", 1, 90, 7, help="Qancha kunlik ma'lumot ko'rsatilsin")
-        limit = st.slider("Top features soni", 5, 50, 10, help="Eng ko'p ishlangan features soni")
+        st.subheader("🎯 Sprint tanlash")
 
+        project_key = st.text_input("Loyiha kaliti", value="DEV")
+        boards = _fetch_boards(project_key)
+
+        if not boards:
+            st.warning("Board topilmadi. JIRA ulanishini tekshiring.")
+            st.info("💡 `.env` dagi JIRA_SERVER, JIRA_EMAIL, JIRA_API_TOKEN ni tekshiring")
+            return
+
+        board_names = {b['name']: b['id'] for b in boards}
+        selected_board_name = st.selectbox("Board", list(board_names.keys()))
+        board_id = board_names[selected_board_name]
+
+        sprint_state = st.selectbox("Sprint holati", ['active,closed', 'active', 'closed', 'future'])
+        sprints = _fetch_sprints(board_id, sprint_state)
+
+        if not sprints:
+            st.warning("Sprint topilmadi.")
+            return
+
+        sprint_names = {s['name']: s for s in sprints}
+        selected_sprint_name = st.selectbox(
+            "Sprint",
+            list(sprint_names.keys()),
+            index=0,
+        )
+        selected_sprint = sprint_names[selected_sprint_name]
+
+        # Developer kapasiteti
         st.divider()
-        if issue_types:
-            st.caption("📋 Faol Issue Type'lar:")
-            for itype in issue_types:
-                st.caption(f"• {itype}")
-        else:
-            st.warning("⚠️ Sozlamada Issue Type'lar yo'q.\nTizim Sozlamalari → TZ-PR Checker → Ruxsat etilgan Issue Type'lar")
+        st.subheader("👤 Developer kapasiteti")
+        st.caption("SP / kun (ish kuni = 8 soat)")
 
-    # DB mavjudligini tekshirish
-    if not os.path.exists(_DB_FILE):
-        st.error(f"❌ DB fayl topilmadi: `{_DB_FILE}`")
-        st.info("💡 Webhook birinchi marta ishlagandan keyin DB yaratiladi.")
-        return
+        # Sprint yuklash (cached)
+        issues_raw = _fetch_sprint_issues(selected_sprint['id'])
+        svc.load_sprint(selected_sprint, issues_raw)
 
-    # DB dan ma'lumot o'qish
-    try:
-        with st.spinner("Ma'lumotlar yuklanmoqda..."):
-            data = _load_data_from_db(days=days, limit=limit, issue_types=issue_types)
-    except Exception as e:
-        st.error(f"❌ DB xatosi: {e}")
-        return
-
-    if data['total_tasks'] == 0:
-        st.info(f"📭 So'nggi {days} kunda ma'lumot topilmadi. Davr filterini kengaytiring.")
-        return
-
-    # Render sections
-    _render_overview_metrics(data)
-    st.divider()
-    _render_task_type_chart(data)
-    st.divider()
-    _render_top_features(data)
-    st.divider()
-    _render_developer_workload(data)
-
-    # Footer
-    st.caption(
-        f"📅 Generatsiya vaqti: "
-        f"{datetime.fromisoformat(data['generated_at']).strftime('%Y-%m-%d %H:%M:%S')}"
-    )
-
-
-def _render_overview_metrics(data):
-    """Overview KPIs — DB dagi haqiqiy task type'lar bo'yicha metric kartalar"""
-    st.subheader("📊 Umumiy Ko'rinish")
-
-    task_by_type = data.get('task_by_type', [])
-    no_pr_count  = data.get('no_pr_count', 0)
-
-    # Jami + har bir task_type + PR yo'q
-    items = [('📦 Jami Tasklar', data['total_tasks'], None)]
-    for item in task_by_type:
-        items.append((item['task_type'], item['count'], None))
-    items.append(('🔗 PR topilmadi', no_pr_count, 'inverse' if no_pr_count > 0 else None))
-
-    # Har qatorda max 6 ta ustun
-    for row_start in range(0, len(items), 6):
-        row_items = items[row_start:row_start + 6]
-        cols = st.columns(len(row_items))
-        for col, (label, value, delta_color) in zip(cols, row_items):
-            with col:
-                if delta_color:
-                    # PR topilmadi — qizil rang bilan ko'rsatish
-                    st.metric(label, value, delta=f"{value} ta", delta_color=delta_color)
-                else:
-                    st.metric(label, value)
-
-
-def _render_task_type_chart(data):
-    """Donut pie chart — task turlari taqsimoti"""
-    st.subheader("📊 Task Turlari Taqsimoti")
-
-    if not data['task_by_type']:
-        st.info("Ma'lumot yo'q")
-        return
-
-    df = pd.DataFrame(data['task_by_type'])
-
-    col1, col2 = st.columns([2, 1])
-
-    with col1:
-        fig = px.pie(
-            df,
-            values='count',
-            names='task_type',
-            title=f"Task Turlari ({data['period']})",
-            hole=0.35,
-            color_discrete_sequence=px.colors.qualitative.Set3
-        )
-        fig.update_traces(textposition='inside', textinfo='percent+label')
-        fig.update_layout(showlegend=False)
-        st.plotly_chart(fig, width='stretch')
-
-    with col2:
-        st.dataframe(
-            df[['task_type', 'count', 'percentage']].rename(columns={
-                'task_type': 'Tur',
-                'count': 'Soni',
-                'percentage': 'Foiz %'
-            }),
-            width='stretch',
-            hide_index=True
-        )
-
-
-def _render_top_features(data):
-    """
-    Top Features — gorizontal stacked bar chart + jadval.
-
-    Yaxshilanishlar (v1.2):
-    - Dinamik ustunlar (allowed_issue_types dan)
-    - Gorizontal chart (uzun feature nomlari uchun qulay)
-    - Avtomatik balandlik (feature soni bo'yicha)
-    - Jadvalda ProgressColumn (Jami ustuni)
-    """
-    st.subheader("🏗️ Top Features (eng ko'p ishlangan)")
-
-    if not data['top_features']:
-        st.info("Ma'lumot yo'q")
-        return
-
-    # DB dagi haqiqiy type'lar (settings emas)
-    actual_types = data.get('actual_types', data.get('issue_types', []))
-    df = pd.DataFrame(data['top_features'])
-
-    # Gorizontal stacked bar chart
-    fig = go.Figure()
-
-    palette = px.colors.qualitative.Plotly
-
-    # Faqat qiymati > 0 bo'lgan ustunlarni ko'rsatish
-    cols_to_show = [t for t in actual_types if t in df.columns and df[t].sum() > 0]
-    if 'other' in df.columns and df['other'].sum() > 0:
-        cols_to_show.append('other')
-
-    for i, col in enumerate(cols_to_show):
-        label = col if col != 'other' else '🔹 Boshqa'
-        fig.add_trace(go.Bar(
-            name=label,
-            y=df['feature_name'],
-            x=df[col],
-            orientation='h',
-            marker_color=palette[i % len(palette)],
-            text=df[col].apply(lambda v: str(int(v)) if v > 0 else ''),
-            textposition='inside',
-            insidetextanchor='middle'
+        dev_names = sorted(set(
+            t.assignee for t in svc.tasks if t.assignee != 'Unassigned'
         ))
 
-    chart_height = max(350, len(df) * 42 + 130)
-    fig.update_layout(
-        barmode='stack',
-        title=f"Feature bo'yicha Task Taqsimoti ({data['period']})",
-        xaxis_title='Task soni',
-        yaxis_title='',
-        height=chart_height,
-        showlegend=True,
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1
-        ),
-        yaxis=dict(autorange='reversed'),  # Yuqori — eng ko'p ishlangan
-        margin=dict(l=10, r=10, t=80, b=30)
-    )
-
-    st.plotly_chart(fig, width='stretch')
-
-    # Jadval — ProgressColumn bilan
-    display_cols = {'feature_name': 'Feature', 'total_tasks': 'Jami'}
-    for t in actual_types:
-        if t in df.columns:
-            display_cols[t] = t
-    if 'other' in df.columns:
-        display_cols['other'] = 'Boshqa'
-
-    max_total = int(df['total_tasks'].max()) if not df.empty else 1
-
-    st.dataframe(
-        df[list(display_cols.keys())].rename(columns=display_cols),
-        column_config={
-            'Jami': st.column_config.ProgressColumn(
-                'Jami',
-                help="Jami task soni",
-                min_value=0,
-                max_value=max_total,
-                format="%d"
+        dev_caps: Dict[str, float] = {}
+        default_cap = st.number_input(
+            "Default kapasitet (barcha uchun)",
+            min_value=0.5, max_value=20.0, value=2.0, step=0.5,
+            key="default_cap",
+        )
+        for dev in dev_names:
+            cap = st.number_input(
+                dev, min_value=0.5, max_value=20.0, value=default_cap, step=0.5,
+                key=f"cap_{dev}",
             )
-        },
-        width='stretch',
-        hide_index=True
-    )
+            dev_caps[dev] = cap
+
+        svc.set_dev_capacities(dev_caps)
+
+        # Refresh
+        st.divider()
+        if st.button("🔄 Ma'lumotlarni yangilash", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
+
+    # ── MA'LUMOT YUKLANDI — SAHIFALAR ──────────────────────────────────
+
+    if not svc.tasks:
+        st.warning("Sprint da task topilmadi.")
+        return
+
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "📊 Sprint Overview",
+        "👤 Developer Performance",
+        "📋 Task Pipeline",
+        "🔍 Bottleneck Analyzer",
+        "🧪 QA & Testing",
+        "📈 Sprint Comparison",
+    ])
+
+    with tab1:
+        _render_sprint_overview(svc)
+    with tab2:
+        _render_developer_performance(svc)
+    with tab3:
+        _render_task_pipeline(svc)
+    with tab4:
+        _render_bottleneck(svc)
+    with tab5:
+        _render_qa_testing(svc)
+    with tab6:
+        _render_sprint_comparison(svc, board_id)
 
 
-def _render_developer_workload(data):
-    """Developer Workload — haqiqiy DB status'lar asosida jadval"""
-    st.subheader("👥 Developer Workload")
+# ═════════════════════════════════════════════════════════════════════════════
+# TAB 1 — SPRINT OVERVIEW
+# ═════════════════════════════════════════════════════════════════════════════
 
-    if not data['developer_workload']:
+def _render_sprint_overview(svc: SprintDataService):
+    data = svc.get_sprint_overview()
+    if not data:
         st.info("Ma'lumot yo'q")
         return
 
-    df = pd.DataFrame(data['developer_workload'])
+    # ── Sprint Info Card ────────────────────────────────────────────────
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Sprint", data['sprint_name'])
+    c2.metric("Boshlanish", data['start_date'].strftime('%d.%m') if data['start_date'] else '—')
+    c3.metric("Tugash", data['end_date'].strftime('%d.%m') if data['end_date'] else '—')
+    remaining = data['remaining_days']
+    c4.metric("Qolgan kunlar", f"{remaining} kun",
+              delta=f"{remaining} kun", delta_color="inverse" if remaining < 3 else "normal")
 
-    # Compliance score formatlash
-    df['avg_compliance_score'] = df['avg_compliance_score'].apply(
-        lambda x: f"{x}%" if x is not None else "—"
-    )
+    # ── Progress Bar ────────────────────────────────────────────────────
+    pct = data['progress_pct']
+    color = '#4CAF50' if pct >= 80 else ('#FFC107' if pct >= 50 else '#F44336')
+    st.markdown(f"""
+    <div style="background:#333;border-radius:10px;height:30px;margin:10px 0;">
+        <div style="background:{color};border-radius:10px;height:30px;width:{min(pct,100)}%;
+                    display:flex;align-items:center;justify-content:center;color:white;font-weight:bold;">
+            {pct}%
+        </div>
+    </div>""", unsafe_allow_html=True)
 
-    # Faqat qiymati > 0 bo'lgan statuslarni ko'rsatish
-    rename_map = {
-        'assignee':         'Developer',
-        'total_tasks':      'Jami',
-        'completed':        '✅ Tugallangan',
-        'avg_compliance_score': "📊 Moslik",
-    }
-    cols_to_show = ['assignee', 'total_tasks', 'completed', 'avg_compliance_score']
+    # ── SP Breakdown Metrics ────────────────────────────────────────────
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("Jami SP", data['total_sp'])
+    m2.metric("Bajarilgan SP", data['completed_sp'])
+    m3.metric("Jarayonda SP", data['in_progress_sp'])
+    m4.metric("Qolgan SP", data['remaining_sp'])
 
-    if df['in_progress'].sum() > 0:
-        rename_map['in_progress'] = '🔄 Jarayonda'
-        cols_to_show.insert(3, 'in_progress')
+    risk = data['risk_score']
+    risk_label = "Yaxshi" if risk < 0.8 else ("O'rtacha" if risk < 1.0 else "Xavfli")
+    risk_delta_color = "normal" if risk < 0.8 else ("off" if risk < 1.0 else "inverse")
+    m5.metric("Risk", risk_label, delta=f"{risk:.2f}", delta_color=risk_delta_color)
 
-    if df['returned'].sum() > 0:
-        rename_map['returned'] = '↩️ Qaytarilgan'
-        cols_to_show.insert(-1, 'returned')
+    col_left, col_right = st.columns(2)
 
-    if df['processing_error'].sum() > 0:
-        rename_map['processing_error'] = '⚠️ Xatolik'
-        cols_to_show.insert(-1, 'processing_error')
+    # ── SP Breakdown Donut ──────────────────────────────────────────────
+    with col_left:
+        fig = go.Figure(data=[go.Pie(
+            labels=['Bajarilgan', 'Jarayonda', 'Qolgan'],
+            values=[data['completed_sp'], data['in_progress_sp'],
+                    max(data['remaining_sp'] - data['in_progress_sp'], 0)],
+            hole=0.45,
+            marker_colors=['#4CAF50', '#2196F3', '#9E9E9E'],
+        )])
+        fig.update_layout(title='SP Taqsimoti', height=350, showlegend=True)
+        st.plotly_chart(fig, use_container_width=True)
 
-    max_total = int(df['total_tasks'].max()) if not df.empty else 1
+    # ── Burndown Chart ──────────────────────────────────────────────────
+    with col_right:
+        bd = data['burndown']
+        if bd['dates']:
+            fig = go.Figure()
+            fig.add_scatter(x=bd['dates'], y=bd['ideal'], name='Ideal',
+                            line=dict(dash='dash', color='#9E9E9E'))
+            if bd['actual']:
+                fig.add_scatter(x=bd['dates'][:len(bd['actual'])], y=bd['actual'],
+                                name='Haqiqiy', line=dict(color='#F44336', width=2))
+            fig.update_layout(title='Burndown Chart', xaxis_title='Kun',
+                              yaxis_title='Qolgan SP', height=350)
+            st.plotly_chart(fig, use_container_width=True)
 
-    st.dataframe(
-        df[cols_to_show].rename(columns=rename_map),
-        column_config={
-            'Jami': st.column_config.ProgressColumn(
-                'Jami',
-                help="Jami task soni",
-                min_value=0,
-                max_value=max_total,
-                format="%d"
+    col_a, col_b = st.columns(2)
+
+    # ── Daily Velocity ──────────────────────────────────────────────────
+    with col_a:
+        dv = data['daily_velocity']
+        if dv:
+            fig = px.bar(
+                pd.DataFrame(dv), x='date', y='sp',
+                title='Kunlik bajarilgan SP', labels={'date': '', 'sp': 'SP'},
+                color_discrete_sequence=['#2196F3'],
             )
-        },
-        width='stretch',
-        hide_index=True
+            fig.update_layout(height=300)
+            st.plotly_chart(fig, use_container_width=True)
+
+    # ── Status Distribution ─────────────────────────────────────────────
+    with col_b:
+        sd = data['status_distribution']
+        if sd:
+            df_sd = pd.DataFrame([
+                {'Status': k, 'Tasklar': v} for k, v in sd.items()
+            ])
+            fig = px.bar(
+                df_sd, y='Status', x='Tasklar', orientation='h',
+                title='Status bo\'yicha task soni',
+                color_discrete_sequence=['#FF9800'],
+                text='Tasklar',
+            )
+            fig.update_traces(textposition='outside')
+            fig.update_layout(height=300, yaxis={'categoryorder': 'total ascending'})
+            st.plotly_chart(fig, use_container_width=True)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# TAB 2 — DEVELOPER PERFORMANCE
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _render_developer_performance(svc: SprintDataService):
+    dev_stats = svc.get_developer_stats()
+    if not dev_stats:
+        st.info("Ma'lumot yo'q")
+        return
+
+    # ── Developer selector ──────────────────────────────────────────────
+    dev_names = [d['name'] for d in dev_stats]
+    selected_dev = st.selectbox("Developer tanlang", ["Barcha"] + dev_names)
+
+    if selected_dev == "Barcha":
+        _render_all_devs_summary(dev_stats)
+    else:
+        dev = next(d for d in dev_stats if d['name'] == selected_dev)
+        _render_single_dev(dev, svc)
+
+
+def _render_all_devs_summary(dev_stats: List[Dict]):
+    """Barcha developerlar jadvali"""
+    rows = []
+    for d in dev_stats:
+        delay_label = ""
+        if d['total_delay_days'] > 1:
+            delay_label = f"🔴 +{d['total_delay_days']:.1f} kun"
+        elif d['total_delay_days'] > 0:
+            delay_label = f"🟡 +{d['total_delay_days']:.1f} kun"
+        else:
+            delay_label = "🟢 Vaqtida"
+
+        rows.append({
+            'Developer': d['name'],
+            'Tasklar': d['total_tasks'],
+            'Jami SP': d['assigned_sp'],
+            'Bajarilgan SP': d['completed_sp'],
+            'Qolgan SP': d['remaining_sp'],
+            'Velocity (SP/kun)': d['velocity_per_day'],
+            'Kechikish (kun)': d['total_delay_days'],
+            'Yo\'qotilgan SP': d['total_delay_sp'],
+            'First Pass %': d['first_pass_rate'],
+            'Qaytarilgan': d['returned_count'],
+            'Holat': delay_label,
+        })
+
+    df = pd.DataFrame(rows)
+
+    # ── Ajratilgan vs Bajarilgan bar chart ──────────────────────────────
+    fig = go.Figure()
+    fig.add_bar(name='Ajratilgan SP', x=df['Developer'], y=df['Jami SP'],
+                marker_color='#4CAF50', text=df['Jami SP'], textposition='outside')
+    fig.add_bar(name='Bajarilgan SP', x=df['Developer'], y=df['Bajarilgan SP'],
+                marker_color='#2196F3', text=df['Bajarilgan SP'], textposition='outside')
+    fig.update_layout(barmode='group', title='Developer SP holati',
+                      yaxis_title='SP', height=400)
+    st.plotly_chart(fig, use_container_width=True)
+
+    # ── Jadval ──────────────────────────────────────────────────────────
+    st.dataframe(df, hide_index=True, use_container_width=True)
+
+
+def _render_single_dev(dev: Dict, svc: SprintDataService):
+    """Bitta developer tafsiloti"""
+
+    # ── Velocity Gauge ──────────────────────────────────────────────────
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Jami SP", dev['assigned_sp'])
+    c2.metric("Bajarilgan SP", dev['completed_sp'])
+    c3.metric("Velocity", f"{dev['velocity_per_day']} SP/kun")
+    c4.metric("First Pass Rate", f"{dev['first_pass_rate']}%")
+
+    c5, c6, c7, c8 = st.columns(4)
+    c5.metric("Jarayonda SP", dev['in_progress_sp'])
+    c6.metric("Qolgan SP", dev['remaining_sp'])
+    delay = dev['total_delay_days']
+    c7.metric("Kechikish", f"{delay:.1f} kun",
+              delta=f"+{delay:.1f}" if delay > 0 else f"{delay:.1f}",
+              delta_color="inverse" if delay > 0.5 else "normal")
+    c8.metric("Qaytarilgan", dev['returned_count'])
+
+    # ── Kechikish jadvali ───────────────────────────────────────────────
+    st.markdown("#### Task bo'yicha kechikish tahlili")
+    tasks = dev['task_details']
+    df = pd.DataFrame(tasks)
+
+    if not df.empty:
+        def _flag(row):
+            d = row.get('delay_days')
+            if d is None:
+                return "⚪ Hali jarayonda"
+            if d > 1:
+                return f"🔴 +{d:.1f} kun kech"
+            if d > 0:
+                return f"🟠 +{d:.1f} kun kech"
+            if d < -0.5:
+                return f"🟢 {abs(d):.1f} kun erta"
+            return "🟡 Vaqtida"
+
+        df['Holat'] = df.apply(_flag, axis=1)
+        df = df.rename(columns={
+            'key': 'Task', 'summary': 'Sarlavha', 'status': 'Status',
+            'story_points': 'SP', 'expected_days': 'Kerak edi (kun)',
+            'actual_days': 'Ketdi (kun)', 'delay_days': 'Kechikish (kun)',
+            'delay_sp': 'Yo\'qotilgan SP',
+        })
+        df = df.sort_values('Kechikish (kun)', ascending=False, na_position='last')
+        st.dataframe(
+            df[['Task', 'Sarlavha', 'SP', 'Kerak edi (kun)', 'Ketdi (kun)',
+                'Kechikish (kun)', 'Yo\'qotilgan SP', 'Holat', 'Status']],
+            hide_index=True, use_container_width=True,
+        )
+
+    # ── SP Progress stacked bar ─────────────────────────────────────────
+    fig = go.Figure(data=[
+        go.Bar(name='Bajarilgan', x=['SP'], y=[dev['completed_sp']], marker_color='#4CAF50'),
+        go.Bar(name='Jarayonda', x=['SP'], y=[dev['in_progress_sp']], marker_color='#2196F3'),
+        go.Bar(name='Qolgan', x=['SP'], y=[dev['remaining_sp']], marker_color='#9E9E9E'),
+    ])
+    fig.update_layout(barmode='stack', height=250, title='SP holati')
+    st.plotly_chart(fig, use_container_width=True)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# TAB 3 — TASK PIPELINE (Kanban)
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _render_task_pipeline(svc: SprintDataService):
+    pipeline = svc.get_pipeline_data()
+
+    # Filtrlash
+    col_f1, col_f2 = st.columns(2)
+    with col_f1:
+        dev_filter = st.selectbox(
+            "Developer filtr",
+            ["Barcha"] + sorted(set(t.assignee for t in svc.tasks if t.assignee != 'Unassigned')),
+            key="pipeline_dev",
+        )
+    with col_f2:
+        show_stuck = st.checkbox("Faqat tiqilganlarni ko'rsatish (3+ kun)", key="pipeline_stuck")
+
+    # Kanban ustunlari
+    all_statuses = [s for s in STATUS_PIPELINE + STATUS_EXCEPTION if pipeline.get(s)]
+    if not all_statuses:
+        st.info("Tasklar topilmadi")
+        return
+
+    cols = st.columns(len(all_statuses))
+    for col, status in zip(cols, all_statuses):
+        cards = pipeline[status]
+
+        # Filtrlash
+        if dev_filter != "Barcha":
+            cards = [c for c in cards if c['assignee'] == dev_filter]
+        if show_stuck:
+            cards = [c for c in cards if c.get('is_stuck')]
+
+        with col:
+            st.markdown(f"**{status}** ({len(cards)})")
+            st.markdown("---")
+
+            for card in cards:
+                bg = '#5c1010' if card.get('is_stuck') else '#1a1a2e'
+                border = '#F44336' if card.get('is_stuck') else '#333'
+                st.markdown(f"""
+                <div style="background:{bg};border:1px solid {border};border-radius:8px;
+                            padding:8px;margin-bottom:6px;font-size:0.85em;">
+                    <b>{card['key']}</b> <span style="color:#aaa">({card['story_points']} SP)</span><br>
+                    <span style="color:#bbb">{card['summary'][:40]}{'...' if len(card['summary'])>40 else ''}</span><br>
+                    <span style="color:#888">👤 {card['assignee']}</span>
+                    <span style="color:#888"> | ⏱ {card['days_in_status']} kun</span>
+                </div>""", unsafe_allow_html=True)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# TAB 4 — BOTTLENECK ANALYZER
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _render_bottleneck(svc: SprintDataService):
+    data = svc.get_bottleneck_data()
+    if not data:
+        st.info("Ma'lumot yo'q")
+        return
+
+    # ── Alertlar ────────────────────────────────────────────────────────
+    alerts = data['alerts']
+    if alerts:
+        st.markdown(f"### ⚠️ Ogohlantirish ({len(alerts)} ta)")
+        for a in sorted(alerts, key=lambda x: x['days'], reverse=True):
+            icon = '🔴' if a['days'] > 3 else '🟡'
+            st.warning(f"{icon} **{a['task']}** — {a['message']} (👤 {a['assignee']})")
+    else:
+        st.success("✅ Hozircha tiqilish yo'q")
+
+    col1, col2 = st.columns(2)
+
+    # ── Status bo'yicha o'rtacha vaqt ───────────────────────────────────
+    with col1:
+        ast_data = data['avg_status_time']
+        if ast_data:
+            df = pd.DataFrame([
+                {'Status': k, "O'rtacha (kun)": v['avg_days'],
+                 'Jami (soat)': v['total_hours'], 'Bottleneck score': v['bottleneck_score']}
+                for k, v in ast_data.items()
+            ]).sort_values('Bottleneck score', ascending=False)
+
+            fig = px.bar(df, x='Status', y="O'rtacha (kun)",
+                         color='Bottleneck score',
+                         color_continuous_scale='YlOrRd',
+                         title="Status bo'yicha o'rtacha vaqt (ish kun)",
+                         text="O'rtacha (kun)")
+            fig.update_traces(texttemplate='%{text:.1f}', textposition='outside')
+            fig.update_layout(height=400, coloraxis_showscale=False, xaxis_tickangle=-25)
+            st.plotly_chart(fig, use_container_width=True)
+
+    # ── Cycle Time ──────────────────────────────────────────────────────
+    with col2:
+        st.metric("O'rtacha Cycle Time", f"{data['avg_cycle_time_days']:.1f} ish kun",
+                   help="IN PROGRESS → CLOSED")
+
+        ct = data['cycle_times']
+        if ct:
+            fig = px.histogram(
+                pd.DataFrame({'Cycle Time (kun)': ct}),
+                x='Cycle Time (kun)', nbins=10,
+                title='Cycle Time taqsimoti (ish kun)',
+                color_discrete_sequence=['#2196F3'],
+            )
+            fig.update_layout(height=300)
+            st.plotly_chart(fig, use_container_width=True)
+
+    # ── Heatmap ─────────────────────────────────────────────────────────
+    hm = data['heatmap']
+    if hm:
+        st.markdown("### Developer × Status Heatmap (o'rtacha ish kun)")
+        hm_df = pd.DataFrame(hm).T.fillna(0)
+        ordered_cols = sorted(hm_df.columns.tolist(), key=lambda s: STATUS_PIPELINE.index(s) if s in STATUS_PIPELINE else 99)
+        hm_df = hm_df[[c for c in ordered_cols if c in hm_df.columns]]
+
+        fig = px.imshow(
+            hm_df.round(1), text_auto='.1f', aspect='auto',
+            color_continuous_scale='YlOrRd',
+            labels={'color': 'Ish kun'},
+        )
+        fig.update_layout(height=max(300, len(hm_df) * 50), xaxis_tickangle=-25)
+        st.plotly_chart(fig, use_container_width=True)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# TAB 5 — QA & TESTING
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _render_qa_testing(svc: SprintDataService):
+    qa = svc.get_qa_stats()
+    if not qa:
+        st.info("Ma'lumot yo'q")
+        return
+
+    # ── KPI lar ─────────────────────────────────────────────────────────
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Tekshirilgan", qa['total_tested'])
+    c2.metric("First Pass Rate", f"{qa['first_pass_rate']}%")
+    c3.metric("Qaytarilgan", qa['returned'],
+              delta=str(qa['returned']), delta_color="inverse" if qa['returned'] > 0 else "normal")
+    c4.metric("Clarification", qa['need_clarification'])
+    c5.metric("O'rtacha QA vaqt", f"{qa['avg_qa_time_days']:.1f} kun")
+
+    col1, col2 = st.columns(2)
+
+    # ── Return Rate Pie ─────────────────────────────────────────────────
+    with col1:
+        fig = go.Figure(data=[go.Pie(
+            labels=['CLOSED (sof)', 'RETURN TEST', 'NEED CLARIFICATION', 'REJECTED'],
+            values=[qa['closed_clean'], qa['returned'],
+                    qa['need_clarification'], qa['rejected']],
+            hole=0.4,
+            marker_colors=['#4CAF50', '#F44336', '#FFC107', '#9E9E9E'],
+        )])
+        fig.update_layout(title='Test natijalari taqsimoti', height=350)
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ── Defect by Dev ───────────────────────────────────────────────────
+    with col2:
+        dbd = qa['defect_by_dev']
+        if dbd:
+            df = pd.DataFrame([
+                {'Developer': k, 'Qaytarilgan': v} for k, v in dbd.items()
+            ]).sort_values('Qaytarilgan', ascending=False)
+
+            fig = px.bar(df, x='Developer', y='Qaytarilgan',
+                         title='Developer bo\'yicha qaytarilgan tasklar',
+                         color='Qaytarilgan', color_continuous_scale='Reds',
+                         text='Qaytarilgan')
+            fig.update_traces(textposition='outside')
+            fig.update_layout(height=350, coloraxis_showscale=False)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.success("Qaytarilgan task yo'q!")
+
+    # ── QA Queue ────────────────────────────────────────────────────────
+    st.markdown("### QA navbati")
+    if qa['qa_queue']:
+        df = pd.DataFrame(qa['qa_queue']).rename(columns={
+            'key': 'Task', 'summary': 'Sarlavha', 'assignee': 'Developer',
+            'story_points': 'SP', 'status': 'Status',
+        })
+        st.dataframe(df, hide_index=True, use_container_width=True)
+    else:
+        st.info("QA navbati bo'sh.")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# TAB 6 — SPRINT COMPARISON
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _render_sprint_comparison(svc: SprintDataService, board_id: int):
+    st.markdown("### Sprintlarni taqqoslash")
+
+    all_sprints = _fetch_sprints(board_id, 'active,closed')
+    if len(all_sprints) < 2:
+        st.info("Taqqoslash uchun kamida 2 ta sprint kerak.")
+        return
+
+    sprint_options = {s['name']: s for s in all_sprints}
+    selected_names = st.multiselect(
+        "Sprintlarni tanlang (2-5 ta)",
+        list(sprint_options.keys()),
+        default=list(sprint_options.keys())[:2],
+        max_selections=5,
     )
+
+    if len(selected_names) < 2:
+        st.info("Kamida 2 ta sprint tanlang.")
+        return
+
+    # Har bir sprint uchun summary olish
+    summaries = []
+    for name in selected_names:
+        sp_meta = sprint_options[name]
+        temp_svc = SprintDataService()
+        temp_issues = _fetch_sprint_issues(sp_meta['id'])
+        temp_svc.load_sprint(sp_meta, temp_issues)
+        # Kapasitetlarni joriy sprint dan olish
+        temp_svc.set_dev_capacities({d: c.velocity_per_day for d, c in svc.dev_capacities.items()})
+        summaries.append(temp_svc.get_sprint_summary_for_comparison())
+
+    df = pd.DataFrame(summaries)
+
+    # ── Velocity Comparison ─────────────────────────────────────────────
+    fig = go.Figure()
+    fig.add_bar(name='Bajarilgan SP', x=df['sprint_name'], y=df['completed_sp'],
+                marker_color='#4CAF50', text=df['completed_sp'], textposition='outside')
+    fig.add_bar(name='Jami SP', x=df['sprint_name'], y=df['total_sp'],
+                marker_color='#9E9E9E', text=df['total_sp'], textposition='outside')
+    fig.update_layout(barmode='group', title='Sprint bo\'yicha SP holati',
+                      yaxis_title='SP', height=400)
+    st.plotly_chart(fig, use_container_width=True)
+
+    col1, col2 = st.columns(2)
+
+    # ── Quality Comparison ──────────────────────────────────────────────
+    with col1:
+        fig = px.bar(
+            df, x='sprint_name', y='first_pass_rate',
+            title='First Pass Rate (%)',
+            color='first_pass_rate', color_continuous_scale='Greens',
+            text='first_pass_rate',
+        )
+        fig.update_traces(texttemplate='%{text:.0f}%', textposition='outside')
+        fig.update_layout(coloraxis_showscale=False, height=350)
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ── Cycle Time ──────────────────────────────────────────────────────
+    with col2:
+        fig = px.bar(
+            df, x='sprint_name', y='avg_cycle_time',
+            title="O'rtacha Cycle Time (ish kun)",
+            color='avg_cycle_time', color_continuous_scale='Blues',
+            text='avg_cycle_time',
+        )
+        fig.update_traces(texttemplate='%{text:.1f}', textposition='outside')
+        fig.update_layout(coloraxis_showscale=False, height=350)
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ── Umumiy jadval ───────────────────────────────────────────────────
+    display = df.rename(columns={
+        'sprint_name': 'Sprint',
+        'total_sp': 'Jami SP',
+        'completed_sp': 'Bajarilgan SP',
+        'completion_pct': 'Bajarilish %',
+        'team_velocity': 'Velocity (SP/kun)',
+        'first_pass_rate': 'First Pass %',
+        'avg_cycle_time': 'Cycle Time (kun)',
+        'return_count': 'Qaytarilgan',
+        'total_tasks': 'Tasklar',
+        'developers_count': 'Developerlar',
+    })
+    st.dataframe(display, hide_index=True, use_container_width=True)
