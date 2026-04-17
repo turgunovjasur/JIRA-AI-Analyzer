@@ -16,6 +16,7 @@ Version: 1.0
 """
 import streamlit as st
 from dataclasses import replace
+from utils.auth.auth_manager import is_company, get_auth_info
 
 from config.app_settings import (
     AppSettings,
@@ -41,50 +42,113 @@ def render_unified_settings():
         icon="⚙️"
     )
 
-    # Joriy sozlamalarni yuklash
     settings = get_app_settings()
-
     st.markdown("---")
 
-    # Tab-based navigation
-    tabs = st.tabs([
-        "🔧 Modullar",
-        "🐛 Bug Analyzer",
-        "📊 Statistics",
-        "🔍 TZ-PR Checker",
-        "🧪 Test Case Generator",
-        "⚙️ Tizim"
-    ])
-
-    # Session state'da o'zgarishlarni saqlash
     if 'settings_changed' not in st.session_state:
         st.session_state.settings_changed = False
 
+    # Kompaniya uchun — faqat ruxsat berilgan modullar ko'rsatiladi
+    if is_company():
+        _render_company_settings(settings)
+        return
+
+    # Super admin uchun — barcha tablar
+    tabs = st.tabs([
+        "🔧 Modullar", "🐛 Bug Analyzer", "📊 Statistics",
+        "🔍 TZ-PR Checker", "🧪 Test Case Generator", "⚙️ Tizim"
+    ])
+
     with tabs[0]:
         modules = _render_module_visibility_settings(settings)
-
     with tabs[1]:
         bug_analyzer = _render_bug_analyzer_settings(settings)
-
     with tabs[2]:
         statistics = _render_statistics_settings(settings)
-
     with tabs[3]:
         tz_pr = _render_tz_pr_settings(settings)
-
     with tabs[4]:
         testcase = _render_testcase_settings(settings)
-
     with tabs[5]:
         system, allowed_issue_types_filter, excluded_assignees_filter, min_tz_chars_filter = _render_system_settings(settings)
 
     st.markdown("---")
-
-    # Saqlash tugmalari
     _render_save_buttons(
         settings, modules, bug_analyzer, statistics, tz_pr, testcase, system,
         allowed_issue_types_filter, excluded_assignees_filter, min_tz_chars_filter
     )
+
+
+def _render_company_settings(settings):
+    """
+    Kompaniya uchun Settings sahifasi.
+    Faqat 2 bo'lim: API Kalitlar + super admin tomonidan ochilgan modullar sozlamalari.
+    "Modullar" tab yo'q — modullarni faqat super admin boshqaradi.
+    """
+    company_mods = st.session_state.get('company_modules', {})
+
+    # Qaysi modul config tablari ko'rsatilsin
+    # (faqat kompaniyaga ruxsat berilgan modullar)
+    MODULE_TABS = [
+        ('bug_analyzer',       '🐛 Bug Analyzer',        _render_bug_analyzer_settings),
+        ('statistics',         '📊 Statistics',           _render_statistics_settings),
+        ('tz_pr_checker',      '🔍 TZ-PR Checker',        _render_tz_pr_settings),
+        ('testcase_generator', '🧪 Test Case Generator',  _render_testcase_settings),
+    ]
+
+    enabled_tabs = [(key, label, fn) for key, label, fn in MODULE_TABS
+                    if company_mods.get(key, False)]
+
+    # Tab ro'yxati: API Kalitlar + ochilgan modullar sozlamalari
+    tab_labels = ["🔑 API Kalitlar"] + [label for _, label, _ in enabled_tabs]
+
+    if not enabled_tabs:
+        # Faqat API kalitlar tab
+        with st.tabs(["🔑 API Kalitlar"])[0]:
+            _render_api_keys_settings()
+        return
+
+    tabs = st.tabs(tab_labels)
+
+    with tabs[0]:
+        _render_api_keys_settings()
+
+    # Ochilgan modul sozlamalari
+    rendered = {}
+
+    for i, (mod_key, _, render_fn) in enumerate(enabled_tabs):
+        with tabs[i + 1]:
+            rendered[mod_key] = render_fn(settings)
+
+    st.markdown("---")
+
+    # Saqlash (faqat ochilgan modullarning sozlamalari)
+    _render_company_save_buttons(settings, rendered)
+
+
+def _render_company_save_buttons(settings, rendered: dict):
+    """Kompaniya uchun saqlash tugmasi — faqat ruxsat berilgan modullar sozlamalari saqlanadi"""
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        if st.button("💾 Saqlash", type="primary", use_container_width=True):
+            new_settings = AppSettings(
+                modules=settings.modules,   # modullarni faqat super admin boshqaradi
+                bug_analyzer=rendered.get('bug_analyzer', settings.bug_analyzer),
+                statistics=rendered.get('statistics', settings.statistics),
+                tz_pr_checker=rendered.get('tz_pr_checker', settings.tz_pr_checker),
+                testcase_generator=rendered.get('testcase_generator', settings.testcase_generator),
+                queue=settings.queue,
+            )
+            if save_app_settings(new_settings):
+                _show_save_success_animation()
+                st.balloons()
+                st.session_state.show_settings = False
+            else:
+                st.error("❌ Saqlashda xato yuz berdi")
+    with col2:
+        if st.button("🔙 Ortga", use_container_width=True):
+            st.session_state.show_settings = False
+            st.rerun()
 
 
 def _render_setting_with_help(
@@ -144,6 +208,135 @@ def _render_setting_with_help(
         result = value
 
     return result
+
+
+def _render_api_keys_settings():
+    """Kompaniya API kalitlari sozlamalari"""
+    from utils.auth.auth_db import get_company_settings, save_company_settings
+    from utils.auth.auth_manager import get_auth_info
+
+    auth = get_auth_info()
+    company_id = auth.get('company_id')
+    if not company_id:
+        st.error("Kompaniya ID topilmadi")
+        return
+
+    st.markdown("### 🔑 API Kalitlar")
+    st.markdown("""
+    <div style="background:rgba(88,166,255,0.08); padding:1rem; border-radius:8px; margin-bottom:1rem;">
+        <p style="color:#8b949e; margin:0; font-size:0.85rem;">
+            💡 Bu yerga siz foydalanayotgan servislarning API kalitlarini kiriting.
+            Kalitlar xavfsiz tarzda saqlanadi va faqat sizning kompaniyangizga tegishli.
+            Boshqa kompaniyalar bu ma'lumotlarni ko'ra olmaydi.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    cs = get_company_settings(company_id)
+
+    # ━━━ JIRA ━━━
+    st.markdown("#### 🔵 JIRA")
+    col1, col2 = st.columns(2)
+    with col1:
+        jira_server = st.text_input(
+            "JIRA Server URL",
+            value=cs.get('jira_server', ''),
+            placeholder="https://yourcompany.atlassian.net",
+            key="cs_jira_server"
+        )
+        jira_email = st.text_input(
+            "JIRA Email",
+            value=cs.get('jira_email', ''),
+            placeholder="admin@yourcompany.com",
+            key="cs_jira_email"
+        )
+    with col2:
+        jira_token = st.text_input(
+            "JIRA API Token",
+            value=cs.get('jira_token', ''),
+            type="password",
+            placeholder="ATATT3xFf...",
+            key="cs_jira_token",
+            help="Atlassian account → Security → API tokens"
+        )
+
+    st.markdown("---")
+
+    # ━━━ GitHub ━━━
+    st.markdown("#### 🐙 GitHub")
+    col1, col2 = st.columns(2)
+    with col1:
+        github_token = st.text_input(
+            "GitHub Token",
+            value=cs.get('github_token', ''),
+            type="password",
+            placeholder="ghp_xxxx...",
+            key="cs_github_token",
+            help="GitHub → Settings → Developer settings → Personal access tokens"
+        )
+    with col2:
+        github_org = st.text_input(
+            "GitHub Organization",
+            value=cs.get('github_org', ''),
+            placeholder="your-org-name",
+            key="cs_github_org"
+        )
+
+    st.markdown("---")
+
+    # ━━━ Figma ━━━
+    st.markdown("#### 🎨 Figma")
+    figma_token = st.text_input(
+        "Figma Access Token",
+        value=cs.get('figma_token', ''),
+        type="password",
+        placeholder="figd_xxxx...",
+        key="cs_figma_token",
+        help="Figma → Account Settings → Personal Access Tokens"
+    )
+
+    st.markdown("---")
+
+    # ━━━ Google Gemini ━━━
+    st.markdown("#### 🤖 Google Gemini AI")
+    col1, col2 = st.columns(2)
+    with col1:
+        gemini_key_1 = st.text_input(
+            "Gemini API Key (asosiy)",
+            value=cs.get('gemini_api_key_1', ''),
+            type="password",
+            placeholder="AIzaSy...",
+            key="cs_gemini_1",
+            help="Google AI Studio → Get API Key"
+        )
+    with col2:
+        gemini_key_2 = st.text_input(
+            "Gemini API Key (zaxira)",
+            value=cs.get('gemini_api_key_2', ''),
+            type="password",
+            placeholder="AIzaSy...",
+            key="cs_gemini_2",
+            help="Ixtiyoriy: birinchi kalit limitga tushsa ishlatiladi"
+        )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    if st.button("💾 API Kalitlarni Saqlash", type="primary"):
+        new_settings = {
+            'jira_server':      jira_server.strip(),
+            'jira_email':       jira_email.strip(),
+            'jira_token':       jira_token.strip(),
+            'github_token':     github_token.strip(),
+            'github_org':       github_org.strip(),
+            'figma_token':      figma_token.strip(),
+            'gemini_api_key_1': gemini_key_1.strip(),
+            'gemini_api_key_2': gemini_key_2.strip(),
+        }
+        if save_company_settings(company_id, new_settings):
+            st.success("✅ API kalitlar saqlandi! Sahifa qayta yuklanmoqda...")
+            st.rerun()
+        else:
+            st.error("❌ Saqlashda xato yuz berdi")
 
 
 def _render_module_visibility_settings(settings: AppSettings) -> ModuleVisibility:

@@ -9,6 +9,32 @@ Author: JASUR TURGUNOV
 Version: 4.0
 """
 import streamlit as st
+from utils.auth.auth_manager import get_auth_info, logout, is_super_admin
+
+
+def render_super_admin_sidebar() -> str:
+    """Super Admin sidebar — faqat admin panel"""
+    with st.sidebar:
+        st.markdown("""
+        <div style="text-align:center; padding:1rem 0; margin-bottom:1rem;">
+            <div style="font-size:2rem;">👑</div>
+            <h2 style="color:#e6edf3; font-weight:700; margin:0;">Super Admin</h2>
+            <p style="color:#8b949e; font-size:0.8rem; margin-top:0.3rem;">
+                JIRA AI Analyzer
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+        st.divider()
+
+        page = "Admin Panel"
+        st.markdown("### Panel")
+        if st.button("🏢 Kompaniyalar", use_container_width=True, type="primary"):
+            page = "Admin Panel"
+
+        st.divider()
+        _render_logout_button()
+
+    return page
 
 
 def render_sidebar():
@@ -26,29 +52,60 @@ def render_sidebar():
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         # HEADER
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        st.markdown("""
-        <div style="text-align: center; padding: 1rem 0; margin-bottom: 1rem;">
+        auth = get_auth_info()
+        company_name = auth.get('company_name', '')
+        company_code = auth.get('company_code', '')
+
+        st.markdown(f"""
+        <div style="text-align: center; padding: 1rem 0; margin-bottom: 0.5rem;">
             <h2 style="color: #e6edf3; font-weight: 700; margin: 0;">QA Assistant</h2>
             <p style="color: #8b949e; font-size: 0.85rem; margin-top: 0.5rem;">AI-Powered Analysis Suite</p>
-            <p style="color: #6e7681; font-size: 0.7rem; font-style: italic;">v4.0 by JASUR TURGUNOV</p>
         </div>
         """, unsafe_allow_html=True)
+
+        # Kompaniya nomi
+        if company_name:
+            st.markdown(f"""
+            <div style="background:rgba(88,166,255,0.1); padding:0.5rem 0.75rem;
+                        border-radius:8px; margin-bottom:0.5rem; text-align:center;">
+                <p style="color:#58a6ff; font-size:0.8rem; font-weight:600; margin:0;">
+                    🏢 {company_name}
+                </p>
+                <p style="color:#6e7681; font-size:0.7rem; margin:0;">{company_code}</p>
+            </div>
+            """, unsafe_allow_html=True)
 
         st.divider()
 
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # NAVIGATION - Faqat yoqilgan modullar
+        # NAVIGATION - Kompaniyaga ruxsat berilgan modullar
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         modules = []
 
-        if app_settings.modules.bug_analyzer_enabled:
+        # Kompaniya session bo'lsa — company_modules dan, aks holda app_settings dan
+        company_mods = st.session_state.get('company_modules', {})
+
+        def _mod_enabled(mod_key: str, settings_attr: str = '', always_on_fallback: bool = False) -> bool:
+            """
+            Modul yoqilganini tekshirish.
+            - company_mods mavjud bo'lsa: faqat company_mods dan
+            - company_mods bo'sh (super admin yoki dev): settings_attr yoki always_on_fallback
+            """
+            if company_mods:
+                return bool(company_mods.get(mod_key, False))
+            if always_on_fallback:
+                return True
+            return bool(getattr(app_settings.modules, settings_attr, False))
+
+        if _mod_enabled('bug_analyzer', 'bug_analyzer_enabled'):
             modules.append("Bug Analyzer")
-        if app_settings.modules.statistics_enabled:
+        if _mod_enabled('statistics', 'statistics_enabled'):
             modules.append("Sprint Statistics")
-        if app_settings.modules.tz_pr_checker_enabled:
+        if _mod_enabled('tz_pr_checker', 'tz_pr_checker_enabled'):
             modules.append("TZ-PR Checker")
-        if app_settings.modules.testcase_generator_enabled:
+        if _mod_enabled('testcase_generator', 'testcase_generator_enabled'):
             modules.append("Test Case Generator")
+
 
         st.markdown("### Sahifa tanlang")
 
@@ -77,16 +134,18 @@ def render_sidebar():
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         # MONITORING DASHBOARD
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        if st.button("📊 Monitoring", use_container_width=True, key="monitoring_btn"):
-            st.session_state.show_monitoring = True
-            st.rerun()
+        if _mod_enabled('monitoring', always_on_fallback=True):
+            if st.button("📊 Monitoring", use_container_width=True, key="monitoring_btn"):
+                st.session_state.show_monitoring = True
+                st.rerun()
 
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         # SPRINT REPORT
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        if st.button("📈 Sprint Report", use_container_width=True, key="sprint_report_btn"):
-            st.session_state.show_sprint_report = True
-            st.rerun()
+        if _mod_enabled('sprint_report', always_on_fallback=True):
+            if st.button("📈 Sprint Report", use_container_width=True, key="sprint_report_btn"):
+                st.session_state.show_sprint_report = True
+                st.rerun()
 
         st.divider()
 
@@ -96,6 +155,13 @@ def render_sidebar():
         if st.button("⚙️ Sozlamalar", use_container_width=True, key="settings_btn"):
             st.session_state.show_settings = True
             st.rerun()
+
+        st.divider()
+
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # LOGOUT
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        _render_logout_button()
 
         st.divider()
 
@@ -140,6 +206,13 @@ def render_sidebar():
         return "Sprint Report", None
 
     return page, None
+
+
+def _render_logout_button():
+    """Tizimdan chiqish tugmasi"""
+    if st.button("🚪 Chiqish", use_container_width=True, key="logout_btn"):
+        logout()
+        st.rerun()
 
 
 def _check_jira():
