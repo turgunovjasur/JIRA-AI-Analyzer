@@ -137,7 +137,8 @@ class JiraADFFormatter(BaseADFFormatter):
             footer_text: Optional[str] = None,
             is_recheck: bool = False,
             recheck_text: Optional[str] = None,
-            visible_sections: Optional[List[str]] = None
+            visible_sections: Optional[List[str]] = None,
+            dev_objections: Optional[List[Dict]] = None
     ) -> Dict:
         """
         To'liq ADF comment document yaratish
@@ -156,6 +157,9 @@ class JiraADFFormatter(BaseADFFormatter):
         from datetime import datetime
 
         content = []
+
+        # ━━━ AI MARKER (comment ajratish uchun) ━━━
+        content.append(self._paragraph([self._text_node("[AI_S1]")]))
 
         # ━━━ HEADER ━━━
         content.append(self._heading("🎯 TZ-PR Checker", 2))
@@ -191,6 +195,18 @@ class JiraADFFormatter(BaseADFFormatter):
             content.append(self._panel([
                 self._paragraph([self._text_node(recheck_text)])
             ], "note"))
+            content.append(self._rule())
+
+        # ━━━ DEVELOPER IZOHLARI DROPDOWN (faqat recheck + izohlar bo'lsa) ━━━
+        if is_recheck and dev_objections:
+            obj_items = []
+            for c in dev_objections:
+                author = c.get('author', 'Unknown')
+                created = c.get('created', '')
+                body = c.get('body', '').strip()
+                obj_items.append(f"👤 {author} ({created}): {body}")
+            panel_title = f"💬 Developer izohlari — AI ko'rdi ({len(obj_items)} ta)"
+            content.append(self._expand_panel(panel_title, [self._bullet_list(obj_items)]))
             content.append(self._rule())
 
         # ━━━ ZID COMMENTLAR PANEL ━━━
@@ -380,7 +396,7 @@ class JiraADFFormatter(BaseADFFormatter):
 
         status_emoji = "🎯" if "Ready" in new_status else "🧪"
 
-        comment = f"""
+        comment = f"""[AI_S1]
 {status_emoji} *TZ-PR Checker*
 
 ----

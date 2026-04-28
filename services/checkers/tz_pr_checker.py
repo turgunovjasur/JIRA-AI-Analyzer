@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 import re
 
 # Core imports
-from core import BaseService, PRHelper, PRNotMergedError, TZHelper
+from core import BaseService, PRHelper, PRNotMergedError, TZHelper, CommentSeparator, WARN_LOW_SCORE, RECHECK_REASONS
 from core.logger import get_logger
 
 # Initialize logger
@@ -90,6 +90,26 @@ Agar developer (izohlar bo'limida) TZ dagi ba'zi talablarni "keyingi sprintda qi
 - Faqat SHU PR da bajarilishi kerak bo'lgan talablar bo'yicha moslikni baholang.
 - Keyinga qoldirilgan talablarni "bajarilmagan" deb hisoblamang — ular bu PR doirasida emas.
 - Masalan: TZ da 10 ta ish, kodda 5 ta, dev "5 ta qilindi, qolgani keyingi sprintda" deb yozsa → faqat 5 ta ishni tekshiring, moslikni shu 5 ta bo'yicha bering.
+
+"""
+
+# Re-tahlil kontekst bo'limi — task qaytarilib, dev etirozlar yozganda qo'shiladi
+REANALYSIS_CONTEXT_TEMPLATE_UZ = """
+─────────────────────────────────────────────────────────────────────
+🔄 RE-TAHLIL: TASK AVVAL QAYTARILGAN, DEVELOPER JAVOB YOZGAN
+─────────────────────────────────────────────────────────────────────
+
+📋 AVVALGI TAHLILING XULOSASI:
+{previous_analysis}
+
+💬 DEVELOPER ETIROZLARI (tahlildan KEYIN yozilgan):
+{dev_objections}
+
+⚠️ MUHIM KO'RSATMA:
+- Developer izohlari TEXNIK jihatdan to'g'rimi — kodni QAYTADAN ko'rib chiq.
+- Agar developer haqqoniy izoh bergan bo'lsa → COMPLIANCE_SCORE ni OSHIR va sababini tushuntir.
+- Agar izoh asossiz yoki kodni to'g'ri ifodalamasa → avvalgi balga yaqin qoldir va nima uchunligini ayt.
+- Ikki holat uchun ham xulosangni "Avvalgi baho: XX% → Yangi baho: YY%" ko'rinishida yoz.
 
 """
 
@@ -180,6 +200,8 @@ class TZPRAnalysisResult:
 
     comment_analysis: Optional[Dict] = None  # TZHelper.analyze_comments() natijasi (zid commentlar)
 
+    dev_objections: List[Dict] = field(default_factory=list)  # [AI_S1] dan keyin yozilgan dev comment'lar
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # MAIN SERVICE CLASS
@@ -188,11 +210,28 @@ class TZPRAnalysisResult:
 class TZPRService(BaseService):
     """TZ va PR mosligini tekshirish - With Figma Support"""
 
-    def __init__(self):
-        """Initialize service"""
-        super().__init__()
+    def __init__(self, company_id: int = None, user_id: int = None):
+        """Initialize service.
+        UI modullar: user_id bilan yarating (user_credentials ishlatadi).
+        Webhook:     company_id bilan yarating (company_settings ishlatadi).
+        """
+        super().__init__(company_id=company_id, user_id=user_id)
         self._pr_helper = None
         self._figma_client = None
+
+    def _get_settings(self):
+        """User yoki kompaniya TZ-PR sozlamalarini qaytarish.
+        UI (user_id bor): tz_pr_checker — user-specific settings
+        Webhook (faqat company_id): webhook_tz_pr — kompaniya webhook settings
+        """
+        if self._user_id is not None and self._company_id is not None:
+            from config.app_settings import get_app_settings_for_user
+            return get_app_settings_for_user(self._user_id, self._company_id).tz_pr_checker
+        if self._company_id is not None:
+            from config.app_settings import get_app_settings_for_company
+            return get_app_settings_for_company(self._company_id).webhook_tz_pr
+        from config.app_settings import get_app_settings
+        return get_app_settings().tz_pr_checker
 
     @property
     def pr_helper(self):
@@ -219,7 +258,8 @@ class TZPRService(BaseService):
             max_files: Optional[int] = None,
             show_full_diff: bool = True,
             use_smart_patch: bool = False,
-            status_callback: Optional[Callable[[str, str], None]] = None
+            status_callback: Optional[Callable[[str, str], None]] = None,
+            return_reason: Optional[str] = None
     ) -> TZPRAnalysisResult:
         """
         TZ-PR moslik tahlilining asosiy funksiyasi — 7 bosqichli pipeline.
@@ -306,8 +346,7 @@ class TZPRService(BaseService):
             set_pr_merged_cache(task_key, True)
 
             # Step 3: TZ uzunlik tekshiruvi
-            from config.app_settings import get_app_settings
-            min_tz = get_app_settings().tz_pr_checker.min_tz_description_chars
+            min_tz = self._get_settings().min_tz_description_chars
             if min_tz > 0 and self._is_tz_too_short(task_details, min_tz):
                 actual_chars = len((task_details.get('description') or '').strip())
                 msg = (
@@ -320,11 +359,15 @@ class TZPRService(BaseService):
                     task_summary=task_details['summary']
                 )
 
-            # Step 4: Get TZ content
+            # Faqat WARN_LOW_SCORE da dev objections o'qiladi
+            is_recheck = return_reason in RECHECK_REASONS
+
+            # Step 4: Get TZ content + dev/AI comment separation
             tz_content, comment_analysis = self._get_tz_content(
                 task_details,
                 update_status
             )
+            comment_separated = CommentSeparator.separate(task_details.get('comments', []))
 
             # Step 5: Get Figma data (OPTIONAL, FAIL-SAFE)
             figma_data = self._get_figma_data(task_details, update_status)
@@ -339,7 +382,9 @@ class TZPRService(BaseService):
                 max_files,
                 show_full_diff,
                 use_smart_patch,
-                update_status
+                update_status,
+                is_recheck=is_recheck,
+                comment_separated=comment_separated
             )
 
             if not ai_result['success']:
@@ -381,7 +426,8 @@ class TZPRService(BaseService):
                 files_analyzed=ai_result.get('files_analyzed', 0),
                 total_prompt_size=ai_result.get('prompt_size', 0),
                 figma_data=figma_data,
-                comment_analysis=comment_analysis
+                comment_analysis=comment_analysis,
+                dev_objections=comment_separated.get('dev_after', [])
             )
 
         except Exception as e:
@@ -501,10 +547,7 @@ class TZPRService(BaseService):
 
     def _get_tz_content(self, task_details: Dict, update_status):
         """TZ kontentini olish"""
-        from config.app_settings import get_app_settings
-
-        # O'ZGARISH: comment_reading o'rniga tz_pr_checker ishlatamiz
-        tz_settings = get_app_settings().tz_pr_checker
+        tz_settings = self._get_settings()
 
         if not tz_settings.read_comments_enabled:
             # Comments o'chirilgan: bo'sh comment list ile chaqirish
@@ -522,94 +565,121 @@ class TZPRService(BaseService):
 
         return tz_content, comment_analysis
 
-    def _build_dev_comments_section(self, task_details: Dict) -> str:
+    def _build_dev_comments_section(self, task_details: Dict, separated: Optional[Dict] = None) -> str:
         """
-        AI konteksti uchun developer comment'larini filtrlash va formatlash.
+        AI konteksti uchun developer comment'larini formatlash.
 
-        Bu funksiya JIRA task'dagi barcha comment'larni ko'rib chiqadi va faqat
-        haqiqiy developer tomonidan yozilgan, mazmunli comment'larni ajratib oladi.
-        Natija AI promtiga "DEVELOPER IZOHLAR" bo'limi sifatida qo'shiladi.
-
-        Filtrlash shartlari (quyidagilar TASHLAB KETILADI):
-            - Muallif nomi 'AI', 'BOT' yoki 'ROBOT' so'zlarini o'z ichiga olgan
-              comment'lar (katta-kichik harfdan qat'i nazar).
-            - Uzunligi 20 belgidan kam bo'lgan trivial comment'lar (masalan: "+1", "ok").
-
-        Qo'shiladigan comment'lar:
-            - Oxirgi 5 ta mos comment (eng yangi comment'lar ustunlik qiladi).
-            - Format: muallif ismi, sana va comment matni.
-
-        Bu comment'larni AI'ga berish maqsadi:
-            - Developerning qaysi talablarni qanday amalga oshirganligi haqida kontekst.
-            - Amalga oshirish qarorlarining sabablarini tushuntirish.
-            - Maxsus edge case'lar yoki muhim o'zgarishlar haqida ma'lumot.
-
-        Args:
-            task_details (Dict): JIRA'dan olingan task ma'lumotlari. Kerakli kalit:
-                - 'comments': {'author': str, 'body': str, 'created': str} ro'yxati.
+        CommentSeparator.separate() natijasidan foydalanadi:
+        - dev_before: tahlildan oldingi dev comment'lar (kontekst)
+        - dev_after: tahlildan keyingi dev comment'lar (etirozlar) — recheck bo'lmasa ham qo'shiladi
 
         Returns:
             str: AI promtiga qo'shishga tayyor formatlangan comment'lar bloki.
-                Agar mos comment'lar topilmasa — bo'sh string ('') qaytariladi.
         """
-        comments = task_details.get('comments', [])
+        if separated is None:
+            separated = CommentSeparator.separate(task_details.get('comments', []))
 
-        if not comments:
+        max_dev = self._get_settings().dev_comments_max
+
+        dev_before = separated.get('dev_before', [])
+        dev_after = separated.get('dev_after', [])
+
+        # Agar hech qanday dev comment yo'q bo'lsa
+        if not dev_before and not dev_after:
             return ""
 
-        # Filter: skip AI/BOT comments, keep human comments
-        dev_comments = [
-            c for c in comments
-            if 'AI' not in c.get('author', '').upper()
-            and 'BOT' not in c.get('author', '').upper()
-            and 'ROBOT' not in c.get('author', '').upper()
-            and len(c.get('body', '').strip()) > 20  # Skip trivial comments
-        ]
+        lines = []
 
-        if not dev_comments:
-            return ""
+        if dev_before:
+            lines += [
+                "",
+                "─────────────────────────────────────────────────────────────────────",
+                "💬 DEVELOPER IZOHLAR (KONTEKST)",
+                "─────────────────────────────────────────────────────────────────────",
+                "",
+                "Developerlar quyidagi izohlarni qoldirgan. Ularni tahlilda hisobga oling:",
+                ""
+            ]
+            for comment in dev_before[-max_dev:]:
+                lines.append(f"👤 {comment.get('author', 'Unknown')} ({comment.get('created', '')}):")
+                lines.append(f"   {comment.get('body', '').strip()}")
+                lines.append("")
 
-        lines = [
-            "",
-            "─────────────────────────────────────────────────────────────────────",
-            "💬 DEVELOPER IZOHLAR (KONTEKST)",
-            "─────────────────────────────────────────────────────────────────────",
-            "",
-            "Developerlar quyidagi izohlarni qoldirgan. Ularni moslik baliga ta'sir qiling:",
-            ""
-        ]
-
-        # Oxirgi N ta meaningful comment ko'rsatish (settings.dev_comments_max)
-        from config.app_settings import get_app_settings
-        max_dev = get_app_settings().tz_pr_checker.dev_comments_max
-        for comment in dev_comments[-max_dev:]:
-            author = comment.get('author', 'Unknown')
-            body = comment.get('body', '').strip()
-            created = comment.get('created', '')
-
-            lines.append(f"👤 {author} ({created}):")
-            lines.append(f"   {body}")
-            lines.append("")
+        if dev_after:
+            lines += [
+                "",
+                "─────────────────────────────────────────────────────────────────────",
+                "⚡ DEVELOPER ETIROZLARI (tahlildan KEYIN yozilgan — alohida e'tibor ber!)",
+                "─────────────────────────────────────────────────────────────────────",
+                ""
+            ]
+            for comment in dev_after[-max_dev:]:
+                lines.append(f"👤 {comment.get('author', 'Unknown')} ({comment.get('created', '')}):")
+                lines.append(f"   {comment.get('body', '').strip()}")
+                lines.append("")
 
         return "\n".join(lines)
+
+    def _build_reanalysis_section(self, separated: Dict) -> str:
+        """
+        Re-tahlil kontekst bo'limini qurish.
+
+        Faqat is_recheck=True va last_ai_s1 bor bo'lganda chaqiriladi.
+        Avvalgi AI tahlilini va developer etirozlarini REANALYSIS_CONTEXT_TEMPLATE_UZ ga joylaydi.
+        """
+        last_ai = separated.get('last_ai_s1')
+        dev_after = separated.get('dev_after', [])
+
+        if not last_ai and not dev_after:
+            return ""
+
+        prev_analysis = ""
+        if last_ai:
+            body = last_ai.get('body', '').strip()
+            # [AI_S1] markerini olib tashlash
+            if body.startswith('[AI_S1]'):
+                body = body[len('[AI_S1]'):].strip()
+            # Juda uzun bo'lsa qisqartirish (2000 belgi yetarli)
+            prev_analysis = body[:2000] + ("..." if len(body) > 2000 else "")
+
+        objections = ""
+        if dev_after:
+            obj_lines = []
+            for c in dev_after:
+                obj_lines.append(f"👤 {c.get('author', 'Unknown')} ({c.get('created', '')}):")
+                obj_lines.append(f"   {c.get('body', '').strip()}")
+                obj_lines.append("")
+            objections = "\n".join(obj_lines)
+
+        if not prev_analysis and not objections:
+            return ""
+
+        return REANALYSIS_CONTEXT_TEMPLATE_UZ.format(
+            previous_analysis=prev_analysis or "(avvalgi tahlil topilmadi)",
+            dev_objections=objections or "(developer etirozlari yo'q)"
+        )
 
     def _build_ordered_data_sections(
             self,
             order: List[str],
             tz_content: str,
             dev_comments_section: str,
+            reanalysis_section: str,
             figma_section: str,
             code_changes: str
     ) -> str:
         """
         Sozlamadagi ai_data_section_order bo'yicha ma'lumotlar bo'limlarini birlashtirish.
-        Servis qat'iy shu tartibga amal qiladi.
+        reanalysis_section bor bo'lsa TZ dan keyin, code dan oldin qo'shiladi.
         """
         blocks = []
         sep = "\n─────────────────────────────────────────────────────────────────────\n"
         for key in order:
             if key == "tz":
                 blocks.append(sep + "📄 TEXNIK TOPSHIRIQ (TZ)\n" + sep + "\n" + (tz_content or "").strip())
+                # Re-tahlil bo'limi TZ dan keyin darhol qo'shiladi (order ga bog'liq emas)
+                if (reanalysis_section or "").strip():
+                    blocks.append((reanalysis_section or "").strip())
             elif key == "comments":
                 if (dev_comments_section or "").strip():
                     blocks.append((dev_comments_section or "").strip())
@@ -654,7 +724,9 @@ class TZPRService(BaseService):
             max_files: Optional[int],
             show_full_diff: bool,
             use_smart_patch: bool,
-            update_status
+            update_status,
+            is_recheck: bool = False,
+            comment_separated: Optional[Dict] = None
     ) -> Dict:
         """
         AI tahlil bosqichini boshqaruvchi oraliq funksiya.
@@ -689,8 +761,9 @@ class TZPRService(BaseService):
                     'warnings': List[str]
                 }
         """
-        # Build DEV comments section
-        dev_comments_section = self._build_dev_comments_section(task_details)
+        separated = comment_separated or CommentSeparator.separate(task_details.get('comments', []))
+        dev_comments_section = self._build_dev_comments_section(task_details, separated)
+        reanalysis_section = self._build_reanalysis_section(separated) if is_recheck else ""
 
         return self._analyze_with_retry(
             task_key=task_key,
@@ -699,6 +772,7 @@ class TZPRService(BaseService):
             pr_info=pr_info,
             figma_data=figma_data,
             dev_comments_section=dev_comments_section,
+            reanalysis_section=reanalysis_section,
             max_files=max_files,
             show_full_diff=show_full_diff,
             use_smart_patch=use_smart_patch,
@@ -715,8 +789,9 @@ class TZPRService(BaseService):
             task_details: Dict,
             tz_content: str,
             pr_info: Dict,
-            figma_data: Optional[Dict],  # NEW
-            dev_comments_section: str,  # NEW
+            figma_data: Optional[Dict],
+            dev_comments_section: str,
+            reanalysis_section: str,
             max_files: Optional[int],
             show_full_diff: bool,
             use_smart_patch: bool,
@@ -766,8 +841,7 @@ class TZPRService(BaseService):
         figma_section, figma_analysis, figma_response = self._build_figma_prompt_section(figma_data)
 
         # Read visible_sections from settings
-        from config.app_settings import get_app_settings
-        visible_sections = get_app_settings().tz_pr_checker.visible_sections
+        visible_sections = self._get_settings().visible_sections
 
         # Build dynamic response format (respects visible_sections)
         response_format_sections = _build_response_format_sections(
@@ -782,7 +856,8 @@ class TZPRService(BaseService):
             pr_info=pr_info,
             figma_section=figma_section,
             figma_analysis=figma_analysis,
-            dev_comments_section=dev_comments_section,  # NEW
+            dev_comments_section=dev_comments_section,
+            reanalysis_section=reanalysis_section,
             response_format_sections=response_format_sections,
             max_files=max_files,
             show_full_diff=show_full_diff,
@@ -806,7 +881,8 @@ class TZPRService(BaseService):
                 pr_info=pr_info,
                 figma_section=figma_section,
                 figma_analysis=figma_analysis,
-                dev_comments_section=dev_comments_section,  # NEW
+                dev_comments_section=dev_comments_section,
+                reanalysis_section=reanalysis_section,
                 response_format_sections=response_format_sections,
                 max_files=reduced_files,
                 show_full_diff=show_full_diff,
@@ -829,16 +905,17 @@ class TZPRService(BaseService):
                 pr_info=pr_info,
                 figma_section=figma_section,
                 figma_analysis=figma_analysis,
-                dev_comments_section=dev_comments_section,  # NEW
+                dev_comments_section=dev_comments_section,
+                reanalysis_section=reanalysis_section,
                 response_format_sections=response_format_sections,
-                max_files=get_app_settings().tz_pr_checker.pr_max_files,  # settings dan
+                max_files=self._get_settings().pr_max_files,
                 show_full_diff=False,
                 use_smart_patch=use_smart_patch,
                 retry_attempt=2
             )
 
             if result['success']:
-                pr_max = get_app_settings().tz_pr_checker.pr_max_files
+                pr_max = self._get_settings().pr_max_files
                 result['warnings'].append(f"Limited analysis (faqat {pr_max} ta fayl, diff yo'q)")
                 return result
 
@@ -854,13 +931,14 @@ class TZPRService(BaseService):
             figma_section: str,
             figma_analysis: str,
             dev_comments_section: str,
+            reanalysis_section: str,
             response_format_sections: str,
             max_files: Optional[int],
             show_full_diff: bool,
             use_smart_patch: bool,
             retry_attempt: int
     ) -> Dict:
-        """Single AI analysis attempt (with DEV comments)"""
+        """Single AI analysis attempt."""
 
         try:
             # Build code changes
@@ -872,16 +950,34 @@ class TZPRService(BaseService):
             )
 
             # Sozlamadagi tartib bo'yicha ma'lumotlar bo'limini yig'ish (AI qat'iy amal qiladi)
-            from config.app_settings import get_app_settings
-            tz_settings = get_app_settings().tz_pr_checker
+            tz_settings = self._get_settings()
             order = tz_settings.ai_data_section_order or ["tz", "comments", "figma", "code"]
             data_sections_body = self._build_ordered_data_sections(
                 order=order,
                 tz_content=tz_content,
                 dev_comments_section=dev_comments_section,
+                reanalysis_section=reanalysis_section,
                 figma_section=figma_section,
                 code_changes=code_changes
             )
+
+            # Yashirilgan bo'limlar uchun qat'iy taqiq qo'shish
+            _section_names_uz = {
+                'completed': 'BAJARILGAN TALABLAR',
+                'partial':   'QISMAN BAJARILGAN',
+                'failed':    'BAJARILMAGAN TALABLAR',
+                'issues':    'POTENSIAL MUAMMOLAR',
+                'figma':     'FIGMA DIZAYN',
+            }
+            tz_settings_local = self._get_settings()
+            visible_local = tz_settings_local.visible_sections or []
+            hidden = [v for k, v in _section_names_uz.items() if k not in visible_local]
+            if hidden:
+                response_format_sections += (
+                    "\n\n⛔ TAQIQLANGAN BO'LIMLAR (QO'SHMA, YOZMA): "
+                    + ", ".join(hidden)
+                    + "\nYuqoridagi taqiqlangan bo'limlarni hech qachon javobga qo'shma!"
+                )
 
             # Build final prompt (tartib sozlamadan, scope qoidasi qo'shilgan)
             prompt = AI_PROMPT_TEMPLATE_UZ.format(

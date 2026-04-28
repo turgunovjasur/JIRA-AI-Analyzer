@@ -86,7 +86,7 @@ async def _write_timeout_error_comment(task_key: str, timeout_seconds: int) -> N
     await _write(task_key, timeout_seconds)
 
 
-async def _run_task_group(task_key: str, new_status: str) -> None:
+async def _run_task_group(task_key: str, new_status: str, company_id: int = None) -> None:
     """
     Service1 va Service2 ni bitta lock ichida ketma-ket ishga tushirish.
 
@@ -112,20 +112,24 @@ async def _run_task_group(task_key: str, new_status: str) -> None:
         new_status: JIRA yangi status (comment'larga yoziladi)
     """
     from services.webhook.service_runner import check_tz_pr_and_comment, _run_testcase_generation
+    from config.app_settings import get_app_settings_for_company
 
-    app_settings = get_app_settings(force_reload=False)
+    if company_id is not None:
+        app_settings = get_app_settings_for_company(company_id)
+    else:
+        app_settings = get_app_settings(force_reload=False)
     queue_settings = app_settings.queue
 
     if not queue_settings.queue_enabled:
         # Queue o'chirilgan: lock siz ketma-ket chaqruv
-        await check_tz_pr_and_comment(task_key=task_key, new_status=new_status)
+        await check_tz_pr_and_comment(task_key=task_key, new_status=new_status, company_id=company_id)
 
         task_db = get_task(task_key)
         if task_db and _can_run_service2(task_db, app_settings):
             delay = queue_settings.checker_testcase_delay
             if delay > 0:
                 await asyncio.sleep(delay)
-            await _run_testcase_generation(task_key=task_key, new_status=new_status)
+            await _run_testcase_generation(task_key=task_key, new_status=new_status, company_id=company_id)
         return
 
     lock = _get_ai_queue_lock()
@@ -143,7 +147,7 @@ async def _run_task_group(task_key: str, new_status: str) -> None:
     try:
         # Service1
         await _wait_for_ai_slot(task_key)
-        await check_tz_pr_and_comment(task_key=task_key, new_status=new_status)
+        await check_tz_pr_and_comment(task_key=task_key, new_status=new_status, company_id=company_id)
 
         # Service1 → Service2 orasidagi kutish
         if delay > 0:
@@ -153,18 +157,18 @@ async def _run_task_group(task_key: str, new_status: str) -> None:
         task_db = get_task(task_key)
         if task_db and _can_run_service2(task_db, app_settings):
             await _wait_for_ai_slot(task_key)
-            await _run_testcase_generation(task_key=task_key, new_status=new_status)
+            await _run_testcase_generation(task_key=task_key, new_status=new_status, company_id=company_id)
         elif task_db:
             s1 = task_db.get('service1_status', 'pending')
             score = task_db.get('compliance_score')
-            threshold = app_settings.tz_pr_checker.return_threshold
+            threshold = app_settings.webhook_tz_pr.return_threshold
             if s1 in ('done', 'skip') and score is not None and score < threshold:
                 log.info(f"[{task_key}] Score past ({score}% < {threshold}%), Service2 skip")
     finally:
         lock.release()
 
 
-async def _queued_check_tz_pr(task_key: str, new_status: str) -> None:
+async def _queued_check_tz_pr(task_key: str, new_status: str, company_id: int = None) -> None:
     """
     Queue wrapper: faqat Service1 (testcase ishlamaydigan holatlar uchun).
 
@@ -180,12 +184,16 @@ async def _queued_check_tz_pr(task_key: str, new_status: str) -> None:
         new_status: JIRA yangi status
     """
     from services.webhook.service_runner import check_tz_pr_and_comment
+    from config.app_settings import get_app_settings_for_company
 
-    app_settings = get_app_settings(force_reload=False)
+    if company_id is not None:
+        app_settings = get_app_settings_for_company(company_id)
+    else:
+        app_settings = get_app_settings(force_reload=False)
     queue_settings = app_settings.queue
 
     if not queue_settings.queue_enabled:
-        await check_tz_pr_and_comment(task_key=task_key, new_status=new_status)
+        await check_tz_pr_and_comment(task_key=task_key, new_status=new_status, company_id=company_id)
         return
 
     lock = _get_ai_queue_lock()
@@ -201,7 +209,7 @@ async def _queued_check_tz_pr(task_key: str, new_status: str) -> None:
 
     try:
         await _wait_for_ai_slot(task_key)
-        await check_tz_pr_and_comment(task_key=task_key, new_status=new_status)
+        await check_tz_pr_and_comment(task_key=task_key, new_status=new_status, company_id=company_id)
     finally:
         lock.release()
 
@@ -226,7 +234,7 @@ def _can_run_service2(task_db: dict, app_settings) -> bool:
     service1_status = task_db.get('service1_status', 'pending')
     compliance_score = task_db.get('compliance_score')
     task_status = task_db.get('task_status', 'none')
-    threshold = app_settings.tz_pr_checker.return_threshold
+    threshold = app_settings.webhook_tz_pr.return_threshold
 
     if service1_status in ('done', 'skip'):
         if compliance_score is None or compliance_score >= threshold:

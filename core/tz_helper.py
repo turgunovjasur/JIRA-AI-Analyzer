@@ -13,6 +13,88 @@ TZ tarkibi:
 from typing import Dict, List, Optional
 
 
+class CommentSeparator:
+    """
+    JIRA comment'larini AI va developer tomonidan yozilgan deb ajratish.
+
+    AI comment aniqlash: body boshida [AI_S1] yoki [AI_S2] marker bor.
+    Marker jira_adf_formatter.py va testcase_adf_formatter.py tomonidan yoziladi.
+    """
+
+    S1_MARKER = "[AI_S1]"
+    S2_MARKER = "[AI_S2]"
+    @classmethod
+    def is_ai_comment(cls, comment: Dict) -> bool:
+        body = comment.get('body', '')
+        return cls.S1_MARKER in body[:30] or cls.S2_MARKER in body[:30]
+
+    @classmethod
+    def get_ai_type(cls, comment: Dict) -> Optional[str]:
+        body = comment.get('body', '')
+        if cls.S1_MARKER in body[:30]:
+            return 'S1'
+        if cls.S2_MARKER in body[:30]:
+            return 'S2'
+        return None
+
+    @classmethod
+    def is_valid_dev_comment(cls, comment: Dict) -> bool:
+        if cls.is_ai_comment(comment):
+            return False
+        return bool(comment.get('body', '').strip())
+
+    @classmethod
+    def separate(cls, comments: List[Dict], marker: str = 'S1') -> Dict:
+        """
+        Comment'larni AI va dev tomonidan yozilganlarga ajratadi.
+
+        Oxirgi [AI_S1] (yoki marker='S2' bo'lsa [AI_S2]) comment topiladi.
+        Undan OLDINGI dev comment'lar "kontekst", undan KEYINGI dev comment'lar
+        "etirozlar" hisoblanadi.
+
+        Args:
+            comments: JIRA comment'lar ro'yxati
+            marker: 'S1' (default) yoki 'S2' — qaysi AI markerga qarab ajratish
+
+        Returns:
+            {
+                'last_ai_s1':     Dict or None,   - oxirgi AI comment (marker turiga qarab)
+                'dev_before':     List[Dict],     - AI dan oldingi dev comment'lar
+                'dev_after':      List[Dict],     - AI dan keyingi dev comment'lar (etirozlar)
+                'has_objections': bool            - etirozlar bor-yo'qligi
+            }
+        """
+        last_ai_index = None
+        for i, comment in enumerate(comments):
+            if cls.get_ai_type(comment) == marker:
+                last_ai_index = i
+
+        if last_ai_index is None:
+            dev_comments = [c for c in comments if cls.is_valid_dev_comment(c)]
+            return {
+                'last_ai_s1': None,
+                'dev_before': dev_comments,
+                'dev_after': [],
+                'has_objections': False,
+            }
+
+        dev_before = [
+            c for c in comments[:last_ai_index]
+            if cls.is_valid_dev_comment(c)
+        ]
+        dev_after = [
+            c for c in comments[last_ai_index + 1:]
+            if cls.is_valid_dev_comment(c)
+        ]
+
+        return {
+            'last_ai_s1': comments[last_ai_index],
+            'dev_before': dev_before,
+            'dev_after': dev_after,
+            'has_objections': len(dev_after) > 0,
+        }
+
+
 class TZHelper:
     """
     Technical Zadanie (TZ) formatlash va tahlil qilish

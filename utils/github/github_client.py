@@ -20,16 +20,17 @@ log = get_logger("github.client")
 class GitHubClient:
     """GitHub API bilan ishlash"""
 
-    def __init__(self, token: str = None):
+    def __init__(self, token: str = None, org: str = None):
         """
         Args:
             token: GitHub Personal Access Token
+            org: GitHub Organization nomi
         """
         from config.settings import settings
 
-        self.token = token or settings.GITHUB_TOKEN
+        self.token    = token or settings.GITHUB_TOKEN
         self.base_url = settings.GITHUB_API_URL
-        self.org = settings.GITHUB_ORG
+        self.org      = org or settings.GITHUB_ORG
 
         self.headers = {
             'Accept': 'application/vnd.github.v3+json',

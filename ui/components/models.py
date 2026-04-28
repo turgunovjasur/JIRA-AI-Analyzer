@@ -57,25 +57,18 @@ def load_models():
 
     embedding_helper = EmbeddingHelper()
     vectordb_helper = VectorDBHelper()
-    gemini_helper = GeminiHelper()
 
     logger.info("Bug Analyzer modellari yuklandi!")
 
-    return embedding_helper, vectordb_helper, gemini_helper
+    return embedding_helper, vectordb_helper, None
 
 
 def get_gemini_only():
-    """
-    Faqat Gemini helper yuklash - embedding yuklashsiz
-
-    Bu funksiya TZ-PR Checker va Testcase Generator uchun.
-    Embedding model yuklanmaydi, faqat Gemini API.
-
-    Returns:
-        GeminiHelper instance
-    """
-    from utils.ai.gemini_helper import GeminiHelper
-    return GeminiHelper()
+    """Deprecated: GeminiHelper kompaniyaga xos — company_id bilan yarating."""
+    raise RuntimeError(
+        "get_gemini_only() deprecated. "
+        "GeminiHelper(api_keys=creds['gemini_keys']) ishlatilsin."
+    )
 
 
 def is_models_loaded() -> bool:

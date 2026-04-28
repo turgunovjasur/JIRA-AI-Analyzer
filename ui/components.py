@@ -2,16 +2,15 @@
 import streamlit as st
 from utils.ai.embedding_helper import EmbeddingHelper
 from utils.database.vectordb_helper import VectorDBHelper
-from utils.ai.gemini_helper import GeminiHelper
 
 
 @st.cache_resource
 def load_models():
-    """Model va helper larni yuklash (cache)"""
+    """Embedding va VectorDB modellarni yuklash (global cache).
+    GeminiHelper kompaniyaga xos — alohida company keys bilan yarating."""
     embedding_helper = EmbeddingHelper()
     vectordb_helper = VectorDBHelper()
-    gemini_helper = GeminiHelper()
-    return embedding_helper, vectordb_helper, gemini_helper
+    return embedding_helper, vectordb_helper, None
 
 
 def render_header(title, subtitle, author="Developed by JASUR TURGUNOV"):

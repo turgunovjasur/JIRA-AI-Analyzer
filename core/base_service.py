@@ -47,56 +47,80 @@ class BaseService:
     - AI configuration limits
     """
 
-    def __init__(self):
-        """Initialize service with lazy loading"""
-        # Lazy loaded clients
+    def __init__(self, company_id: int = None, user_id: int = None):
+        """Initialize service with lazy loading.
+
+        UI modullar: user_id → user_credentials dan kalitlar yuklanadi.
+        Webhook:     company_id → company_settings dan kalitlar yuklanadi.
+        """
         self._jira_client = None
         self._github_client = None
         self._gemini_helper = None
+        self._company_id = company_id
+        self._user_id = user_id
+        self._cached_creds = None  # lazy loaded
 
-        # AI Configuration (settings dan)
         settings = _get_base_settings()
         self.MAX_TOKENS = settings.ai_max_input_tokens
         self.CHARS_PER_TOKEN = settings.chars_per_token
         self.MAX_RETRIES = settings.ai_max_retries
 
+    def _get_creds(self) -> dict:
+        """
+        API kalitlarni yukla (lazy, bir marta kesh).
+        user_id bo'lsa → user_credentials (UI modullar).
+        company_id bo'lsa → company_settings (webhook).
+        """
+        if self._cached_creds is None:
+            if self._user_id is not None:
+                from utils.auth.auth_db import get_user_credentials_for_service
+                self._cached_creds = get_user_credentials_for_service(self._user_id)
+            elif self._company_id is not None:
+                from utils.auth.auth_db import get_company_credentials
+                self._cached_creds = get_company_credentials(self._company_id)
+            else:
+                raise RuntimeError(
+                    "BaseService: user_id yoki company_id ko'rsatilmagan. "
+                    "Kalitlar yuklab bo'lmaydi."
+                )
+        return self._cached_creds
+
+    # Backward-compat alias (webhook service_runner ishlatadi)
+    def _get_company_creds(self) -> dict:
+        return self._get_creds()
+
     @property
     def jira(self):
-        """
-        Lazy JIRA client
-
-        Returns:
-            JiraClient: JIRA API client instance
-        """
+        """Lazy JIRA client"""
         if self._jira_client is None:
             from utils.jira.jira_client import JiraClient
-            self._jira_client = JiraClient()
+            creds = self._get_creds()
+            self._jira_client = JiraClient(
+                server=creds['jira_server'],
+                email=creds['jira_email'],
+                token=creds['jira_token'],
+            )
         return self._jira_client
 
     @property
     def github(self):
-        """
-        Lazy GitHub client
-
-        Returns:
-            GitHubClient: GitHub API client instance
-        """
+        """Lazy GitHub client"""
         if self._github_client is None:
             from utils.github.github_client import GitHubClient
-            self._github_client = GitHubClient()
+            creds = self._get_creds()
+            self._github_client = GitHubClient(
+                token=creds['github_token'],
+                org=creds['github_org'],
+            )
         return self._github_client
 
     @property
     def gemini(self):
-        """
-        Lazy Gemini helper
-
-        Returns:
-            GeminiHelper: Google Gemini AI helper instance
-        """
+        """Lazy Gemini helper"""
         if self._gemini_helper is None:
             from utils.ai.gemini_helper import GeminiHelper
-            self._gemini_helper = GeminiHelper()
+            creds = self._get_creds()
+            self._gemini_helper = GeminiHelper(api_keys=creds['gemini_keys'])
         return self._gemini_helper
 
     def _create_status_updater(

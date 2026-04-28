@@ -321,9 +321,12 @@ def _run_generation(
 
     try:
         from services.generators.testcase_generator import TestCaseGeneratorService
-
-        # Service
-        svc = TestCaseGeneratorService()
+        from utils.auth.auth_manager import get_auth_info
+        _auth = get_auth_info()
+        _user_id    = _auth.get('user_id')    if _auth.get('role') == 'user' else None
+        _company_id = _auth.get('company_id') if _auth.get('role') == 'user' else None
+        # UI modul: user_id → user_credentials; company_id faqat settings uchun
+        svc = TestCaseGeneratorService(user_id=_user_id, company_id=_company_id)
 
         # Generate
         progress.update(1, "🔍 Task tahlil qilinmoqda...")

@@ -14,6 +14,10 @@ from typing import TYPE_CHECKING, Any
 from datetime import datetime
 
 from core.logger import get_logger
+from core.constants import (
+    WARN_NO_PR, WARN_PR_NOT_MERGED, WARN_MIN_TZ,
+    WARN_AI_TIMEOUT, ERR_UNKNOWN
+)
 
 if TYPE_CHECKING:
     from config.app_settings import TZPRCheckerSettings
@@ -75,6 +79,17 @@ def _classify_error(error_msg: str) -> str:
     return 'unknown'
 
 
+def _error_type_to_reason_code(error_type: str) -> str:
+    """error_type string → DB/comment uchun reason code"""
+    mapping = {
+        'pr_not_found':    WARN_NO_PR,
+        'pr_not_merged':   WARN_PR_NOT_MERGED,
+        'tz_too_short':    WARN_MIN_TZ,
+        'ai_timeout':      WARN_AI_TIMEOUT,
+    }
+    return mapping.get(error_type, ERR_UNKNOWN)
+
+
 async def _write_success_comment(
         task_key: str,
         result: Any,
@@ -82,7 +97,8 @@ async def _write_success_comment(
         settings: "TZPRCheckerSettings",
         comment_writer: "JiraCommentWriter",
         adf_formatter: "JiraADFFormatter",
-        is_recheck: bool = False
+        is_recheck: bool = False,
+        dev_objections: list = None
 ) -> None:
     """
     Muvaffaqiyatli TZ-PR tahlili uchun JIRA'ga ADF comment yozish.
@@ -119,7 +135,8 @@ async def _write_success_comment(
             footer_text=settings.tz_pr_footer_text,
             is_recheck=is_recheck,
             recheck_text=settings.recheck_comment_text,
-            visible_sections=settings.visible_sections
+            visible_sections=settings.visible_sections,
+            dev_objections=dev_objections or []
         )
         success = comment_writer.add_comment_adf(task_key, adf_doc)
 
@@ -138,19 +155,23 @@ def _build_warning_adf(
         service: str,
         reason: str,
         task_key: str,
-        panel_type: str = "warning"
+        panel_type: str = "warning",
+        reason_code: str = ""
 ) -> dict:
     """
     Qisqa Warning ADF panel document qurish.
 
     panel_type: 'warning' (sariq) — kutilgan xatoliklar uchun
                 'error'   (qizil) — kutilmagan kritik xatoliklar uchun
+    reason_code: WARN_MIN_TZ, WARN_NO_PR kabi kod (bo'sh bo'lsa yozilmaydi)
     """
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
+    marker = f"[AI_S1][{reason_code}]" if reason_code else "[AI_S1]"
     return {
         "version": 1,
         "type": "doc",
         "content": [
+            adf_formatter._paragraph([adf_formatter._text_node(marker)]),
             adf_formatter._panel([
                 adf_formatter._paragraph([
                     adf_formatter._bold_text(f"⚠️ {service} | Warning"),
@@ -166,10 +187,12 @@ def _build_warning_adf(
     }
 
 
-def format_warning_simple(service: str, reason: str, task_key: str) -> str:
+def format_warning_simple(service: str, reason: str, task_key: str, reason_code: str = "") -> str:
     """Qisqa Warning oddiy text fallback (ADF ishlamagan holatda)."""
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
+    marker = f"[AI_S1][{reason_code}]" if reason_code else "[AI_S1]"
     return (
+        f"{marker}\n"
         f"⚠️ *{service} | Warning*\n\n"
         f"{reason}\n\n"
         f"_{task_key} | {timestamp} | Manual tekshirish tavsiya etiladi_"
@@ -183,7 +206,8 @@ async def _write_error_comment(
         settings: "TZPRCheckerSettings",
         comment_writer: "JiraCommentWriter",
         adf_formatter: "JiraADFFormatter",
-        service: str = "Servis-1"
+        service: str = "Servis-1",
+        reason_code: str = ""
 ) -> None:
     """
     Xatolik uchun JIRA'ga qisqa Warning panel comment yozish.
@@ -194,10 +218,10 @@ async def _write_error_comment(
     - Service1 yoki Service2 general xatosi
     """
     try:
-        warning_doc = _build_warning_adf(adf_formatter, service, error_message, task_key)
+        warning_doc = _build_warning_adf(adf_formatter, service, error_message, task_key, reason_code=reason_code)
         success = comment_writer.add_comment_adf(task_key, warning_doc)
         if not success:
-            comment_writer.add_comment(task_key, format_warning_simple(service, error_message, task_key))
+            comment_writer.add_comment(task_key, format_warning_simple(service, error_message, task_key, reason_code=reason_code))
     except Exception as e:
         log.error(f"[{task_key}] Error comment yozishda xato: {e}")
 

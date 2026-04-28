@@ -17,7 +17,8 @@ log = get_logger("testcase.webhook")
 async def check_and_generate_testcases(
         task_key: str,
         new_status: str,
-        include_pr: Optional[bool] = None
+        include_pr: Optional[bool] = None,
+        company_id: Optional[int] = None,
 ) -> Tuple[bool, str]:
     """
     Status o'zgarganda avtomatik test case yaratish va comment yozish
@@ -26,6 +27,7 @@ async def check_and_generate_testcases(
         task_key: JIRA task key (masalan: DEV-1234)
         new_status: Yangi status nomi
         include_pr: PR ni hisobga olish (None = settingsdan, False = TZ-only)
+        company_id: Kompaniya ID si (None bo'lsa global settings)
 
     Returns:
         Tuple[bool, str]: (success, message)
@@ -35,10 +37,14 @@ async def check_and_generate_testcases(
     2. Status trigger bo'lsa - test case'lar yaratish
     3. JIRA ga comment yozish
     """
-    from config.app_settings import get_app_settings
+    from config.app_settings import get_app_settings, get_app_settings_for_company
 
-    settings = get_app_settings()
-    tc_settings = settings.testcase_generator
+    if company_id is not None:
+        settings = get_app_settings_for_company(company_id)
+    else:
+        settings = get_app_settings()
+    # Webhook uchun alohida sozlamalar (standalone testcase modulidan farqli)
+    tc_settings = settings.webhook_testcase
 
     # 1. Auto-comment yoqilganmi?
     if not tc_settings.auto_comment_enabled:
@@ -58,7 +64,16 @@ async def check_and_generate_testcases(
         # 3. Test case'lar yaratish
         from services.generators.testcase_generator import TestCaseGeneratorService
 
-        service = TestCaseGeneratorService()
+        if company_id is not None:
+            from utils.auth.auth_db import get_company_credentials
+            try:
+                get_company_credentials(company_id)  # kalit yo'q bo'lsa RuntimeError
+            except RuntimeError as key_err:
+                log.warning(f"[{task_key}] {key_err}")
+                return False, str(key_err)
+            service = TestCaseGeneratorService(company_id=company_id)
+        else:
+            service = TestCaseGeneratorService()
 
         result = service.generate_test_cases(
             task_key=task_key,
@@ -111,7 +126,8 @@ async def check_and_generate_testcases(
             use_adf=tc_settings.use_adf_format,
             pr_details=result.pr_details,
             pr_count=result.pr_count,
-            files_changed=result.files_changed
+            files_changed=result.files_changed,
+            footer_text=tc_settings.testcase_footer_text,
         )
 
         return success, message
@@ -128,7 +144,8 @@ def _write_testcases_comment(
         use_adf: bool = True,
         pr_details: list = None,
         pr_count: int = 0,
-        files_changed: int = 0
+        files_changed: int = 0,
+        footer_text: str = None,
 ) -> Tuple[bool, str]:
     """
     Test case'larni JIRA ga comment sifatida yozish
@@ -137,6 +154,7 @@ def _write_testcases_comment(
         task_key: JIRA task key
         result: TestCaseGenerationResult
         use_adf: ADF format ishlatish
+        footer_text: Comment footer matni (None bo'lsa global settingsdan)
 
     Returns:
         Tuple[bool, str]: (success, message)
@@ -148,9 +166,10 @@ def _write_testcases_comment(
         writer = JiraCommentWriter()
         formatter = TestcaseADFFormatter()
 
-        # Footer text settings-dan olish
-        from config.app_settings import get_app_settings as _get_settings
-        _tc_footer = _get_settings().testcase_generator.testcase_footer_text
+        if footer_text is None:
+            from config.app_settings import get_app_settings as _get_settings
+            footer_text = _get_settings().webhook_testcase.testcase_footer_text
+        _tc_footer = footer_text
 
         if use_adf:
             # ADF format
@@ -238,20 +257,22 @@ def generate_testcases_sync(
         return False, f"Execution error: {str(e)}"
 
 
-def is_testcase_trigger_status(status: str) -> bool:
+def is_testcase_trigger_status(status: str, app_settings=None) -> bool:
     """
-    Berilgan status testcase trigger ekanligini tekshirish
+    Berilgan status testcase trigger ekanligini tekshirish.
 
     Args:
         status: Tekshiriladigan status
+        app_settings: Tayyor AppSettings (None bo'lsa global yuklanadi)
 
     Returns:
         bool: True agar trigger status bo'lsa
     """
     from config.app_settings import get_app_settings
 
-    settings = get_app_settings()
-    tc_settings = settings.testcase_generator
+    if app_settings is None:
+        app_settings = get_app_settings()
+    tc_settings = app_settings.webhook_testcase
 
     if not tc_settings.auto_comment_enabled:
         return False

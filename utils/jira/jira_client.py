@@ -17,12 +17,12 @@ _log = get_logger("jira.client")
 class JiraClient:
     """JIRA API bilan ishlash"""
 
-    def __init__(self):
+    def __init__(self, server: str = None, email: str = None, token: str = None):
         from config.settings import settings
 
-        self.server = settings.JIRA_SERVER
-        self.email = settings.JIRA_EMAIL
-        self.token = settings.JIRA_API_TOKEN
+        self.server = server or settings.JIRA_SERVER
+        self.email  = email  or settings.JIRA_EMAIL
+        self.token  = token  or settings.JIRA_API_TOKEN
 
         # Custom fields
         self.story_points_field = settings.STORY_POINTS_FIELD

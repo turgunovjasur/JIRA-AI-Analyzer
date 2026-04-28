@@ -17,7 +17,7 @@ Author: JASUR TURGUNOV
 Version: 4.0.0
 """
 import streamlit as st
-from utils.auth.auth_manager import is_authenticated, is_super_admin, is_company, get_auth_info
+from utils.auth.auth_manager import is_authenticated, is_super_admin, is_user, get_auth_info
 
 # ==================== PAGE CONFIG ====================
 st.set_page_config(
@@ -48,53 +48,6 @@ from ui.styles import CUSTOM_CSS
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 
-# ==================== AUTH GATE ====================
-def _inject_company_settings():
-    """
-    Kompaniya API kalitlari va modul ruxsatlarini yuklash.
-    app.py har rerun'da chaqiriladi — company session bo'lsa override qilinadi.
-    """
-    if not is_company():
-        return
-    auth = get_auth_info()
-    company_id   = auth.get('company_id')
-    company_code = auth.get('company_code')
-    if not company_id or not company_code:
-        return
-    try:
-        from utils.auth.auth_db import get_company_settings_by_code, get_company_modules
-        from config.settings import settings as gs
-
-        # Kompaniya login bo'lsa, global .env kalitlarini HAR DOIM bloklaymiz.
-        # Kompaniya faqat o'z kalitlarini ishlatishi kerak — global kalitlar
-        # kompaniyaga "sizib" o'tmasligi uchun avval hammani bo'shatamiz.
-        gs.JIRA_SERVER    = ''
-        gs.JIRA_EMAIL     = ''
-        gs.JIRA_API_TOKEN = ''
-        gs.GITHUB_TOKEN   = ''
-        gs.GITHUB_ORG     = ''
-        gs.GOOGLE_API_KEY   = ''
-        gs.GOOGLE_API_KEY_2 = ''
-
-        # Kompaniya o'z kalitlarini kiritgan bo'lsa — ularni yuklash
-        cs = get_company_settings_by_code(company_code)
-        if cs:
-            gs.JIRA_SERVER    = cs.get('jira_server', '')
-            gs.JIRA_EMAIL     = cs.get('jira_email', '')
-            gs.JIRA_API_TOKEN = cs.get('jira_token', '')
-            gs.GITHUB_TOKEN   = cs.get('github_token', '')
-            gs.GITHUB_ORG     = cs.get('github_org', '')
-            gs.GOOGLE_API_KEY   = cs.get('gemini_api_key_1', '')
-            gs.GOOGLE_API_KEY_2 = cs.get('gemini_api_key_2', '')
-
-        # Modul ruxsatlarini session state ga yuklash
-        mods = get_company_modules(company_id)
-        st.session_state['company_modules'] = mods
-
-    except Exception:
-        pass
-
-
 # ==================== MAIN APP ====================
 def main():
     """Main application entry point"""
@@ -105,8 +58,9 @@ def main():
         render_login_page()
         return
 
-    # Kompaniya sozlamalarini global settings ga yuklash
-    _inject_company_settings()
+    # User uchun kompaniya modul ruxsatlarini session state ga yuklash
+    if is_user() and 'company_modules' not in st.session_state:
+        _load_company_modules()
 
     # Super admin → admin panel
     if is_super_admin():
@@ -114,7 +68,7 @@ def main():
         return
 
     # Majburiy API setup (JIRA + GitHub kiritilmagan bo'lsa)
-    if is_company():
+    if is_user():
         from ui.pages.api_setup import needs_api_setup, render_api_setup
         if needs_api_setup():
             render_api_setup()
@@ -206,6 +160,17 @@ def main():
     else:
         # Fallback
         st.error(f"Noma'lum sahifa: {page}")
+
+
+def _load_company_modules():
+    """Kompaniya modul ruxsatlarini session_state ga yuklash (bir marta)"""
+    try:
+        from utils.auth.auth_db import get_company_modules
+        company_id = get_auth_info().get('company_id')
+        if company_id:
+            st.session_state['company_modules'] = get_company_modules(company_id)
+    except Exception:
+        st.session_state['company_modules'] = {}
 
 
 def _run_super_admin():

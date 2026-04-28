@@ -192,8 +192,10 @@ class SprintDataService:
         devs = svc.get_developer_stats()
     """
 
-    def __init__(self):
+    def __init__(self, company_id: int = None, user_id: int = None):
         self._jira = None
+        self._company_id = company_id
+        self._user_id = user_id
         self.sprint: Optional[SprintInfo] = None
         self.tasks: List[TaskData] = []
         self.dev_capacities: Dict[str, DevCapacity] = {}
@@ -203,7 +205,24 @@ class SprintDataService:
     def jira(self):
         if self._jira is None:
             from utils.jira.jira_client import JiraClient
-            self._jira = JiraClient()
+            if self._user_id is not None:
+                from utils.auth.auth_db import get_user_credentials_for_service
+                creds = get_user_credentials_for_service(self._user_id)
+                self._jira = JiraClient(
+                    server=creds['jira_server'],
+                    email=creds['jira_email'],
+                    token=creds['jira_token'],
+                )
+            elif self._company_id is not None:
+                from utils.auth.auth_db import get_company_credentials
+                creds = get_company_credentials(self._company_id)
+                self._jira = JiraClient(
+                    server=creds['jira_server'],
+                    email=creds['jira_email'],
+                    token=creds['jira_token'],
+                )
+            else:
+                self._jira = JiraClient()
         return self._jira
 
     # ── Yuklab olish ────────────────────────────────────────────────────

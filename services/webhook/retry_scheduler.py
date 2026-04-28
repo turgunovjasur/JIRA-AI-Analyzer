@@ -69,6 +69,7 @@ async def _retry_blocked_task(task_id: str) -> None:
         service1_status = task_data.get('service1_status', 'pending')
         service2_status = task_data.get('service2_status', 'pending')
         last_jira_status = task_data.get('last_jira_status', 'READY TO TEST')
+        company_id = task_data.get('company_id')
 
         log.info(f"[{task_id}] RETRY -> s1={service1_status} s2={service2_status} last_status={last_jira_status}")
 
@@ -97,7 +98,7 @@ async def _retry_blocked_task(task_id: str) -> None:
 
             log.service_running(task_id, "service_1")
             await _wait_for_ai_slot(task_id)
-            await check_tz_pr_and_comment(task_key=task_id, new_status=last_jira_status)
+            await check_tz_pr_and_comment(task_key=task_id, new_status=last_jira_status, company_id=company_id)
 
             # Service1 natijasini qayta o'qish
             task_data = get_task(task_id)
@@ -139,7 +140,7 @@ async def _retry_blocked_task(task_id: str) -> None:
 
                 log.service_running(task_id, "service_2")
                 await _wait_for_ai_slot(task_id)
-                await _run_testcase_generation(task_key=task_id, new_status=last_jira_status)
+                await _run_testcase_generation(task_key=task_id, new_status=last_jira_status, company_id=company_id)
 
         # Ikkala servis ham done bo'lsa — retry kerak emas
         if not need_service1 and not need_service2:

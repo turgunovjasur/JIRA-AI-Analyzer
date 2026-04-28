@@ -120,7 +120,12 @@ def _run_analysis(task_key: str):
     try:
         # Service import
         from services.checkers.tz_pr_checker import TZPRService
-        service = TZPRService()
+        from utils.auth.auth_manager import get_auth_info
+        _auth = get_auth_info()
+        _user_id    = _auth.get('user_id')    if _auth.get('role') == 'user' else None
+        _company_id = _auth.get('company_id') if _auth.get('role') == 'user' else None
+        # UI modul: user_id → user_credentials; company_id faqat settings uchun
+        service = TZPRService(user_id=_user_id, company_id=_company_id)
 
         # Status callback
         status_callback = _create_status_callback(progress)

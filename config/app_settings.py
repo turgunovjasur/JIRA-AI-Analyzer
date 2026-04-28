@@ -510,7 +510,13 @@ class AppSettings:
     bug_analyzer: BugAnalyzerSettings = field(default_factory=BugAnalyzerSettings)
     statistics: StatisticsSettings = field(default_factory=StatisticsSettings)
     tz_pr_checker: TZPRCheckerSettings = field(default_factory=TZPRCheckerSettings)
+    # Webhook orqali TZ-PR tekshiruvi uchun alohida sozlamalar.
+    # tz_pr_checker — standalone modul (alohida sotiladi), webhook_tz_pr — webhook trigger (alohida sotiladi).
+    webhook_tz_pr: TZPRCheckerSettings = field(default_factory=TZPRCheckerSettings)
     testcase_generator: TestcaseGeneratorSettings = field(default_factory=TestcaseGeneratorSettings)
+    # Webhook orqali avtomatik test case yaratish uchun alohida sozlamalar.
+    # testcase_generator — QA moduli (manual), webhook_testcase — webhook auto-comment.
+    webhook_testcase: TestcaseGeneratorSettings = field(default_factory=TestcaseGeneratorSettings)
     queue: QueueSettings = field(default_factory=QueueSettings)
 
 
@@ -619,7 +625,9 @@ class AppSettingsManager:
                     bug_analyzer=BugAnalyzerSettings(**data.get('bug_analyzer', {})),
                     statistics=StatisticsSettings(**data.get('statistics', {})),
                     tz_pr_checker=TZPRCheckerSettings(**data.get('tz_pr_checker', {})),
+                    webhook_tz_pr=TZPRCheckerSettings(**data.get('webhook_tz_pr', {})),
                     testcase_generator=TestcaseGeneratorSettings(**data.get('testcase_generator', {})),
+                    webhook_testcase=TestcaseGeneratorSettings(**data.get('webhook_testcase', {})),
                     queue=QueueSettings(**data.get('queue', {}))
                 )
 
@@ -641,7 +649,9 @@ class AppSettingsManager:
             'bug_analyzer': clean_dict(asdict(settings.bug_analyzer)),
             'statistics': clean_dict(asdict(settings.statistics)),
             'tz_pr_checker': clean_dict(asdict(settings.tz_pr_checker)),
+            'webhook_tz_pr': clean_dict(asdict(settings.webhook_tz_pr)),
             'testcase_generator': clean_dict(asdict(settings.testcase_generator)),
+            'webhook_testcase': clean_dict(asdict(settings.webhook_testcase)),
             'queue': clean_dict(asdict(settings.queue))
         }
 
@@ -733,3 +743,113 @@ def is_module_enabled(module_name: str) -> bool:
     if _settings_manager is None:
         _settings_manager = AppSettingsManager()
     return _settings_manager.is_module_enabled(module_name)
+
+
+def get_app_settings_for_company(company_id: int) -> AppSettings:
+    """
+    Kompaniyaga xos AppSettings olish.
+
+    Ishlash tartibi:
+    1. Global default sozlamalar yuklanadi (app_settings.json)
+    2. DB dan kompaniyaning module_settings JSON o'qiladi
+    3. Kompaniya sozlamalari global default ustiga yoziladi (override)
+    4. AppSettings qaytariladi
+
+    Agar kompaniyada modul sozlamalari bo'lmasa — global default qaytariladi.
+    """
+    from dataclasses import replace as dc_replace, fields as dc_fields
+
+    base = get_app_settings(force_reload=False)
+
+    try:
+        from utils.auth.auth_db import get_company_webhook_module_settings, get_company_webhook_config
+        company_wh = get_company_webhook_module_settings(company_id)
+        company_cfg = get_company_webhook_config(company_id)
+    except Exception:
+        return base
+
+    if not company_wh:
+        company_wh = {}
+
+    def _merge(base_obj, override_dict: dict):
+        if not override_dict:
+            return base_obj
+        known = {f.name for f in dc_fields(base_obj)}
+        clean = {k: v for k, v in override_dict.items()
+                 if k in known and not k.endswith('_help') and not k.startswith('_')}
+        if not clean:
+            return base_obj
+        try:
+            return dc_replace(base_obj, **clean)
+        except Exception:
+            return base_obj
+
+    # webhook_tz_pr: module settings dan merge, keyin eski company_settings kolonlaridan fallback
+    tz_pr_wh_dict = dict(company_wh.get('webhook_tz_pr', {}))
+    if company_cfg:
+        if 'allowed_issue_types' not in tz_pr_wh_dict and company_cfg.get('webhook_allowed_issue_types'):
+            tz_pr_wh_dict['allowed_issue_types'] = company_cfg['webhook_allowed_issue_types']
+        if 'excluded_assignees' not in tz_pr_wh_dict and company_cfg.get('webhook_excluded_assignees'):
+            tz_pr_wh_dict['excluded_assignees'] = company_cfg['webhook_excluded_assignees']
+
+    return AppSettings(
+        modules=base.modules,
+        bug_analyzer=base.bug_analyzer,
+        statistics=base.statistics,
+        tz_pr_checker=base.tz_pr_checker,
+        webhook_tz_pr=_merge(base.webhook_tz_pr,       tz_pr_wh_dict),
+        testcase_generator=base.testcase_generator,
+        webhook_testcase=_merge(base.webhook_testcase, company_wh.get('webhook_testcase', {})),
+        queue=_merge(base.queue,                       company_wh.get('queue', {})),
+    )
+
+
+def get_app_settings_for_user(user_id: int, company_id: int) -> AppSettings:
+    """
+    User uchun AppSettings olish (multi-tenant).
+
+    Ishlash tartibi:
+    - Standalone modullar (tz_pr_checker, testcase_generator, bug_analyzer, statistics)
+      → user_module_settings DB dan (har user izolyatsiyalangan)
+    - Webhook modullar (webhook_tz_pr, webhook_testcase, queue)
+      → company_settings.webhook_module_settings DB dan (kompaniya uchun umumiy)
+    - Modul ko'rinishi → company enabled_modules dan
+    - Agar DB da topilmasa → global default (app_settings.json) ishlatiladi
+    """
+    from dataclasses import replace as dc_replace, fields as dc_fields
+
+    base = get_app_settings(force_reload=False)
+
+    def _merge(base_obj, override_dict: dict):
+        if not override_dict:
+            return base_obj
+        known = {f.name for f in dc_fields(base_obj)}
+        clean = {k: v for k, v in override_dict.items()
+                 if k in known and not k.endswith('_help') and not k.startswith('_')}
+        if not clean:
+            return base_obj
+        try:
+            return dc_replace(base_obj, **clean)
+        except Exception:
+            return base_obj
+
+    try:
+        from utils.auth.auth_db import (
+            get_user_module_settings,
+            get_company_webhook_module_settings,
+        )
+        user_mods    = get_user_module_settings(user_id)
+        company_wh   = get_company_webhook_module_settings(company_id)
+    except Exception:
+        return base
+
+    return AppSettings(
+        modules=base.modules,
+        bug_analyzer=_merge(base.bug_analyzer,            user_mods.get('bug_analyzer', {})),
+        statistics=_merge(base.statistics,                user_mods.get('statistics', {})),
+        tz_pr_checker=_merge(base.tz_pr_checker,          user_mods.get('tz_pr_checker', {})),
+        webhook_tz_pr=_merge(base.webhook_tz_pr,          company_wh.get('webhook_tz_pr', {})),
+        testcase_generator=_merge(base.testcase_generator, user_mods.get('testcase_generator', {})),
+        webhook_testcase=_merge(base.webhook_testcase,    company_wh.get('webhook_testcase', {})),
+        queue=_merge(base.queue,                          company_wh.get('queue', {})),
+    )

@@ -184,8 +184,19 @@ def render_bug_analyzer():
                 "Iltimos kuting..."
             )
 
-        # Load models
-        embedding_helper, vectordb_helper, gemini_helper = load_models()
+        # Load models (GeminiHelper kompaniyaga xos — alohida yuklanadi)
+        embedding_helper, vectordb_helper, _ = load_models()
+
+        from utils.auth.auth_manager import get_auth_info
+        from utils.ai.gemini_helper import GeminiHelper
+        _auth = get_auth_info()
+        _user_id = _auth.get('user_id') if _auth.get('role') == 'user' else None
+        if _user_id:
+            from utils.auth.auth_db import get_user_credentials_for_service
+            _creds = get_user_credentials_for_service(_user_id)
+            gemini_helper = GeminiHelper(api_keys=_creds['gemini_keys'])
+        else:
+            gemini_helper = None
 
         # Get settings from app_settings (v4.0)
         from config.app_settings import get_app_settings

@@ -23,11 +23,11 @@ log = get_logger("jira.comment")
 class JiraCommentWriter:
     """JIRA ga comment yozish (ADF va oddiy format)"""
 
-    def __init__(self):
+    def __init__(self, server: str = None, email: str = None, token: str = None):
         """JIRA client yaratish"""
-        self.server = os.getenv('JIRA_SERVER', 'https://smartupx.atlassian.net')
-        self.email = os.getenv('JIRA_EMAIL')
-        self.api_token = os.getenv('JIRA_API_TOKEN')
+        self.server    = server or os.getenv('JIRA_SERVER', 'https://smartupx.atlassian.net')
+        self.email     = email  or os.getenv('JIRA_EMAIL')
+        self.api_token = token  or os.getenv('JIRA_API_TOKEN')
 
         # python-jira client (oddiy format uchun)
         try:

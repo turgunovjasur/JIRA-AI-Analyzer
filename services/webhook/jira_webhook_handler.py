@@ -254,9 +254,21 @@ async def jira_webhook(request: Request, background_tasks: BackgroundTasks):
         if not status_changed:
             return {"status": "ignored", "reason": "status not changed", "debug_items": items}
 
+        # Kompaniyani project key orqali topish
+        from utils.auth.auth_db import get_company_by_project_key
+        from config.app_settings import get_app_settings_for_company
+        project_key = task_key.split('-')[0].upper()
+        company = get_company_by_project_key(project_key)
+        if company:
+            company_id = company['id']
+            app_settings = get_app_settings_for_company(company_id)
+            log.info(f"[{task_key}] Company: {company.get('company_code')} (id={company_id})")
+        else:
+            log.warning(f"[{task_key}] Project key '{project_key}' uchun kompaniya topilmadi — ignored")
+            return {"status": "ignored", "reason": f"unknown project key '{project_key}'"}
+
         # Yangi status trigger status'lardan birimi?
-        app_settings = get_app_settings(force_reload=False)
-        settings = app_settings.tz_pr_checker
+        settings = app_settings.webhook_tz_pr
         target_statuses = settings.get_trigger_statuses()
 
         if new_status.lower() not in [s.lower() for s in target_statuses]:
@@ -325,7 +337,7 @@ async def jira_webhook(request: Request, background_tasks: BackgroundTasks):
 
         if not task_db:
             # Yangi task — DB'ga qo'shish
-            mark_progressing(task_key, new_status, datetime.now())
+            mark_progressing(task_key, new_status, datetime.now(), company_id=company_id)
         else:
             task_status = task_db.get('task_status', 'none')
             last_jira_status = task_db.get('last_jira_status')
@@ -344,15 +356,15 @@ async def jira_webhook(request: Request, background_tasks: BackgroundTasks):
 
             # Har holat uchun alohida tranzitsiya
             if task_status == 'none':
-                mark_progressing(task_key, new_status, datetime.now())
+                mark_progressing(task_key, new_status, datetime.now(), company_id=company_id)
             elif task_status in ('completed', 'error', 'blocked'):
                 reset_service_statuses(task_key)
-                mark_progressing(task_key, new_status, datetime.now())
+                mark_progressing(task_key, new_status, datetime.now(), company_id=company_id)
             elif task_status == 'returned':
                 # Qaytarilgan task yana keldi — return_count ko'payadi
                 increment_return_count(task_key)
                 reset_service_statuses(task_key)
-                mark_progressing(task_key, new_status, datetime.now())
+                mark_progressing(task_key, new_status, datetime.now(), company_id=company_id)
             elif task_status == 'progressing':
                 log.info(f"[{task_key}] SKIP -> task hozir jarayonda, qayta ishlanmaydi")
                 return {
@@ -381,10 +393,11 @@ async def jira_webhook(request: Request, background_tasks: BackgroundTasks):
             await _write_skip_notification(task_key, settings, comment_writer, adf_formatter)
 
             # Service2 faqat testcase trigger status bo'lsa ishlaydi
-            testcase_should_run = is_testcase_trigger_status(new_status)
+            testcase_should_run = is_testcase_trigger_status(new_status, app_settings)
             if testcase_should_run:
                 background_tasks.add_task(
-                    _run_testcase_generation, task_key=task_key, new_status=new_status
+                    _run_testcase_generation, task_key=task_key, new_status=new_status,
+                    company_id=company_id
                 )
                 log.service_running(task_key, "service_2")
 
@@ -397,17 +410,17 @@ async def jira_webhook(request: Request, background_tasks: BackgroundTasks):
             }
 
         # Background task'lar: har doim Service1 → delay → Service2
-        testcase_should_run = is_testcase_trigger_status(new_status)
+        testcase_should_run = is_testcase_trigger_status(new_status, app_settings)
 
         if testcase_should_run:
             # Service1 + Service2 bitta lock ichida (Service1 tugagach Service2)
             background_tasks.add_task(
-                _run_task_group, task_key=task_key, new_status=new_status
+                _run_task_group, task_key=task_key, new_status=new_status, company_id=company_id
             )
         else:
             # Faqat Service1
             background_tasks.add_task(
-                _queued_check_tz_pr, task_key=task_key, new_status=new_status
+                _queued_check_tz_pr, task_key=task_key, new_status=new_status, company_id=company_id
             )
 
         return {
@@ -441,7 +454,7 @@ async def root():
     Monitoring va to'g'ri ishlayotganini tekshirish uchun.
     """
     app_settings = get_app_settings(force_reload=False)
-    settings = app_settings.tz_pr_checker
+    settings = app_settings.webhook_tz_pr
 
     return {
         "service": "JIRA TZ-PR Auto Checker",
@@ -498,7 +511,7 @@ async def health_check():
 
     try:
         app_settings = get_app_settings(force_reload=False)
-        settings = app_settings.tz_pr_checker
+        settings = app_settings.webhook_tz_pr
         health["services"]["settings"] = "ok"
         health["settings"] = {
             "use_adf": settings.use_adf_format,
@@ -529,7 +542,7 @@ async def get_settings():
     JSON formatida qaytaradi.
     """
     app_settings = get_app_settings(force_reload=False)
-    settings = app_settings.tz_pr_checker
+    settings = app_settings.webhook_tz_pr
 
     return {
         "return_threshold": settings.return_threshold,
@@ -566,7 +579,7 @@ async def manual_check(task_key: str, background_tasks: BackgroundTasks):
     )
 
     app_settings = get_app_settings(force_reload=False)
-    tc_settings = app_settings.testcase_generator
+    tc_settings = app_settings.webhook_testcase
     testcase_triggered = False
 
     if tc_settings.auto_comment_enabled:
@@ -601,7 +614,7 @@ async def manual_testcase(task_key: str, background_tasks: BackgroundTasks):
     log.info(f"Manual testcase generation triggered for {task_key}")
 
     app_settings = get_app_settings(force_reload=False)
-    tc_settings = app_settings.testcase_generator
+    tc_settings = app_settings.webhook_testcase
     trigger_status = tc_settings.auto_comment_trigger_status
 
     background_tasks.add_task(
@@ -638,7 +651,7 @@ async def startup_event():
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
     app_settings = get_app_settings(force_reload=False)
-    settings = app_settings.tz_pr_checker
+    settings = app_settings.webhook_tz_pr
 
     log.system_started("4.0.0", 8000)
     log.settings_loaded(

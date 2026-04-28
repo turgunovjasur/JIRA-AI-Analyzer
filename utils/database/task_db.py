@@ -129,7 +129,13 @@ def init_db() -> None:
                 -- v3: blocked holat boshqaruvi
                 blocked_at DATETIME NULL,
                 blocked_retry_at DATETIME NULL,
-                block_reason TEXT NULL
+                block_reason TEXT NULL,
+
+                -- v4: multi-tenant company tracking
+                company_id INTEGER NULL,
+
+                -- v5: return reason code (nima sababli qaytarilgani)
+                return_reason TEXT NULL
             )
         """)
 
@@ -190,6 +196,38 @@ def init_db() -> None:
 # DB migrations v2 (assignee/task_type/feature_name/technology_stack ustunlari) va
 # v3 (blocked_at/blocked_retry_at/block_reason ustunlari) yakunlandi va
 # yuqoridagi CREATE TABLE ga kiritildi. Migration funksiyalari o'chirildi 2026-02.
+
+
+def _migrate_db_v4():
+    """v4 migration: company_id ustunini qo'shish (mavjud DB uchun)"""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(task_processing)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if 'company_id' not in columns:
+            cursor.execute("ALTER TABLE task_processing ADD COLUMN company_id INTEGER NULL")
+            conn.commit()
+            log.info("DB migration v4: company_id ustuni qo'shildi")
+        conn.close()
+    except Exception as e:
+        log.warning(f"DB migration v4 error: {e}")
+
+
+def _migrate_db_v5():
+    """v5 migration: return_reason ustunini qo'shish (mavjud DB uchun)"""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(task_processing)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if 'return_reason' not in columns:
+            cursor.execute("ALTER TABLE task_processing ADD COLUMN return_reason TEXT NULL")
+            conn.commit()
+            log.info("DB migration v5: return_reason ustuni qo'shildi")
+        conn.close()
+    except Exception as e:
+        log.warning(f"DB migration v5 error: {e}")
 
 
 def get_task(task_id: str) -> Optional[Dict[str, Any]]:
@@ -320,7 +358,7 @@ def upsert_task(task_id: str, fields: Dict[str, Any]) -> None:
         raise
 
 
-def mark_progressing(task_id: str, jira_status: str, update_time: Optional[datetime] = None) -> None:
+def mark_progressing(task_id: str, jira_status: str, update_time: Optional[datetime] = None, company_id: Optional[int] = None) -> None:
     """
     Task holatini ``'progressing'`` ga o'zgartirish — qayta ishlash boshlanganda chaqiriladi.
 
@@ -346,13 +384,17 @@ def mark_progressing(task_id: str, jira_status: str, update_time: Optional[datet
     """
     if update_time is None:
         update_time = datetime.now()
-    
-    upsert_task(task_id, {
+
+    fields = {
         'task_status': 'progressing',
         'last_jira_status': jira_status,
         'task_update_time': update_time.isoformat(),
         'last_processed_at': datetime.now().isoformat()
-    })
+    }
+    if company_id is not None:
+        fields['company_id'] = company_id
+
+    upsert_task(task_id, fields)
 
 
 def mark_completed(task_id: str):
@@ -453,6 +495,19 @@ def increment_return_count(task_id: str):
         upsert_task(task_id, {'return_count': new_count})
     else:
         upsert_task(task_id, {'return_count': 1})
+
+
+def set_return_reason(task_id: str, reason: str) -> None:
+    """
+    Task qaytarilish sababini DB ga saqlash.
+
+    WARN_LOW_SCORE, WARN_MIN_TZ, WARN_NO_PR, WARN_PR_NOT_MERGED,
+    WARN_AI_TIMEOUT, ERR_UNKNOWN kodlaridan biri.
+
+    Navbatdagi signal kelganda servis bu codeni o'qib,
+    qanday harakat qilishini belgilaydi.
+    """
+    upsert_task(task_id, {'return_reason': reason})
 
 
 def set_skip_detected(task_id: str):
@@ -1157,7 +1212,7 @@ def get_status_history_for_report(days: int = 30) -> List[Dict[str, Any]]:
 # DB initialization on import
 try:
     init_db()
-    # migrate_db_v2()
-    # migrate_db_v3()
+    _migrate_db_v4()
+    _migrate_db_v5()
 except Exception as e:
     log.warning(f"DB initialization warning: {e}")

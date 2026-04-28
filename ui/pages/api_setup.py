@@ -4,35 +4,38 @@ Majburiy API Kalitlar Setup Sahifasi
 Kompaniya birinchi marta kirganida (yoki JIRA/GitHub token yo'q bo'lsa)
 bu sahifa ko'rsatiladi. JIRA va GitHub majburiy, Figma ixtiyoriy.
 
+Kalitlar "Mening API Kalitlarim" (user_credentials) ga saqlanadi.
+Webhook API Kalitlari alohida sozlamalar sahifasida.
+
 Author: JASUR TURGUNOV
 """
 import streamlit as st
-from utils.auth.auth_db import get_company_settings, save_company_settings
+from utils.auth.auth_db import (
+    get_user_credentials,
+    save_user_credentials,
+    has_user_credentials_configured,
+)
 from utils.auth.auth_manager import get_auth_info, logout
 
 
 def needs_api_setup() -> bool:
-    """Kompaniya majburiy API kalitlaridan biri kiritilmagan bo'lsa True"""
+    """User majburiy API kalitlarini kirmagan bo'lsa True"""
     auth = get_auth_info()
-    if auth.get('role') != 'company':
+    if auth.get('role') != 'user':
         return False
-    company_id = auth.get('company_id')
-    if not company_id:
+    user_id = auth.get('user_id')
+    if not user_id:
         return False
-    cs = get_company_settings(company_id)
-    jira_ok   = bool(cs.get('jira_email') and cs.get('jira_token'))
-    github_ok = bool(cs.get('github_token'))
-    gemini_ok = bool(cs.get('gemini_api_key_1'))
-    return not (jira_ok and github_ok and gemini_ok)
+    return not has_user_credentials_configured(user_id)
 
 
 def render_api_setup():
     """Majburiy API kalitlar kiritish sahifasi"""
     auth = get_auth_info()
     company_name = auth.get('company_name', '')
-    company_id = auth.get('company_id')
+    user_id = auth.get('user_id')
 
-    cs = get_company_settings(company_id) if company_id else {}
+    uc = get_user_credentials(user_id) if user_id else {}
 
     # ━━━ Header ━━━
     col1, col2, col3 = st.columns([1, 1.6, 1])
@@ -58,9 +61,9 @@ def render_api_setup():
     with col2:
 
         # ━━━ Progress indikator ━━━
-        jira_done   = bool(cs.get('jira_email') and cs.get('jira_token'))
-        github_done = bool(cs.get('github_token'))
-        gemini_done = bool(cs.get('gemini_api_key_1'))
+        jira_done   = bool(uc.get('jira_email') and uc.get('jira_token') and uc.get('jira_project_keys'))
+        github_done = bool(uc.get('github_token'))
+        gemini_done = bool(uc.get('gemini_api_key_1'))
 
         def _badge(done, label):
             bg  = 'rgba(54,179,126,0.15)' if done else 'rgba(255,86,48,0.1)'
@@ -91,23 +94,30 @@ def render_api_setup():
 
         jira_server = st.text_input(
             "JIRA Server URL",
-            value=cs.get('jira_server', ''),
+            value=uc.get('jira_server', ''),
             placeholder="https://yourcompany.atlassian.net",
             key="setup_jira_server"
         )
         jira_email = st.text_input(
             "JIRA Email *",
-            value=cs.get('jira_email', ''),
+            value=uc.get('jira_email', ''),
             placeholder="admin@yourcompany.com",
             key="setup_jira_email"
         )
         jira_token = st.text_input(
             "JIRA API Token *",
-            value=cs.get('jira_token', ''),
+            value=uc.get('jira_token', ''),
             type="password",
             placeholder="ATATT3xFf...",
             key="setup_jira_token",
             help="Atlassian hesob → Xavfsizlik → API tokenlar sahifasidan oling"
+        )
+        jira_project_keys = st.text_input(
+            "JIRA Project Key(lar) *",
+            value=uc.get('jira_project_keys', ''),
+            placeholder="DEV, QA, PROD",
+            key="setup_jira_project_keys",
+            help="Vergul bilan ajrating. Masalan: DEV, QA, PRODUCT"
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -120,7 +130,7 @@ def render_api_setup():
 
         github_token = st.text_input(
             "GitHub Token *",
-            value=cs.get('github_token', ''),
+            value=uc.get('github_token', ''),
             type="password",
             placeholder="ghp_xxxx...",
             key="setup_github_token",
@@ -128,7 +138,7 @@ def render_api_setup():
         )
         github_org = st.text_input(
             "GitHub Organization nomi",
-            value=cs.get('github_org', ''),
+            value=uc.get('github_org', ''),
             placeholder="your-org-name",
             key="setup_github_org"
         )
@@ -143,7 +153,7 @@ def render_api_setup():
 
         gemini_key_1 = st.text_input(
             "Gemini API Key *",
-            value=cs.get('gemini_api_key_1', ''),
+            value=uc.get('gemini_api_key_1', ''),
             type="password",
             placeholder="AIzaSy...",
             key="setup_gemini_1",
@@ -151,7 +161,7 @@ def render_api_setup():
         )
         gemini_key_2 = st.text_input(
             "Gemini API Key (zaxira, ixtiyoriy)",
-            value=cs.get('gemini_api_key_2', ''),
+            value=uc.get('gemini_api_key_2', ''),
             type="password",
             placeholder="AIzaSy...",
             key="setup_gemini_2",
@@ -160,7 +170,7 @@ def render_api_setup():
         st.markdown("</div>", unsafe_allow_html=True)
 
         # ━━━ Figma (ixtiyoriy) ━━━
-        figma_token = cs.get('figma_token', '')
+        figma_token = uc.get('figma_token', '')
         with st.expander("🎨 Figma — Ixtiyoriy"):
             figma_token = st.text_input(
                 "Figma Access Token",
@@ -186,6 +196,8 @@ def render_api_setup():
                     errors.append("JIRA Email kiritilishi shart")
                 if not jira_token.strip():
                     errors.append("JIRA API Token kiritilishi shart")
+                if not jira_project_keys.strip():
+                    errors.append("JIRA Project Key(lar) kiritilishi shart (masalan: DEV)")
                 if not github_token.strip():
                     errors.append("GitHub Token kiritilishi shart")
                 if not gemini_key_1.strip():
@@ -195,17 +207,18 @@ def render_api_setup():
                     st.session_state['setup_error'] = " | ".join(errors)
                     st.rerun()
                 else:
-                    new_settings = {
-                        'jira_server':      jira_server.strip(),
-                        'jira_email':       jira_email.strip(),
-                        'jira_token':       jira_token.strip(),
-                        'github_token':     github_token.strip(),
-                        'github_org':       github_org.strip(),
-                        'figma_token':      figma_token.strip(),
-                        'gemini_api_key_1': gemini_key_1.strip(),
-                        'gemini_api_key_2': gemini_key_2.strip(),
+                    new_creds = {
+                        'jira_server':        jira_server.strip(),
+                        'jira_email':         jira_email.strip(),
+                        'jira_token':         jira_token.strip(),
+                        'jira_project_keys':  jira_project_keys.strip(),
+                        'github_token':       github_token.strip(),
+                        'github_org':         github_org.strip(),
+                        'figma_token':        figma_token.strip(),
+                        'gemini_api_key_1':   gemini_key_1.strip(),
+                        'gemini_api_key_2':   gemini_key_2.strip(),
                     }
-                    if save_company_settings(company_id, new_settings):
+                    if save_user_credentials(user_id, new_creds):
                         st.success("✅ Saqlandi!")
                         st.rerun()
                     else:

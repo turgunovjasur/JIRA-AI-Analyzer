@@ -1,8 +1,9 @@
 """
 Login Sahifasi
 
-Yagona forma: Company Code + Parol
-Super Admin ham shu forma orqali kiradi (username = superadmin).
+Forma: Username + Parol
+  - Oddiy user:   "olim@smartup" + parol
+  - Super admin:  "superadmin"   + parol
 
 Author: JASUR TURGUNOV
 """
@@ -13,7 +14,6 @@ from utils.auth.auth_manager import login
 def render_login_page():
     """Login sahifasini ko'rsatish"""
 
-    # Sahifa markazlash
     col1, col2, col3 = st.columns([1, 1.4, 1])
 
     with col2:
@@ -56,10 +56,10 @@ def render_login_page():
 
         # Form
         with st.form("login_form", clear_on_submit=False):
-            code = st.text_input(
-                "Kompaniya Kodi / Login",
-                placeholder="PEPSI yoki superadmin",
-                key="login_code_input"
+            username = st.text_input(
+                "Login",
+                placeholder="olim@smartup",
+                key="login_username_input"
             )
             password = st.text_input(
                 "Parol",
@@ -77,11 +77,11 @@ def render_login_page():
             )
 
         if submitted:
-            if not code or not password:
-                st.session_state['login_error'] = "Kompaniya kodi va parolni kiriting"
+            if not username or not password:
+                st.session_state['login_error'] = "Login va parolni kiriting"
                 st.rerun()
             else:
-                success, error_msg = login(code.strip(), password)
+                success, error_msg = login(username.strip(), password)
                 if success:
                     st.rerun()
                 else:
@@ -94,7 +94,7 @@ def render_login_page():
         st.markdown("""
         <div style="text-align:center; margin-top: 2rem;">
             <p style="color:#6e7681; font-size:0.75rem;">
-                Kirish uchun kompaniya kodingizni ishlating.<br>
+                Login: <b style="color:#8b949e">username@kompaniya_kodi</b><br>
                 Muammo bo'lsa admin bilan bog'laning.
             </p>
         </div>

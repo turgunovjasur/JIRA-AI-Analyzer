@@ -74,10 +74,27 @@ class TestCaseGeneratorService(BaseService):
     - Kod dublikatsiyasi yo'q
     """
 
-    def __init__(self):
-        """Initialize service"""
-        super().__init__()
+    def __init__(self, company_id: int = None, user_id: int = None):
+        """Initialize service.
+        UI modullar: user_id bilan yarating (user_credentials ishlatadi).
+        Webhook:     company_id bilan yarating (company_settings ishlatadi).
+        """
+        super().__init__(company_id=company_id, user_id=user_id)
         self._pr_helper = None
+
+    def _get_settings(self):
+        """User yoki kompaniya Testcase sozlamalarini qaytarish.
+        UI (user_id bor): testcase_generator — user-specific settings
+        Webhook (faqat company_id): webhook_testcase — kompaniya webhook settings
+        """
+        if self._user_id is not None and self._company_id is not None:
+            from config.app_settings import get_app_settings_for_user
+            return get_app_settings_for_user(self._user_id, self._company_id).testcase_generator
+        if self._company_id is not None:
+            from config.app_settings import get_app_settings_for_company
+            return get_app_settings_for_company(self._company_id).webhook_testcase
+        from config.app_settings import get_app_settings
+        return get_app_settings().testcase_generator
 
     @property
     def pr_helper(self):
@@ -93,7 +110,8 @@ class TestCaseGeneratorService(BaseService):
             use_smart_patch: bool = True,
             test_types: List[str] = None,
             custom_context: str = "",
-            status_callback: Optional[Callable[[str, str], None]] = None
+            status_callback: Optional[Callable[[str, str], None]] = None,
+            dev_objections: Optional[List[Dict]] = None
     ) -> TestCaseGenerationResult:
         """
         Testcase generation — asosiy funksiya (6 bosqichli pipeline).
@@ -161,7 +179,11 @@ class TestCaseGeneratorService(BaseService):
             if not test_types:
                 test_types = ['positive', 'negative']
 
+            import time as _time
+            _t0 = _time.time()
+
             # 1. JIRA dan task olish
+            log.info(f"[{task_key}] Testcase ▶ JIRA task olinmoqda...")
             task_details = self.jira.get_task_details(task_key)
             if not task_details:
                 return TestCaseGenerationResult(
@@ -234,17 +256,24 @@ class TestCaseGeneratorService(BaseService):
 
                 if pr_info:
                     pr_details_list = pr_info.get('pr_details', [])
+                    log.info(f"[{task_key}] Testcase ✅ PR ma'lumot olindi ({pr_info.get('files_changed', 0)} fayl)")
                 else:
                     warnings.append(
                         "PR ma'lumoti topilmadi yoki olishda xato yuz berdi. "
                         "Test case'lar faqat TZ asosida yaratilgan."
                     )
+                    log.warning(f"[{task_key}] Testcase ⚠ PR topilmadi — TZ asosida davom etilmoqda")
                     update_status("warning", "PR topilmadi, TZ asosida davom etilmoqda...")
 
             # 4. TZ uzunlik tekshiruvi
-            tc_settings = get_app_settings().testcase_generator
+            tc_settings = self._get_settings()
             max_test_cases = tc_settings.max_test_cases
-            min_tz_chars = get_app_settings().tz_pr_checker.min_tz_description_chars
+            if self._company_id is not None:
+                from config.app_settings import get_app_settings_for_company
+                min_tz_chars = get_app_settings_for_company(self._company_id).webhook_tz_pr.min_tz_description_chars
+            else:
+                from config.app_settings import get_app_settings
+                min_tz_chars = get_app_settings().tz_pr_checker.min_tz_description_chars
             if min_tz_chars > 0 and self._is_tz_absent_or_minimal(task_details, min_tz_chars):
                 actual_chars = len((task_details.get('description') or '').strip())
                 msg = (
@@ -260,6 +289,7 @@ class TestCaseGeneratorService(BaseService):
                 )
 
             # 5. TZ va Comment tahlili
+            log.info(f"[{task_key}] Testcase ▶ TZ formatlanyapti...")
             if not tc_settings.read_comments_enabled:
                 task_no_comments = dict(task_details)
                 task_no_comments['comments'] = []
@@ -269,14 +299,17 @@ class TestCaseGeneratorService(BaseService):
                 tz_content, comment_analysis = TZHelper.format_tz_with_comments(
                     task_details, max_comments=max_c
                 )
+            log.info(f"[{task_key}] Testcase ✅ TZ formatlandi ({len(tz_content)} belgi)")
 
             # 6. Overview yaratish
+            log.info(f"[{task_key}] Testcase ▶ Overview yaratilmoqda...")
             overview = TZHelper.create_task_overview(
                 task_details,
                 comment_analysis,
                 pr_info
             )
 
+            log.info(f"[{task_key}] Testcase ▶ AI ga so'rov yuborilmoqda (test turlari: {test_types})...")
             ai_result = self._generate_with_ai(
                 task_key=task_key,
                 task_details=task_details,
@@ -285,7 +318,8 @@ class TestCaseGeneratorService(BaseService):
                 pr_info=pr_info,
                 test_types=test_types,
                 custom_context=custom_context,
-                max_test_cases=max_test_cases
+                max_test_cases=max_test_cases,
+                dev_objections=dev_objections or []
             )
 
             if not ai_result['success']:
@@ -297,6 +331,9 @@ class TestCaseGeneratorService(BaseService):
                     success=False,
                     error_message=ai_result['error']
                 )
+
+            _ai_sek = round(_time.time() - _t0, 1)
+            log.info(f"[{task_key}] Testcase ✅ AI javob olindi ({_ai_sek}s), parse qilinmoqda...")
 
             # 6. Test case'larni parse qilish
             test_cases = self._parse_test_cases(ai_result['raw_response'])
@@ -312,6 +349,9 @@ class TestCaseGeneratorService(BaseService):
             for tc in test_cases:
                 by_type[tc.test_type] = by_type.get(tc.test_type, 0) + 1
                 by_priority[tc.priority] = by_priority.get(tc.priority, 0) + 1
+
+            _total_sek = round(_time.time() - _t0, 1)
+            log.info(f"[{task_key}] Testcase ✅ {len(test_cases)} ta test case yaratildi | jami: {_total_sek}s | {by_type}")
 
             return TestCaseGenerationResult(
                 task_key=task_key,
@@ -362,7 +402,8 @@ class TestCaseGeneratorService(BaseService):
             pr_info: Optional[Dict],
             test_types: List[str],
             custom_context: str = "",
-            max_test_cases: int = 10
+            max_test_cases: int = 10,
+            dev_objections: Optional[List[Dict]] = None
     ) -> Dict:
         """
         Gemini AI ga prompt yuborish va xom javobni qaytarish.
@@ -405,7 +446,8 @@ class TestCaseGeneratorService(BaseService):
                     ``{'success': False, 'error': 'AI xatosi: <sabab>'}``
         """
         try:
-            # Prompt yaratish (TZ yo'q bo'lsa maxsus ko'rsatma qo'shiladi)
+            import time as _time
+
             prompt = self._create_test_case_prompt(
                 task_key=task_key,
                 task_details=task_details,
@@ -414,20 +456,27 @@ class TestCaseGeneratorService(BaseService):
                 pr_info=pr_info,
                 test_types=test_types,
                 custom_context=custom_context,
-                max_test_cases=max_test_cases
+                max_test_cases=max_test_cases,
+                dev_objections=dev_objections or []
             )
 
             # Text hajmini tekshirish (BaseService'dan)
             text_info = self._calculate_text_length(prompt)
+            prompt_chars = len(prompt)
+            prompt_k_tokens = round(prompt_chars / 4000, 1)
+            log.info(f"[{task_key}] AI prompt: {prompt_chars:,} belgi (~{prompt_k_tokens}K token) | limit: {'✅' if text_info['within_limit'] else '⚠ oshdi, qisqartiriladi'}")
 
             if not text_info['within_limit']:
-                # Qisqartirish (BaseService'dan)
                 prompt = self._truncate_text(prompt)
+                log.info(f"[{task_key}] AI prompt qisqartirildi → {len(prompt):,} belgi")
 
             # AI chaqirish (max_output_tokens — truncation oldini olish uchun)
-            from config.app_settings import get_app_settings
-            max_tokens = get_app_settings().testcase_generator.ai_max_output_tokens
+            max_tokens = self._get_settings().ai_max_output_tokens
+            log.info(f"[{task_key}] AI ▶ Gemini.generate_content() chaqirildi (max_tokens={max_tokens})...")
+            _t_ai = _time.time()
             response = self.gemini.analyze(prompt, max_output_tokens=max_tokens)
+            _ai_dur = round(_time.time() - _t_ai, 1)
+            log.info(f"[{task_key}] AI ✅ Gemini javob olindi: {_ai_dur}s | javob: {len(response):,} belgi")
 
             return {
                 'success': True,
@@ -449,7 +498,8 @@ class TestCaseGeneratorService(BaseService):
             pr_info: Optional[Dict],
             test_types: List[str],
             custom_context: str = "",
-            max_test_cases: int = 10
+            max_test_cases: int = 10,
+            dev_objections: Optional[List[Dict]] = None
     ) -> str:
         """
         Gemini AI uchun testcase generation promptini yig'ish.
@@ -537,11 +587,29 @@ Comment'lardagi o'zgarishlar test case'larda ALBATTA hisobga olinishi kerak!
 - Chegirmalar, limitlar va maxsus shartlarni test scenario'larda qamrab oling
 - Foydalanuvchi aytgan barcha narsalarni hisobga oling
 """
+        dev_objections_block = ""
+        if dev_objections:
+            objection_lines = []
+            for c in dev_objections:
+                author = c.get('author', 'Dev')
+                created = c.get('created', '')[:10]
+                body = c.get('body', '').strip()
+                objection_lines.append(f"  • {author} ({created}): {body}")
+            objections_text = "\n".join(objection_lines)
+            dev_objections_block = f"""
+═══════════════════════════════════════════════════════════════════════════════
+⚡ DEVELOPER ETIROZLARI (tahlildan KEYIN yozilgan)
+═══════════════════════════════════════════════════════════════════════════════
+
+{objections_text}
+
+Ko'rsatma: Testcase'larni yozishda bu izohlarni hisobga ol.
+Developer to'g'ri qayta bajargan funksiyalar uchun test yoz.
+"""
         code_block = ""
         if pr_info:
             # Kod o'zgarishlari bo'limi: servis-1 dagi kabi, ammo testcase uchun qisqaroq format
-            from config.app_settings import get_app_settings
-            tc_settings = get_app_settings().testcase_generator
+            tc_settings = self._get_settings()
             max_files = getattr(tc_settings, "pr_max_files", None)
 
             lines = []
@@ -596,14 +664,14 @@ Comment'lardagi o'zgarishlar test case'larda ALBATTA hisobga olinishi kerak!
                 "Test case'larni yozayotganda yuqoridagi kod o'zgarishlaridagi har bir funksionalni qamrab ol.\n"
             )
 
-        from config.app_settings import get_app_settings
-        order = get_app_settings().testcase_generator.ai_data_section_order or [
-            "tz", "comments", "custom_context", "code"
+        order = self._get_settings().ai_data_section_order or [
+            "tz", "comments", "custom_context", "dev_objections", "code"
         ]
         sections_map = {
             "tz": tz_block,
             "comments": comments_block,
             "custom_context": custom_context_block,
+            "dev_objections": dev_objections_block,
             "code": code_block,
         }
         data_sections_body_parts = []
@@ -826,6 +894,7 @@ Endi {len(test_types)} xil test ({types_text}) uchun test case'lar yarating!
         except Exception as e:
             log.warning(f"Parse xatosi: {e}")
 
+        log.info(f"Parse natija: {len(test_cases)} ta test case")
         return test_cases
 
     def _try_repair_json(self, broken_json: str) -> Optional[str]:

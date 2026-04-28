@@ -32,24 +32,30 @@ from services.sprint_data_service import (
 # ═════════════════════════════════════════════════════════════════════════════
 
 @st.cache_resource(ttl=300)
-def _get_service() -> SprintDataService:
-    return SprintDataService()
+def _get_service(user_id: int = None, company_id: int = None) -> SprintDataService:
+    return SprintDataService(user_id=user_id, company_id=company_id)
 
 
 @st.cache_data(ttl=300)
-def _fetch_boards(project_key: str):
-    return _get_service().get_boards(project_key)
+def _fetch_boards(project_key: str, user_id: int = None):
+    return _get_service(user_id=user_id).get_boards(project_key)
 
 
 @st.cache_data(ttl=300)
-def _fetch_sprints(board_id: int, state: str):
-    return _get_service().get_sprints(board_id, state)
+def _fetch_sprints(board_id: int, state: str, user_id: int = None):
+    return _get_service(user_id=user_id).get_sprints(board_id, state)
 
 
 @st.cache_data(ttl=300)
-def _fetch_sprint_issues(sprint_id: int):
-    svc = _get_service()
+def _fetch_sprint_issues(sprint_id: int, user_id: int = None):
+    svc = _get_service(user_id=user_id)
     return svc.jira.get_sprint_issues_full(sprint_id)
+
+
+def _get_user_id() -> int | None:
+    from utils.auth.auth_manager import get_auth_info
+    auth = get_auth_info()
+    return auth.get('user_id') if auth.get('role') == 'user' else None
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -59,18 +65,19 @@ def _fetch_sprint_issues(sprint_id: int):
 def render_sprint_report():
     st.title("📈 Sprint Monitoring Dashboard")
 
-    svc = _get_service()
+    _uid = _get_user_id()
+    svc = _get_service(user_id=_uid)
 
     # ── SIDEBAR — Sprint tanlash ────────────────────────────────────────
     with st.sidebar:
         st.subheader("🎯 Sprint tanlash")
 
         project_key = st.text_input("Loyiha kaliti", value="DEV")
-        boards = _fetch_boards(project_key)
+        boards = _fetch_boards(project_key, _uid)
 
         if not boards:
             st.warning("Board topilmadi. JIRA ulanishini tekshiring.")
-            st.info("💡 `.env` dagi JIRA_SERVER, JIRA_EMAIL, JIRA_API_TOKEN ni tekshiring")
+            st.info("💡 Sozlamalar → API Kalitlar bo'limini tekshiring")
             return
 
         board_names = {b['name']: b['id'] for b in boards}
@@ -78,7 +85,7 @@ def render_sprint_report():
         board_id = board_names[selected_board_name]
 
         sprint_state = st.selectbox("Sprint holati", ['active,closed', 'active', 'closed', 'future'])
-        sprints = _fetch_sprints(board_id, sprint_state)
+        sprints = _fetch_sprints(board_id, sprint_state, _uid)
 
         if not sprints:
             st.warning("Sprint topilmadi.")
@@ -98,7 +105,7 @@ def render_sprint_report():
         st.caption("SP / kun (ish kuni = 8 soat)")
 
         # Sprint yuklash (cached)
-        issues_raw = _fetch_sprint_issues(selected_sprint['id'])
+        issues_raw = _fetch_sprint_issues(selected_sprint['id'], _uid)
         svc.load_sprint(selected_sprint, issues_raw)
 
         dev_names = sorted(set(
@@ -152,7 +159,7 @@ def render_sprint_report():
     with tab5:
         _render_qa_testing(svc)
     with tab6:
-        _render_sprint_comparison(svc, board_id)
+        _render_sprint_comparison(svc, board_id, user_id=_uid)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -573,10 +580,10 @@ def _render_qa_testing(svc: SprintDataService):
 # TAB 6 — SPRINT COMPARISON
 # ═════════════════════════════════════════════════════════════════════════════
 
-def _render_sprint_comparison(svc: SprintDataService, board_id: int):
+def _render_sprint_comparison(svc: SprintDataService, board_id: int, user_id: int = None):
     st.markdown("### Sprintlarni taqqoslash")
 
-    all_sprints = _fetch_sprints(board_id, 'active,closed')
+    all_sprints = _fetch_sprints(board_id, 'active,closed', user_id)
     if len(all_sprints) < 2:
         st.info("Taqqoslash uchun kamida 2 ta sprint kerak.")
         return
@@ -597,8 +604,8 @@ def _render_sprint_comparison(svc: SprintDataService, board_id: int):
     summaries = []
     for name in selected_names:
         sp_meta = sprint_options[name]
-        temp_svc = SprintDataService()
-        temp_issues = _fetch_sprint_issues(sp_meta['id'])
+        temp_svc = SprintDataService(user_id=user_id)
+        temp_issues = _fetch_sprint_issues(sp_meta['id'], user_id)
         temp_svc.load_sprint(sp_meta, temp_issues)
         # Kapasitetlarni joriy sprint dan olish
         temp_svc.set_dev_capacities({d: c.velocity_per_day for d, c in svc.dev_capacities.items()})

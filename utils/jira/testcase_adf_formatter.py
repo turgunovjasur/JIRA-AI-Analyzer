@@ -98,6 +98,9 @@ class TestcaseADFFormatter(BaseADFFormatter):
         """
         content = []
 
+        # ━━━ AI MARKER (comment ajratish uchun) ━━━
+        content.append(self._paragraph([self._text_node("[AI_S2]")]))
+
         # ━━━ HEADER ━━━
         content.append(self._heading("🧪 Test Cases", 2))
         content.append(self._rule())
@@ -265,6 +268,7 @@ class TestcaseADFFormatter(BaseADFFormatter):
         """
         lines = []
 
+        lines.append("[AI_S2]")
         lines.append("🧪 *Avtomatik Test Case'lar*")
         lines.append("----")
         lines.append(f"*Task:* {task_key}")
@@ -331,6 +335,7 @@ class TestcaseADFFormatter(BaseADFFormatter):
     ) -> Dict:
         """Xatolik uchun ADF document"""
         content = [
+            self._paragraph([self._text_node("[AI_S2]")]),
             self._heading("⚠️ Test Case Yaratishda Xatolik", 2),
             self._rule(),
             self._paragraph([

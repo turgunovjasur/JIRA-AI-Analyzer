@@ -24,15 +24,15 @@ log = get_logger("jira.status")
 class JiraStatusManager:
     """Jira task statusini boshqarish"""
 
-    def __init__(self):
+    def __init__(self, server: str = None, email: str = None, token: str = None):
         """JIRA client yaratish"""
+        _server = server or os.getenv('JIRA_SERVER', 'https://smartupx.atlassian.net')
+        _email  = email  or os.getenv('JIRA_EMAIL')
+        _token  = token  or os.getenv('JIRA_API_TOKEN')
         try:
             self.jira = JIRA(
-                server=os.getenv('JIRA_SERVER', 'https://smartupx.atlassian.net'),
-                basic_auth=(
-                    os.getenv('JIRA_EMAIL'),
-                    os.getenv('JIRA_API_TOKEN')
-                )
+                server=_server,
+                basic_auth=(_email, _token)
             )
         except Exception as e:
             log.log_error("SYSTEM", "JIRA initialization", str(e))
