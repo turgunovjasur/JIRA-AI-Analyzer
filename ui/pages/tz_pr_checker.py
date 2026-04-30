@@ -115,7 +115,10 @@ def _run_analysis(task_key: str):
 
     # Progress Manager
     with progress_container:
-        progress = ProgressManager(total_steps=PROGRESS_STEPS)
+        progress = ProgressManager(
+            total_steps=PROGRESS_STEPS,
+            step_labels=["JIRA ma'lumot", "PR qidirish", "AI tahlil", "Natija"],
+        )
 
     try:
         # Service import
@@ -202,14 +205,15 @@ def _create_status_callback(progress: ProgressManager) -> Callable:
 
 def _detect_progress_step(message: str) -> int:
     """Message'dan progress step'ni aniqlash"""
-    if "TZ olinmoqda" in message:
+    m = message.lower()
+    if "jira" in m or "ma'lumot" in m:
         return 1
-    elif "PR" in message and "qidiril" in message:
+    elif "pr" in m or "github" in m:
         return 2
-    elif "PR" in message and "tahlil" in message:
-        return 2
-    elif "AI tahlil" in message:
+    elif "ai" in m or "gemini" in m or "tahlil qilinmoqda" in m:
         return 3
+    elif "natija" in m:
+        return 4
     return 1
 
 

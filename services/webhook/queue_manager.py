@@ -80,10 +80,10 @@ async def _wait_for_ai_slot(task_key: str) -> None:
     _ai_last_call_time = time.time()
 
 
-async def _write_timeout_error_comment(task_key: str, timeout_seconds: int) -> None:
+async def _write_timeout_error_comment(task_key: str, timeout_seconds: int, company_id: int = None) -> None:
     """Queue timeout bo'lganda JIRA'ga xabar yozish (error_handler ga delegate)."""
     from services.webhook.error_handler import _write_timeout_error_comment as _write
-    await _write(task_key, timeout_seconds)
+    await _write(task_key, timeout_seconds, company_id=company_id)
 
 
 async def _run_task_group(task_key: str, new_status: str, company_id: int = None) -> None:
@@ -141,7 +141,7 @@ async def _run_task_group(task_key: str, new_status: str, company_id: int = None
     except asyncio.TimeoutError:
         log.queue_timeout(task_key, timeout)
         mark_blocked(task_key, f"Queue timeout: {timeout}s", retry_minutes=5)
-        await _write_timeout_error_comment(task_key, timeout)
+        await _write_timeout_error_comment(task_key, timeout, company_id=company_id)
         return
 
     try:
@@ -204,7 +204,7 @@ async def _queued_check_tz_pr(task_key: str, new_status: str, company_id: int = 
     except asyncio.TimeoutError:
         log.queue_timeout(task_key, timeout)
         mark_blocked(task_key, f"Queue timeout: {timeout}s", retry_minutes=5)
-        await _write_timeout_error_comment(task_key, timeout)
+        await _write_timeout_error_comment(task_key, timeout, company_id=company_id)
         return
 
     try:

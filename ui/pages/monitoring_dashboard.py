@@ -15,6 +15,7 @@ from datetime import datetime
 import os
 
 from ui.components import render_header
+from utils.auth.auth_manager import is_super_admin, get_auth_info
 
 
 def render_monitoring_dashboard():
@@ -67,6 +68,13 @@ def render_monitoring_dashboard():
 
     st.markdown("---")
 
+    # Foydalanuvchi kompaniyasini aniqlash
+    # Super admin → None (barcha kompaniyalar), user → o'z company_id
+    if is_super_admin():
+        company_id = None
+    else:
+        company_id = get_auth_info().get('company_id')
+
     # DB dan ma'lumotlar olish
     try:
         conn = sqlite3.connect(db_path, timeout=30.0)
@@ -76,7 +84,7 @@ def render_monitoring_dashboard():
         conn.execute("PRAGMA synchronous=FULL")
 
         # 1. UMUMIY STATISTIKA
-        _render_overall_stats(conn)
+        _render_overall_stats(conn, company_id)
 
         st.markdown("---")
 
@@ -84,30 +92,30 @@ def render_monitoring_dashboard():
         col1, col2 = st.columns(2)
 
         with col1:
-            _render_task_status_chart(conn)
+            _render_task_status_chart(conn, company_id)
 
         with col2:
-            _render_service_status_chart(conn)
+            _render_service_status_chart(conn, company_id)
 
         st.markdown("---")
 
         # 3. SO'NGGI TASKLAR (Table)
-        _render_recent_tasks_table(conn)
+        _render_recent_tasks_table(conn, company_id)
 
         st.markdown("---")
 
         # 4. XATOLIKLAR (Error Log)
-        _render_errors_log(conn)
+        _render_errors_log(conn, company_id)
 
         st.markdown("---")
 
         # 5. BLOCKED TASKLAR
-        _render_blocked_tasks(conn)
+        _render_blocked_tasks(conn, company_id)
 
         st.markdown("---")
 
         # 6. TASK O'CHIRISH
-        _render_task_delete(conn, db_path)
+        _render_task_delete(conn, db_path, company_id)
 
         conn.close()
 
@@ -116,13 +124,20 @@ def render_monitoring_dashboard():
         st.exception(e)
 
 
-def _render_overall_stats(conn: sqlite3.Connection):
+def _where(company_id) -> tuple:
+    """SQL WHERE qismi va parametrlarni qaytaradi."""
+    if company_id is None:
+        return "", []
+    return "WHERE company_id = ?", [company_id]
+
+
+def _render_overall_stats(conn: sqlite3.Connection, company_id):
     """Umumiy statistika - Metrikalar"""
 
     st.markdown("### 📈 Umumiy Statistika")
 
-    # Query
-    query = """
+    w, params = _where(company_id)
+    query = f"""
     SELECT
         COUNT(*) as total_tasks,
         SUM(CASE WHEN task_status = 'completed' THEN 1 ELSE 0 END) as completed,
@@ -133,10 +148,10 @@ def _render_overall_stats(conn: sqlite3.Connection):
         SUM(CASE WHEN skip_detected = 1 THEN 1 ELSE 0 END) as skipped,
         AVG(compliance_score) as avg_compliance,
         SUM(return_count) as total_returns
-    FROM task_processing
+    FROM task_processing {w}
     """
 
-    df = pd.read_sql_query(query, conn)
+    df = pd.read_sql_query(query, conn, params=params)
 
     if df.empty or df['total_tasks'].iloc[0] == 0:
         st.info("📭 Hozircha task yo'q. Webhook ishlagandan keyin ma'lumotlar ko'rinadi.")
@@ -202,20 +217,21 @@ def _render_overall_stats(conn: sqlite3.Connection):
         st.metric("⏭️ Skipped", skipped)
 
 
-def _render_task_status_chart(conn: sqlite3.Connection):
+def _render_task_status_chart(conn: sqlite3.Connection, company_id):
     """Task holatlari Pie Chart"""
 
     st.markdown("#### 📊 Task Holatlari")
 
-    query = """
+    w, params = _where(company_id)
+    query = f"""
     SELECT
         task_status,
         COUNT(*) as count
-    FROM task_processing
+    FROM task_processing {w}
     GROUP BY task_status
     """
 
-    df = pd.read_sql_query(query, conn)
+    df = pd.read_sql_query(query, conn, params=params)
 
     if df.empty:
         st.info("📭 Ma'lumot yo'q")
@@ -256,21 +272,22 @@ def _render_task_status_chart(conn: sqlite3.Connection):
     st.plotly_chart(fig, width='stretch')
 
 
-def _render_service_status_chart(conn: sqlite3.Connection):
+def _render_service_status_chart(conn: sqlite3.Connection, company_id):
     """Servis holatlari (Service1 + Service2)"""
 
     st.markdown("#### 🔧 Servis Holatlari")
 
-    query = """
+    w, params = _where(company_id)
+    query = f"""
     SELECT
         service1_status,
         service2_status,
         COUNT(*) as count
-    FROM task_processing
+    FROM task_processing {w}
     GROUP BY service1_status, service2_status
     """
 
-    df = pd.read_sql_query(query, conn)
+    df = pd.read_sql_query(query, conn, params=params)
 
     if df.empty:
         st.info("📭 Ma'lumot yo'q")
@@ -317,16 +334,14 @@ def _render_service_status_chart(conn: sqlite3.Connection):
                 st.warning(f"⏭️ Skip: {count}")
 
 
-def _render_recent_tasks_table(conn: sqlite3.Connection):
+def _render_recent_tasks_table(conn: sqlite3.Connection, company_id):
     """Barcha tasklar jadvali - task_status filter bilan"""
 
     st.markdown("### 📋 Barcha Tasklar")
 
-    # Filter bo'yicha
     col1, col2 = st.columns([3, 1])
 
     with col1:
-        # Task status filter
         status_options = ['Barchasi', 'completed', 'progressing', 'returned', 'error', 'blocked', 'none']
         selected_status = st.selectbox(
             "📊 Status bo'yicha filter:",
@@ -336,43 +351,27 @@ def _render_recent_tasks_table(conn: sqlite3.Connection):
         )
 
     with col2:
-        st.write("")  # Spacing
-        st.write("")  # Spacing
+        st.write("")
+        st.write("")
 
-    # Query - filter asosida
-    if selected_status == 'Barchasi':
-        query = """
-        SELECT
-            task_id,
-            task_status,
-            service1_status,
-            service2_status,
-            compliance_score,
-            return_count,
-            skip_detected,
-            last_processed_at,
-            updated_at
-        FROM task_processing
-        ORDER BY updated_at DESC
-        """
-    else:
-        query = f"""
-        SELECT
-            task_id,
-            task_status,
-            service1_status,
-            service2_status,
-            compliance_score,
-            return_count,
-            skip_detected,
-            last_processed_at,
-            updated_at
-        FROM task_processing
-        WHERE task_status = '{selected_status}'
-        ORDER BY updated_at DESC
-        """
+    base_cols = """
+        task_id, task_status, service1_status, service2_status,
+        compliance_score, return_count, skip_detected, last_processed_at, updated_at
+    """
 
-    df = pd.read_sql_query(query, conn)
+    conditions = []
+    params = []
+    if company_id is not None:
+        conditions.append("company_id = ?")
+        params.append(company_id)
+    if selected_status != 'Barchasi':
+        conditions.append("task_status = ?")
+        params.append(selected_status)
+
+    where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    query = f"SELECT {base_cols} FROM task_processing {where_clause} ORDER BY updated_at DESC"
+
+    df = pd.read_sql_query(query, conn, params=params)
 
     if df.empty:
         st.info(f"📭 {selected_status} statusda task yo'q")
@@ -420,12 +419,14 @@ def _render_recent_tasks_table(conn: sqlite3.Connection):
     )
 
 
-def _render_errors_log(conn: sqlite3.Connection):
+def _render_errors_log(conn: sqlite3.Connection, company_id):
     """Xatoliklar logi"""
 
     st.markdown("### ❌ Xatoliklar Logi")
 
-    query = """
+    cid_clause = "AND company_id = ?" if company_id is not None else ""
+    params = [company_id] if company_id is not None else []
+    query = f"""
     SELECT
         task_id,
         task_status,
@@ -434,14 +435,15 @@ def _render_errors_log(conn: sqlite3.Connection):
         service2_error,
         updated_at
     FROM task_processing
-    WHERE error_message IS NOT NULL
+    WHERE (error_message IS NOT NULL
        OR service1_error IS NOT NULL
-       OR service2_error IS NOT NULL
+       OR service2_error IS NOT NULL)
+    {cid_clause}
     ORDER BY updated_at DESC
     LIMIT 10
     """
 
-    df = pd.read_sql_query(query, conn)
+    df = pd.read_sql_query(query, conn, params=params)
 
     if df.empty:
         st.success("✅ Xatoliklar yo'q!")
@@ -462,12 +464,14 @@ def _render_errors_log(conn: sqlite3.Connection):
                 st.error(f"**Service2 Error:** {row['service2_error']}")
 
 
-def _render_blocked_tasks(conn: sqlite3.Connection):
+def _render_blocked_tasks(conn: sqlite3.Connection, company_id):
     """Blocked tasklar bo'limi"""
 
     st.markdown("### 🔒 Blocked Tasklar")
 
-    query = """
+    cid_clause = "AND company_id = ?" if company_id is not None else ""
+    params = [company_id] if company_id is not None else []
+    query = f"""
     SELECT
         task_id,
         service1_status,
@@ -478,10 +482,11 @@ def _render_blocked_tasks(conn: sqlite3.Connection):
         updated_at
     FROM task_processing
     WHERE task_status = 'blocked'
+    {cid_clause}
     ORDER BY blocked_retry_at ASC
     """
 
-    df = pd.read_sql_query(query, conn)
+    df = pd.read_sql_query(query, conn, params=params)
 
     if df.empty:
         st.success("✅ Blocked tasklar yo'q!")
@@ -511,7 +516,7 @@ def _render_blocked_tasks(conn: sqlite3.Connection):
             st.markdown(f"**Qayta ishlash vaqti:** {retry_at} {remaining}")
 
 
-def _render_task_delete(conn: sqlite3.Connection, db_path: str):
+def _render_task_delete(conn: sqlite3.Connection, db_path: str, company_id):
     """Task o'chirish funksiyasi"""
 
     st.markdown("### 🗑️ Task O'chirish")
@@ -574,7 +579,16 @@ def _render_task_delete(conn: sqlite3.Connection, db_path: str):
                 check_conn = sqlite3.connect(db_path, timeout=30.0)
                 check_conn.row_factory = sqlite3.Row
                 cursor = check_conn.cursor()
-                cursor.execute("SELECT task_id, task_status, service1_status, service2_status FROM task_processing WHERE task_id = ?", (task_key,))
+                if company_id is not None:
+                    cursor.execute(
+                        "SELECT task_id, task_status, service1_status, service2_status FROM task_processing WHERE task_id = ? AND company_id = ?",
+                        (task_key, company_id)
+                    )
+                else:
+                    cursor.execute(
+                        "SELECT task_id, task_status, service1_status, service2_status FROM task_processing WHERE task_id = ?",
+                        (task_key,)
+                    )
                 task = cursor.fetchone()
 
                 if not task:

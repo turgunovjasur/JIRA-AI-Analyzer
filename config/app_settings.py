@@ -762,14 +762,13 @@ def get_app_settings_for_company(company_id: int) -> AppSettings:
     base = get_app_settings(force_reload=False)
 
     try:
-        from utils.auth.auth_db import get_company_webhook_module_settings, get_company_webhook_config
+        from utils.auth.auth_db import get_company_webhook_module_settings
         company_wh = get_company_webhook_module_settings(company_id)
-        company_cfg = get_company_webhook_config(company_id)
     except Exception:
         return base
 
     if not company_wh:
-        company_wh = {}
+        return base
 
     def _merge(base_obj, override_dict: dict):
         if not override_dict:
@@ -784,20 +783,12 @@ def get_app_settings_for_company(company_id: int) -> AppSettings:
         except Exception:
             return base_obj
 
-    # webhook_tz_pr: module settings dan merge, keyin eski company_settings kolonlaridan fallback
-    tz_pr_wh_dict = dict(company_wh.get('webhook_tz_pr', {}))
-    if company_cfg:
-        if 'allowed_issue_types' not in tz_pr_wh_dict and company_cfg.get('webhook_allowed_issue_types'):
-            tz_pr_wh_dict['allowed_issue_types'] = company_cfg['webhook_allowed_issue_types']
-        if 'excluded_assignees' not in tz_pr_wh_dict and company_cfg.get('webhook_excluded_assignees'):
-            tz_pr_wh_dict['excluded_assignees'] = company_cfg['webhook_excluded_assignees']
-
     return AppSettings(
         modules=base.modules,
         bug_analyzer=base.bug_analyzer,
         statistics=base.statistics,
         tz_pr_checker=base.tz_pr_checker,
-        webhook_tz_pr=_merge(base.webhook_tz_pr,       tz_pr_wh_dict),
+        webhook_tz_pr=_merge(base.webhook_tz_pr,       company_wh.get('webhook_tz_pr', {})),
         testcase_generator=base.testcase_generator,
         webhook_testcase=_merge(base.webhook_testcase, company_wh.get('webhook_testcase', {})),
         queue=_merge(base.queue,                       company_wh.get('queue', {})),

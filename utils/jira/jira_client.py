@@ -58,6 +58,21 @@ class JiraClient:
             return issue
         except Exception as e:
             print(f"❌ Issue olishda xatolik: {e}")
+            # Auth xatosini aniqlab, tushunarli xabar qaytarish
+            resp = getattr(e, 'response', None)
+            status = getattr(e, 'status_code', None)
+            is_auth_fail = (
+                status in (401, 403)
+                or (
+                    resp is not None
+                    and getattr(resp, 'headers', {}).get('X-Seraph-Loginreason') == 'AUTHENTICATED_FAILED'
+                )
+            )
+            if is_auth_fail:
+                raise RuntimeError(
+                    f"JIRA autentifikatsiya xatosi. "
+                    f"JIRA Email va API Token ni tekshiring (Sozlamalar → API Kalitlar)."
+                ) from e
             return None
 
     def get_task_details(self, issue_key: str) -> Optional[Dict]:
@@ -146,7 +161,8 @@ class JiraClient:
                     'file_key': link.file_key,
                     'name': link.name,
                     'source': link.source,
-                    'author': link.author
+                    'author': link.author,
+                    'node_id': link.node_id
                 }
                 for link in figma_links_objs
             ]

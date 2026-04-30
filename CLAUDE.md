@@ -55,7 +55,8 @@ JIRA webhook → jira_webhook_handler.py (orchestrator)
 | `utils/jira/jira_status_manager.py` | JIRA task status o'zgartirish |
 | `utils/jira/jira_adf_formatter.py` | S1 uchun ADF document builder |
 | `utils/jira/testcase_adf_formatter.py` | S2 uchun ADF document builder |
-| `utils/ai/gemini_helper.py` | Gemini AI (multi-key fallback, retry) |
+| `utils/ai/gemini_helper.py` | Gemini AI (multi-key fallback, model fallback, retry) |
+| `ui/components/loading.py` | ProgressManager — animatsiyali step-by-step progress (JS timer) |
 | `utils/github/github_client.py` | GitHub PR API |
 | `utils/pr_cache.py` | Jarayon ichida PR ma'lumotlari keshi |
 | `config/app_settings.py` | Barcha sozlamalar (dataclass-based, JSON) |
@@ -179,15 +180,25 @@ Shuning uchun Servis-2 da is_recheck / dev_objections webhook logikasi kerak ema
 
 ---
 
-## Gemini AI xato turlari
+## Gemini AI xato turlari va model fallback
 
-**Transient (bir xil kalit bilan retry):**
-503, 500, 502, 504 — backoff: 5s → 10s → 20s
+**Transient (bir xil kalit bilan retry, kalit freeze EMAS):**
+503, 500, 502, 504, unavailable, high demand — backoff: 5s → 10s → 20s
 
-**Permanent (kalit freeze, keyingisi):**
-429, 403, quota exceeded — freeze duration: 10 min (sozlanadi)
+**Model fallback (transient retry tugagach):**
+`.env` da `GEMINI_FALLBACK_MODEL` belgilangan bo'lsa, asosiy model (Pro) barcha retrydan o'tib ham 503 bersa → fallback model (Flash) bilan yana 3 marta urinadi.
+```
+GEMINI_MODEL=gemini-2.5-pro
+GEMINI_FALLBACK_MODEL=gemini-2.5-flash
+```
+
+**Permanent (kalit freeze, keyingi kalitga o'tish):**
+429, 403, quota exceeded, billing — freeze duration: 10 min (sozlanadi)
 
 **Barcha kalitlar freeze:** RuntimeError → WARN_AI_TIMEOUT → BLOCKED
+
+**Strategy fallback (tz_pr_checker):**
+503/unavailable xatoda Strategy 2 va 3 o'tkazib yuboriladi — diff hajmini kamaytirish server overloadga yordam bermaydi.
 
 ---
 
@@ -242,6 +253,33 @@ Webhook kelganda project key orqali kompaniya topiladi (DEV → kompaniya).
 - v5 — return_reason (2026-04-28)
 
 Yangi ustun qo'shilganda: CREATE TABLE ga + `_migrate_db_vN()` + chaqiruv joyiga.
+
+---
+
+## UI Progress animatsiyasi (`ui/components/loading.py`)
+
+`ProgressManager` — barcha AI sahifalarida ishlatiladigan animatsiyali progress widget.
+
+```python
+progress = ProgressManager(
+    total_steps=4,
+    step_labels=["JIRA ma'lumot", "PR qidirish", "AI tahlil", "Natija"]
+)
+progress.update(1, "JIRA task olinmoqda...")   # step ko'rsatadi
+progress.update(3, "AI tahlil qilinmoqda...")  # oldingi steplar ✓ bo'ladi
+progress.clear()
+```
+
+- `st.components.v1.html()` ishlatadi → JavaScript timer (real-time sekundomer)
+- Har step: ✓ yashil (bajarildi) / ↻ aylanuvchi (jarayonda) / raqam kulrang (kutilmoqda)
+- Qadamlar orasida chiziq rangi: yashil → gradient → kulrang
+
+**Servislar `update_status("progress", msg)` chaqirishi shart:**
+- `testcase_generator.py` — JIRA olish, TZ tahlil, AI chaqirishdan oldin
+- `tz_pr_checker.py` — AI chaqirishdan oldin
+- `pr_helper.py` — PR tahlil bosqichida (mavjud)
+
+Sahifa callbacklari `msg.lower()` orqali qaysi stepga tegishliligini aniqlaydi.
 
 ---
 

@@ -30,6 +30,11 @@ from utils.auth.auth_db import (
     verify_password,
     parse_username,
     validate_username_format,
+    get_login_attempt_state,
+    record_failed_login,
+    reset_login_attempts,
+    MAX_LOGIN_ATTEMPTS,
+    LOCKOUT_SECONDS,
 )
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -107,12 +112,25 @@ def get_user_name() -> str | None:
 # LOGIN / LOGOUT
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+def _lockout_message(seconds_remaining: int) -> str:
+    mins = seconds_remaining // 60
+    secs = seconds_remaining % 60
+    return f"Hisob vaqtincha bloklangan. {mins}:{secs:02d} dan keyin urinib ko'ring."
+
+
+def _attempts_left_message(failed_count: int) -> str:
+    remaining = MAX_LOGIN_ATTEMPTS - failed_count
+    return f" ({remaining} ta urinish qoldi)"
+
+
 def login(full_username: str, password: str) -> tuple[bool, str]:
     """
     Tizimga kirish.
 
     full_username == _SUPER_USERNAME  → super admin login (.env dan tekshiradi)
     full_username == "olim@smartup"   → user login (DB dan tekshiradi)
+
+    5 marta noto'g'ri kiritilsa → 5 daqiqa blok (DB ga saqlanadi).
 
     Returns:
         (success: bool, error_message: str)
@@ -124,9 +142,16 @@ def login(full_username: str, password: str) -> tuple[bool, str]:
 
     username_clean = full_username.strip()
 
-    # Super admin tekshiruvi (@ belgisi bo'lmagan holat)
+    # ── Super admin ──────────────────────────────────────────────────────────
     if username_clean.lower() == _SUPER_USERNAME.lower():
+        identifier = _SUPER_USERNAME.lower()
+
+        state = get_login_attempt_state(identifier)
+        if state['is_locked']:
+            return False, _lockout_message(state['seconds_remaining'])
+
         if _check_super_admin(username_clean, password):
+            reset_login_attempts(identifier)
             st.session_state['auth'] = {
                 'logged_in': True,
                 'role': 'super_admin',
@@ -137,9 +162,13 @@ def login(full_username: str, password: str) -> tuple[bool, str]:
                 'company_name': 'Super Admin',
             }
             return True, ""
-        return False, "Login yoki parol noto'g'ri"
 
-    # User login: "olim@smartup" formati tekshirish
+        new_state = record_failed_login(identifier)
+        if new_state['is_locked']:
+            return False, f"Hisob {LOCKOUT_SECONDS // 60} daqiqaga bloklandi."
+        return False, "Login yoki parol noto'g'ri." + _attempts_left_message(new_state['failed_count'])
+
+    # ── Oddiy user ───────────────────────────────────────────────────────────
     if not validate_username_format(username_clean):
         return False, "Login formati noto'g'ri. Masalan: olim@smartup"
 
@@ -147,11 +176,20 @@ def login(full_username: str, password: str) -> tuple[bool, str]:
     if not user:
         return False, "Foydalanuvchi topilmadi"
 
+    identifier = username_clean.lower()
+
+    state = get_login_attempt_state(identifier)
+    if state['is_locked']:
+        return False, _lockout_message(state['seconds_remaining'])
+
     if not user.get('is_active', 0):
         return False, "Hisobingiz faol emas. Admin bilan bog'laning."
 
     if not verify_password(password, user['password_hash']):
-        return False, "Parol noto'g'ri"
+        new_state = record_failed_login(identifier)
+        if new_state['is_locked']:
+            return False, f"Hisob {LOCKOUT_SECONDS // 60} daqiqaga bloklandi."
+        return False, "Parol noto'g'ri." + _attempts_left_message(new_state['failed_count'])
 
     # Kompaniya ma'lumotlarini yuklash
     company = get_company_by_id(user['company_id'])
@@ -161,7 +199,7 @@ def login(full_username: str, password: str) -> tuple[bool, str]:
     if not company.get('is_active', 0):
         return False, "Kompaniyangiz faol emas. Admin bilan bog'laning."
 
-    # Faqat username qismini (company_code siz) olish
+    reset_login_attempts(identifier)
     user_part, _ = parse_username(username_clean)
 
     st.session_state['auth'] = {
@@ -181,5 +219,8 @@ def logout():
     _init_session()
     st.session_state['auth'] = dict(_EMPTY_SESSION)
     for key in ['show_settings', 'show_monitoring', 'show_sprint_report',
-                'selected_page', 'settings_changed']:
+                'selected_page', 'settings_changed', 'company_modules',
+                'figma_rows', 'wh_figma_rows', 'uc_figma_rows',
+                'delete_confirm_task', 'delete_success', 'delete_task_key',
+                'delete_task_key_input_counter', 'custom_template', 'login_error']:
         st.session_state.pop(key, None)

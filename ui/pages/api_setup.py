@@ -63,7 +63,6 @@ def render_api_setup():
         # ━━━ Progress indikator ━━━
         jira_done   = bool(uc.get('jira_email') and uc.get('jira_token') and uc.get('jira_project_keys'))
         github_done = bool(uc.get('github_token'))
-        gemini_done = bool(uc.get('gemini_api_key_1'))
 
         def _badge(done, label):
             bg  = 'rgba(54,179,126,0.15)' if done else 'rgba(255,86,48,0.1)'
@@ -77,7 +76,10 @@ def render_api_setup():
         <div style="display:flex; gap:0.5rem; margin-bottom:1.5rem;">
             {_badge(jira_done,   'JIRA')}
             {_badge(github_done, 'GitHub')}
-            {_badge(gemini_done, 'Gemini AI')}
+            <div style="flex:1; padding:0.5rem; border-radius:8px; text-align:center;
+                        background:rgba(88,166,255,0.08); border:1px solid rgba(88,166,255,0.2);">
+                <span style="font-size:0.8rem; color:#58a6ff;">🔵 Gemini (ixtiyoriy)</span>
+            </div>
             <div style="flex:1; padding:0.5rem; border-radius:8px; text-align:center;
                         background:rgba(88,166,255,0.08); border:1px solid rgba(88,166,255,0.2);">
                 <span style="font-size:0.8rem; color:#58a6ff;">🔵 Figma (ixtiyoriy)</span>
@@ -144,42 +146,63 @@ def render_api_setup():
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # ━━━ Gemini AI ━━━
-        st.markdown("""
-        <div style="background:rgba(22,27,34,0.7); border:1px solid rgba(48,54,61,0.8);
-                    border-radius:12px; padding:1.5rem; margin-bottom:1rem;">
-        <h4 style="color:#f78166; margin:0 0 1rem 0;">🤖 Google Gemini AI — Majburiy</h4>
-        """, unsafe_allow_html=True)
-
-        gemini_key_1 = st.text_input(
-            "Gemini API Key *",
-            value=uc.get('gemini_api_key_1', ''),
-            type="password",
-            placeholder="AIzaSy...",
-            key="setup_gemini_1",
-            help="Google AI Studio (aistudio.google.com) → Get API Key → Create API key"
-        )
-        gemini_key_2 = st.text_input(
-            "Gemini API Key (zaxira, ixtiyoriy)",
-            value=uc.get('gemini_api_key_2', ''),
-            type="password",
-            placeholder="AIzaSy...",
-            key="setup_gemini_2",
-            help="Birinchi kalit limitga tushsa avtomatik ishlatiladi"
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
+        # ━━━ Gemini AI (ixtiyoriy) ━━━
+        with st.expander("🤖 Google Gemini AI — Ixtiyoriy (tizim default kalitidan foydalanadi)"):
+            st.caption("Bo'sh qoldirsangiz, tizim admin tomonidan sozlangan default kalit va model ishlatiladi.")
+            gemini_key_1 = st.text_input(
+                "Gemini API Key (o'zingizniki)",
+                value=uc.get('gemini_api_key_1', ''),
+                type="password",
+                placeholder="AIzaSy...",
+                key="setup_gemini_1",
+                help="Google AI Studio (aistudio.google.com) → Get API Key"
+            )
+            gemini_key_2 = st.text_input(
+                "Gemini API Key (zaxira)",
+                value=uc.get('gemini_api_key_2', ''),
+                type="password",
+                placeholder="AIzaSy...",
+                key="setup_gemini_2",
+                help="Ixtiyoriy: birinchi kalit limitga tushsa ishlatiladi"
+            )
+            gemini_model = st.text_input(
+                "Gemini model nomi",
+                value=uc.get('gemini_model', ''),
+                placeholder="gemini-2.5-pro",
+                key="setup_gemini_model",
+                help="Bo'sh qoldirsangiz tizim default modeli ishlatiladi"
+            )
 
         # ━━━ Figma (ixtiyoriy) ━━━
-        figma_token = uc.get('figma_token', '')
+        import json as _json
+        _loaded_tokens = uc.get('figma_tokens', [])
+        if isinstance(_loaded_tokens, str):
+            try:
+                _loaded_tokens = _json.loads(_loaded_tokens) if _loaded_tokens else []
+            except Exception:
+                _loaded_tokens = []
+        if 'figma_rows' not in st.session_state:
+            st.session_state['figma_rows'] = _loaded_tokens if _loaded_tokens else [{'name': '', 'token': ''}]
+
         with st.expander("🎨 Figma — Ixtiyoriy"):
-            figma_token = st.text_input(
-                "Figma Access Token",
-                value=figma_token,
-                type="password",
-                placeholder="figd_xxxx...",
-                key="setup_figma_token",
-                help="Figma → Account Settings → Personal Access Tokens"
-            )
+            st.caption("Har bir Biznes Analitik uchun alohida token kiriting")
+            rows = st.session_state['figma_rows']
+            for i in range(len(rows)):
+                c1, c2, c3 = st.columns([2, 4, 1])
+                with c1:
+                    st.text_input("Ism", value=rows[i].get('name', ''),
+                                  key=f"figma_n_{i}", placeholder="BA Jasur")
+                with c2:
+                    st.text_input("Token", value=rows[i].get('token', ''),
+                                  type="password", key=f"figma_t_{i}", placeholder="figd_xxx...")
+                with c3:
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    if st.button("✕", key=f"figma_del_{i}"):
+                        st.session_state['figma_rows'].pop(i)
+                        st.rerun()
+            if st.button("＋ Token qo'shish", key="figma_add"):
+                st.session_state['figma_rows'].append({'name': '', 'token': ''})
+                st.rerun()
 
         st.markdown("<br>", unsafe_allow_html=True)
 
@@ -200,13 +223,18 @@ def render_api_setup():
                     errors.append("JIRA Project Key(lar) kiritilishi shart (masalan: DEV)")
                 if not github_token.strip():
                     errors.append("GitHub Token kiritilishi shart")
-                if not gemini_key_1.strip():
-                    errors.append("Gemini API Key kiritilishi shart")
 
                 if errors:
                     st.session_state['setup_error'] = " | ".join(errors)
                     st.rerun()
                 else:
+                    _rows = st.session_state.get('figma_rows', [])
+                    _figma_tokens = [
+                        {'name': st.session_state.get(f"figma_n_{i}", '').strip(),
+                         'token': st.session_state.get(f"figma_t_{i}", '').strip()}
+                        for i in range(len(_rows))
+                        if st.session_state.get(f"figma_t_{i}", '').strip()
+                    ]
                     new_creds = {
                         'jira_server':        jira_server.strip(),
                         'jira_email':         jira_email.strip(),
@@ -214,11 +242,20 @@ def render_api_setup():
                         'jira_project_keys':  jira_project_keys.strip(),
                         'github_token':       github_token.strip(),
                         'github_org':         github_org.strip(),
-                        'figma_token':        figma_token.strip(),
+                        'figma_tokens':       _json.dumps(_figma_tokens, ensure_ascii=False),
                         'gemini_api_key_1':   gemini_key_1.strip(),
                         'gemini_api_key_2':   gemini_key_2.strip(),
+                        'gemini_model':       gemini_model.strip(),
                     }
                     if save_user_credentials(user_id, new_creds):
+                        # Figma tokenlarni company_settings ga ham sinxronlashtirish (webhook uchun)
+                        company_id = auth.get('company_id')
+                        if company_id:
+                            from utils.auth.auth_db import save_company_settings
+                            save_company_settings(company_id, {
+                                'figma_tokens': _json.dumps(_figma_tokens, ensure_ascii=False)
+                            })
+                        st.session_state.pop('figma_rows', None)
                         st.success("✅ Saqlandi!")
                         st.rerun()
                     else:

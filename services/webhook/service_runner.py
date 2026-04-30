@@ -20,7 +20,7 @@ from typing import Any
 
 from config.app_settings import get_app_settings, TZPRCheckerSettings
 from core.logger import get_logger
-from core.constants import WARN_LOW_SCORE, RECHECK_REASONS
+from core.constants import WARN_LOW_SCORE, WARN_AI_TIMEOUT, ERR_UNKNOWN, RECHECK_REASONS
 from utils.database.task_db import (
     get_task, mark_returned, mark_returned_pr_not_merged,
     set_service1_done, set_service1_error, set_service1_blocked,
@@ -87,7 +87,6 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str, company_id: in
         settings = app_settings.webhook_tz_pr
 
         from services.webhook.jira_webhook_handler import get_adf_formatter
-        from services.webhook.skip_detector import _detect_recheck
         from services.webhook.error_handler import (
             _classify_error, _write_success_comment,
             _write_error_comment, _write_critical_error
@@ -127,16 +126,14 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str, company_id: in
                 set_return_reason(task_key, reason_code)
                 log.info(f"[{task_key}] Service1 BLOCKED: {retry_minutes} min [{reason_code}]")
                 await _write_error_comment(
-                    task_key, error_msg, new_status,
-                    settings, comment_writer, adf_formatter,
+                    task_key, error_msg, comment_writer, adf_formatter,
                     reason_code=reason_code
                 )
             elif error_type in ('pr_not_found', 'pr_not_merged', 'tz_too_short'):
                 # PR yo'q / merged emas / TZ qisqa → JIRA error, task qaytariladi, DB returned
                 log.warning(f"[{task_key}] [{error_type}] → task qaytarilmoqda [{reason_code}]")
                 await _write_error_comment(
-                    task_key, error_msg, new_status,
-                    settings, comment_writer, adf_formatter,
+                    task_key, error_msg, comment_writer, adf_formatter,
                     reason_code=reason_code
                 )
                 await _handle_pr_not_merged_return(task_key, settings, company_id=company_id)
@@ -147,8 +144,7 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str, company_id: in
                 set_service1_error(task_key, error_msg)
                 set_return_reason(task_key, reason_code)
                 await _write_error_comment(
-                    task_key, error_msg, new_status,
-                    settings, comment_writer, adf_formatter,
+                    task_key, error_msg, comment_writer, adf_formatter,
                     reason_code=reason_code
                 )
             return
@@ -339,8 +335,21 @@ async def _run_testcase_generation(task_key: str, new_status: str, company_id: i
             _s = get_app_settings_for_company(company_id) if company_id else get_app_settings(force_reload=False)
             retry_minutes = _s.queue.blocked_retry_delay
             set_service2_blocked(task_key, error_msg, retry_minutes)
+            set_return_reason(task_key, WARN_AI_TIMEOUT)
         else:
             set_service2_error(task_key, error_msg)
+            set_return_reason(task_key, ERR_UNKNOWN)
+
+
+def _get_status_manager(company_id):
+    """JiraStatusManager yaratish — company_id bo'lsa multi-tenant, aks holda global."""
+    from utils.jira.jira_status_manager import JiraStatusManager
+    if company_id is not None:
+        from utils.auth.auth_db import get_company_credentials
+        _creds = get_company_credentials(company_id)
+        return JiraStatusManager(server=_creds['jira_server'], email=_creds['jira_email'], token=_creds['jira_token'])
+    from utils.jira.jira_status_manager import get_status_manager
+    return get_status_manager()
 
 
 async def _handle_auto_return(
@@ -377,14 +386,7 @@ async def _handle_auto_return(
         threshold = settings.return_threshold
 
         if score < threshold:
-            from utils.jira.jira_status_manager import JiraStatusManager
-            if company_id is not None:
-                from utils.auth.auth_db import get_company_credentials
-                _creds = get_company_credentials(company_id)
-                status_manager = JiraStatusManager(server=_creds['jira_server'], email=_creds['jira_email'], token=_creds['jira_token'])
-            else:
-                from utils.jira.jira_status_manager import get_status_manager
-                status_manager = get_status_manager()
+            status_manager = _get_status_manager(company_id)
 
             success, msg = status_manager.auto_return_if_needed(
                 task_key=task_key,
@@ -451,14 +453,7 @@ async def _handle_pr_not_merged_return(
         settings: TZPRCheckerSettings — return_status olish uchun
     """
     try:
-        from utils.jira.jira_status_manager import JiraStatusManager
-        if company_id is not None:
-            from utils.auth.auth_db import get_company_credentials
-            _creds = get_company_credentials(company_id)
-            status_manager = JiraStatusManager(server=_creds['jira_server'], email=_creds['jira_email'], token=_creds['jira_token'])
-        else:
-            from utils.jira.jira_status_manager import get_status_manager
-            status_manager = get_status_manager()
+        status_manager = _get_status_manager(company_id)
         return_status = settings.return_status
 
         success, msg = status_manager.change_status(task_key, return_status)

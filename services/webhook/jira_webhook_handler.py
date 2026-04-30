@@ -106,7 +106,6 @@ except ImportError:
 # ============================================================================
 
 _tz_pr_service = None
-_comment_writer = None
 _adf_formatter = None
 
 
@@ -124,22 +123,6 @@ def get_tz_pr_service() -> TZPRService:
     if _tz_pr_service is None:
         _tz_pr_service = TZPRService()
     return _tz_pr_service
-
-
-def get_comment_writer() -> JiraCommentWriter:
-    """
-    JiraCommentWriter singleton — JIRA'ga comment yozish uchun.
-
-    Barcha comment yozuvchi funksiyalar (error_handler.py, service_runner.py)
-    bu funksiya orqali bir xil instansiyadan foydalanadi.
-
-    Returns:
-        JiraCommentWriter — JIRA comment API wrapper
-    """
-    global _comment_writer
-    if _comment_writer is None:
-        _comment_writer = JiraCommentWriter()
-    return _comment_writer
 
 
 def get_adf_formatter() -> JiraADFFormatter:
@@ -376,9 +359,15 @@ async def jira_webhook(request: Request, background_tasks: BackgroundTasks):
         # AI_SKIP kodi tekshiruvi
         skip_code = settings.skip_code.strip() if settings.skip_code else ""
         from utils.pr_cache import set_skip_cache
+        from utils.auth.auth_db import get_company_credentials
+        _creds = get_company_credentials(company_id)
+        _skip_writer = JiraCommentWriter(
+            server=_creds['jira_server'],
+            email=_creds['jira_email'],
+            token=_creds['jira_token'],
+        )
         if skip_code:
-            comment_writer = get_comment_writer()
-            skip_detected = await _check_skip_code(task_key, skip_code, comment_writer)
+            skip_detected = await _check_skip_code(task_key, skip_code, _skip_writer)
         else:
             skip_detected = False
         set_skip_cache(task_key, skip_detected)
@@ -390,7 +379,7 @@ async def jira_webhook(request: Request, background_tasks: BackgroundTasks):
 
             # JIRA'ga skip notification yozish
             adf_formatter = get_adf_formatter()
-            await _write_skip_notification(task_key, settings, comment_writer, adf_formatter)
+            await _write_skip_notification(task_key, settings, _skip_writer, adf_formatter)
 
             # Service2 faqat testcase trigger status bo'lsa ishlaydi
             testcase_should_run = is_testcase_trigger_status(new_status, app_settings)
@@ -503,8 +492,7 @@ async def health_check():
         health["status"] = "unhealthy"
 
     try:
-        writer = get_comment_writer()
-        health["services"]["jira_comment"] = "ok" if writer.jira else "error"
+        health["services"]["jira_comment"] = "ok" if JiraCommentWriter else "error"
     except Exception as e:
         health["services"]["jira_comment"] = f"error: {str(e)}"
         health["status"] = "unhealthy"

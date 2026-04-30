@@ -86,7 +86,7 @@ async def check_and_generate_testcases(
 
         if not result.success:
             error_msg = result.error_message or "Test case generation failed"
-            from services.webhook.error_handler import _classify_error, _build_warning_adf, format_warning_simple
+            from services.webhook.error_handler import _classify_error
             error_type = _classify_error(error_msg)
 
             # TZ yetarli emas, PR merged emas yoki boshqa bloklash holatlari — JIRA'ga Warning comment yozish
@@ -98,17 +98,25 @@ async def check_and_generate_testcases(
             )
             if should_write_comment:
                 try:
-                    from services.webhook.jira_webhook_handler import get_comment_writer, get_adf_formatter
-                    writer = get_comment_writer()
+                    from services.webhook.jira_webhook_handler import get_adf_formatter
+                    from services.webhook.error_handler import _write_error_comment
+                    from utils.jira.jira_comment_writer import JiraCommentWriter
+                    from utils.auth.auth_db import get_company_credentials
+                    _creds = get_company_credentials(company_id)
+                    writer = JiraCommentWriter(
+                        server=_creds['jira_server'],
+                        email=_creds['jira_email'],
+                        token=_creds['jira_token'],
+                    )
                     adf_formatter = get_adf_formatter()
                     reason = error_msg.strip() if error_msg else (
                         "TZ (description) yetarli emas. Testcase yaratish to'xtatildi."
                     )
                     panel_type = "error" if error_type == 'pr_not_merged' else "warning"
-                    warning_doc = _build_warning_adf(adf_formatter, "Servis-2", reason, task_key, panel_type)
-                    success = writer.add_comment_adf(task_key, warning_doc)
-                    if not success:
-                        writer.add_comment(task_key, format_warning_simple("Servis-2", reason, task_key))
+                    await _write_error_comment(
+                        task_key, reason, writer, adf_formatter,
+                        service="Servis-2", panel_type=panel_type
+                    )
                     log.jira_comment_added(task_key, f"{panel_type.capitalize()} ADF")
                 except Exception as e:
                     log.warning(f"[{task_key}] JIRA ogohlantirish comment yozilmadi: {e}")
@@ -128,6 +136,7 @@ async def check_and_generate_testcases(
             pr_count=result.pr_count,
             files_changed=result.files_changed,
             footer_text=tc_settings.testcase_footer_text,
+            company_id=company_id,
         )
 
         return success, message
@@ -146,6 +155,7 @@ def _write_testcases_comment(
         pr_count: int = 0,
         files_changed: int = 0,
         footer_text: str = None,
+        company_id: int = None,
 ) -> Tuple[bool, str]:
     """
     Test case'larni JIRA ga comment sifatida yozish
@@ -155,15 +165,22 @@ def _write_testcases_comment(
         result: TestCaseGenerationResult
         use_adf: ADF format ishlatish
         footer_text: Comment footer matni (None bo'lsa global settingsdan)
+        company_id: Kompaniya ID — JIRA credentials olish uchun
 
     Returns:
         Tuple[bool, str]: (success, message)
     """
     from utils.jira.jira_comment_writer import JiraCommentWriter
     from utils.jira.testcase_adf_formatter import TestcaseADFFormatter
+    from utils.auth.auth_db import get_company_credentials
 
     try:
-        writer = JiraCommentWriter()
+        creds = get_company_credentials(company_id)
+        writer = JiraCommentWriter(
+            server=creds['jira_server'],
+            email=creds['jira_email'],
+            token=creds['jira_token'],
+        )
         formatter = TestcaseADFFormatter()
 
         if footer_text is None:

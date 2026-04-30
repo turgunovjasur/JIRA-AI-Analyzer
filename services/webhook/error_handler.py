@@ -202,15 +202,14 @@ def format_warning_simple(service: str, reason: str, task_key: str, reason_code:
 async def _write_error_comment(
         task_key: str,
         error_message: str,
-        new_status: str,
-        settings: "TZPRCheckerSettings",
         comment_writer: "JiraCommentWriter",
         adf_formatter: "JiraADFFormatter",
         service: str = "Servis-1",
-        reason_code: str = ""
+        reason_code: str = "",
+        panel_type: str = "warning"
 ) -> None:
     """
-    Xatolik uchun JIRA'ga qisqa Warning panel comment yozish.
+    Xatolik uchun JIRA'ga qisqa Warning/Error panel comment yozish.
 
     Foydalanish holatlari:
     - PR topilmaganda
@@ -218,7 +217,7 @@ async def _write_error_comment(
     - Service1 yoki Service2 general xatosi
     """
     try:
-        warning_doc = _build_warning_adf(adf_formatter, service, error_message, task_key, reason_code=reason_code)
+        warning_doc = _build_warning_adf(adf_formatter, service, error_message, task_key, panel_type=panel_type, reason_code=reason_code)
         success = comment_writer.add_comment_adf(task_key, warning_doc)
         if not success:
             comment_writer.add_comment(task_key, format_warning_simple(service, error_message, task_key, reason_code=reason_code))
@@ -252,7 +251,7 @@ async def _write_critical_error(
         log.error(f"[{task_key}] Critical error comment yozishda xato: {e}")
 
 
-async def _write_timeout_error_comment(task_key: str, timeout_seconds: int) -> None:
+async def _write_timeout_error_comment(task_key: str, timeout_seconds: int, company_id: int = None) -> None:
     """
     AI queue timeout bo'lganda JIRA'ga qisqa Warning panel comment yozish.
 
@@ -260,9 +259,16 @@ async def _write_timeout_error_comment(task_key: str, timeout_seconds: int) -> N
     yangi task belgilangan vaqt (task_wait_timeout) ichida lock ololmadi.
     """
     try:
-        from services.webhook.jira_webhook_handler import get_adf_formatter, get_comment_writer
+        from services.webhook.jira_webhook_handler import get_adf_formatter
+        from utils.jira.jira_comment_writer import JiraCommentWriter
+        from utils.auth.auth_db import get_company_credentials
         adf_formatter = get_adf_formatter()
-        comment_writer = get_comment_writer()
+        creds = get_company_credentials(company_id)
+        comment_writer = JiraCommentWriter(
+            server=creds['jira_server'],
+            email=creds['jira_email'],
+            token=creds['jira_token'],
+        )
 
         reason = f"AI queue timeout ({timeout_seconds}s). Boshqa task ishlanmoqda edi."
         warning_doc = _build_warning_adf(adf_formatter, "Sistem", reason, task_key)

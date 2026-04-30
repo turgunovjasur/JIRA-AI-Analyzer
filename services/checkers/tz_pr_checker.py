@@ -217,7 +217,7 @@ class TZPRService(BaseService):
         """
         super().__init__(company_id=company_id, user_id=user_id)
         self._pr_helper = None
-        self._figma_client = None
+        self._figma_client = None  # per-file topilgan token bilan yaratiladi
 
     def _get_settings(self):
         """User yoki kompaniya TZ-PR sozlamalarini qaytarish.
@@ -240,17 +240,25 @@ class TZPRService(BaseService):
             self._pr_helper = PRHelper(self.github)
         return self._pr_helper
 
-    @property
-    def figma_client(self):
-        """Lazy Figma Client (fail-safe)"""
-        if self._figma_client is None:
-            try:
-                from utils.figma.figma_client import FigmaClient
-                self._figma_client = FigmaClient()
-            except Exception as e:
-                log.warning(f"Figma client init failed: {str(e)}")
-                self._figma_client = None
-        return self._figma_client
+    def _get_figma_client_for_file(self, file_key: str):
+        """Berilgan file_key uchun ishlayotgan tokenni topib FigmaClient qaytaradi (fail-safe)."""
+        try:
+            from utils.figma.figma_client import FigmaClient
+            creds = self._get_creds()
+            figma_tokens = creds.get('figma_tokens', [])
+            log.info(f"Figma creds: figma_tokens={len(figma_tokens)} ta | company_id={self._company_id} | user_id={self._user_id}")
+            if not figma_tokens:
+                figma_token_single = creds.get('figma_token', '')
+                has_old = "bor" if figma_token_single else "yoq"
+                log.warning(f"Figma: figma_tokens bosh | figma_token (eski)={has_old}")
+                return None
+            working_token = FigmaClient.find_working_token(figma_tokens, file_key)
+            if working_token:
+                return FigmaClient(access_token=working_token)
+            log.warning(f"Figma: ishlayotgan token topilmadi | file_key={file_key}")
+        except Exception as e:
+            log.warning(f"Figma client init failed: {e}")
+        return None
 
     def analyze_task(
             self,
@@ -319,7 +327,7 @@ class TZPRService(BaseService):
             if not task_details:
                 return self._create_error_result(
                     task_key,
-                    f"❌ Task {task_key} topilmadi yoki access yo'q"
+                    f"❌ {task_key} topilmadi. JIRA da task mavjudligini va API kalitlarini tekshiring."
                 )
 
             # Step 2: PR bor? merged? (birinchi tekshiruv — keraksiz ishni oldini olish)
@@ -373,6 +381,7 @@ class TZPRService(BaseService):
             figma_data = self._get_figma_data(task_details, update_status)
 
             # Step 6: AI analysis (with Figma if available)
+            update_status("progress", "AI tahlil qilinmoqda...")
             ai_result = self._perform_ai_analysis(
                 task_key,
                 task_details,
@@ -427,7 +436,7 @@ class TZPRService(BaseService):
                 total_prompt_size=ai_result.get('prompt_size', 0),
                 figma_data=figma_data,
                 comment_analysis=comment_analysis,
-                dev_objections=comment_separated.get('dev_after', [])
+                dev_objections=comment_separated.get('dev_after', []) if is_recheck else []
             )
 
         except Exception as e:
@@ -449,36 +458,39 @@ class TZPRService(BaseService):
         """
         try:
             figma_links = task_details.get('figma_links', [])
+            log.info(f"Figma: task da {len(figma_links)} ta figma_link topildi")
 
             if not figma_links:
                 # No Figma links - bu normal holat, xatolik emas
                 return None
 
-            # Get Figma client (might be None if token missing)
-            if not self.figma_client:
-                update_status("warning", "Figma: Token topilmadi, dizayn tahlil qilinmaydi")
-                return {
-                    'links': figma_links,
-                    'summaries': [],
-                    'error': 'Token not configured'
-                }
-
-            # Collect summaries
+            # Collect summaries — har bir fayl uchun ishlayotgan token qidiriladi
             summaries = []
             for link in figma_links:
-                try:
-                    summary = self.figma_client.get_file_summary(link['file_key'])
+                file_key = link['file_key']
+                client = self._get_figma_client_for_file(file_key)
+                if not client:
+                    update_status("warning", f"Figma: {link['name']} — ishlayotgan token topilmadi")
                     summaries.append({
-                        'file_key': link['file_key'],
+                        'file_key': file_key,
+                        'name': link['name'],
+                        'url': link['url'],
+                        'summary': "Token topilmadi yoki ruxsat yo'q"
+                    })
+                    continue
+                try:
+                    node_id = link.get('node_id')
+                    summary = client.get_file_summary(file_key, node_id=node_id)
+                    summaries.append({
+                        'file_key': file_key,
                         'name': link['name'],
                         'url': link['url'],
                         'summary': summary
                     })
                 except Exception as e:
-                    # Individual file error - skip but continue
                     update_status("warning", f"Figma: {link['name']} olinmadi")
                     summaries.append({
-                        'file_key': link['file_key'],
+                        'file_key': file_key,
                         'name': link['name'],
                         'url': link['url'],
                         'summary': f"Error: {str(e)}"
@@ -523,16 +535,17 @@ class TZPRService(BaseService):
 
         # Add Figma analysis instruction
         figma_analysis_section = """
-5. **FIGMA DIZAYN MOSLIGI** (agar mavjud bo'lsa)
-   - Kodda UI elementlar Figma dizaynga mosmi?
-   - Layout struktura to'g'rimi?
-   - Qaysi elementlar Figma'da bor, lekin kodda yo'q?
+5. **FIGMA DIZAYN MOSLIGI**
+   - Yuqorida Figma frame ma'lumotlari berilgan — shu asosda tahlil qil.
+   - TZ da ko'rsatilgan UI elementlar Figma frame nomlari bilan mos keladimi?
+   - Figma da bor frame/sahifalar kodda implement qilinganmi?
+   - Qaysi Figma frame'lari TZ talablariga mos, qaysilari yo'q?
 """
 
         # Add Figma response section
         figma_response_section = """
-## 🎨 FIGMA DIZAYN MOSLIGI (agar mavjud bo'lsa)
-[Kod va Figma dizayn o'rtasidagi moslik tahlili]
+## 🎨 FIGMA DIZAYN MOSLIGI
+[Figma frame nomlari va TZ talablari asosida moslikni tahlil qil. "Figma'ga kirish imkoni yo'q" iborasini ISHLATMA — frame ma'lumotlari yuqorida berilgan.]
 """
 
         return (figma_section, figma_analysis_section, figma_response_section)
@@ -868,8 +881,14 @@ class TZPRService(BaseService):
         if result['success']:
             return result
 
+        # Server muammosi (503/unavailable): diff hajmini o'zgartirish yordam bermaydi — darhol qaytarish
+        _err_lower = result.get('error', '').lower()
+        _server_kw = ('503', 'unavailable', 'high demand', '500', '502', '504', 'server error')
+        if any(kw in _err_lower for kw in _server_kw):
+            return result
+
         # Strategy 2: Reduce files if overload
-        if "overloaded" in result['error'].lower() or "rate" in result['error'].lower():
+        if "overloaded" in _err_lower or "rate" in _err_lower:
             status_callback("warning", "AI overloaded, reducing file count...")
 
             reduced_files = max(1, (max_files or pr_info['files_changed']) // 2)

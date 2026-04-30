@@ -304,19 +304,23 @@ def _run_generation(
 
     # Progress Manager
     with prog_cont:
-        progress = ProgressManager(total_steps=4)
+        progress = ProgressManager(
+            total_steps=4,
+            step_labels=["Task tahlili", "TZ & PR olish", "AI generate", "Natija"],
+        )
 
     # Status callback
     def status_callback(stype: str, msg: str):
-        if "tahlil qilinmoqda" in msg:
+        if stype != "progress":
+            return
+        m = msg.lower()
+        if "jira" in m or "olinmoqda" in m:
             progress.update(1, msg)
-        elif "TZ" in msg:
+        elif "tz" in m or "comment" in m or "pr" in m or "github" in m:
             progress.update(2, msg)
-        elif "PR" in msg:
-            progress.update(2, msg)
-        elif "AI" in msg:
+        elif "ai" in m or "gemini" in m or "yaratmoqda" in m:
             progress.update(3, msg)
-        elif "yaratildi" in msg:
+        elif "tayyorlan" in m or "yaratildi" in m:
             progress.update(4, msg)
 
     try:

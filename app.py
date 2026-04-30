@@ -88,11 +88,6 @@ def main():
         from ui.pages.unified_settings import render_unified_settings
         render_unified_settings()
 
-        # Sozlamalardan chiqish tugmasi
-        st.markdown("---")
-        if st.button("← Orqaga qaytish", use_container_width=False):
-            st.session_state.show_settings = False
-            st.rerun()
 
     elif page == "Monitoring":
         # Monitoring Dashboard sahifasi

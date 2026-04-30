@@ -1,23 +1,13 @@
 """
-Skip Detector Module - Skip va Re-check aniqlash
-=================================================
+Skip Detector Module - Skip aniqlash
+=====================================
 
-Bu modul webhook oqimida ikki muhim holatni aniqlaydi:
+Bu modul webhook oqimida AI_SKIP holatni aniqlaydi:
+Developer JIRA comment'da skip code yozsa → Service1 o'chiriladi, Service2 ishlaydi.
 
-1. AI_SKIP — developer JIRA comment'da skip code yozgan
-   → Service1 (TZ-PR check) o'chiriladi, Service2 baribir ishlashi mumkin
-
-2. Re-check — task avval "Return" statusga qaytarilgan,
-   so'ng yana trigger statusga o'tkazilgan
-   → Comment'da "Re-check" belgisi ko'rinadi
-
-Ikkala funksiya ham stateless — faqat JIRA'dan ma'lumot o'qiydi, hech narsa yozmaydi.
+Stateless — faqat JIRA'dan ma'lumot o'qiydi, hech narsa yozmaydi.
 """
-import os
 from typing import TYPE_CHECKING
-
-import requests
-from dotenv import load_dotenv
 
 from core.logger import get_logger
 
@@ -85,75 +75,3 @@ async def _check_skip_code(
     except Exception as e:
         log.error(f"[{task_key}] Skip code check xato: {e}")
         return False  # Xato bo'lsa AI davom etadi
-
-
-async def _detect_recheck(
-        task_key: str,
-        settings: "TZPRCheckerSettings",
-        comment_writer: "JiraCommentWriter"
-) -> bool:
-    """
-    Task avval "Return" statusga qaytarilibdi-yu, yana trigger statusga tushganini aniqlash.
-
-    Mantiq: JIRA REST API orqali task changelog'ini o'qib,
-    oxirgi status o'zgarishida "fromString" settings.return_status ga teng
-    ekanligini tekshirish. Agar shunday bo'lsa — bu re-check.
-
-    Misollar:
-    - "In Progress" → "Ready to Test" — oddiy tahlil (False)
-    - "Return to Dev" → "Ready to Test" — re-check (True)
-    - "Ready to Test" → "Ready to Test" — changelog orqali topilmaydi (False)
-
-    JIRA REST API v2 ishlatiladi chunki python-jira changelog'ni to'g'ridan
-    qo'llab-quvvatlamaydi.
-
-    Xatolik holati: API xato → False qaytariladi (re-check belgisi qo'yilmaydi,
-    tahlil davom etadi)
-
-    Args:
-        task_key: JIRA task identifikatori
-        settings: TZPRCheckerSettings (return_status olish uchun)
-        comment_writer: JIRA client (connection ma'lumotlari uchun)
-
-    Returns:
-        True — re-check aniqlandi (task avval qaytarilgan edi)
-        False — oddiy birinchi tahlil yoki API xatosi
-    """
-    try:
-        if not comment_writer.jira:
-            return False
-
-        load_dotenv()
-        server = os.getenv('JIRA_SERVER', 'https://smartupx.atlassian.net')
-        email = os.getenv('JIRA_EMAIL')
-        token = os.getenv('JIRA_API_TOKEN')
-
-        url = f"{server}/rest/api/2/issue/{task_key}?expand=changelog&fields=status"
-        response = requests.get(url, auth=(email, token))
-
-        if response.status_code != 200:
-            log.warning(f"[{task_key}] Changelog API failed: {response.status_code}")
-            return False
-
-        data = response.json()
-        changelog = data.get('changelog', {}).get('histories', [])
-
-        # Eng so'nggi status o'zgarishni tekshirish (reversed = eng yaqindan)
-        return_status_lower = settings.return_status.lower()
-
-        for history in reversed(changelog):
-            for item in history.get('items', []):
-                if item.get('field', '').lower() == 'status':
-                    from_status = item.get('fromString', '')
-                    # Oldingi status return_status bo'lgan bo'lsa — re-check
-                    if from_status.lower() == return_status_lower:
-                        log.info(f"[{task_key}] Re-check: {from_status} → {item.get('toString')}")
-                        return True
-                    # Birinchi (eng yaqin) status o'zgarishi ko'rib chiqildi
-                    return False
-
-        return False
-
-    except Exception as e:
-        log.error(f"[{task_key}] Re-check detect xato: {e}")
-        return False

@@ -28,7 +28,7 @@ import re
 import secrets
 import shutil
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List, Tuple
 from pathlib import Path
 
@@ -50,6 +50,10 @@ DEFAULT_MODULES = {k: False for k in ALL_MODULES}
 
 # Default seat limit — admin qo'lda oshiradi
 DEFAULT_SEAT_LIMIT = 1
+
+# Login bloklash sozlamalari
+MAX_LOGIN_ATTEMPTS = 5
+LOCKOUT_SECONDS    = 5 * 60  # 5 daqiqa
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 AUTH_DB_FILE = os.path.join(PROJECT_ROOT, 'data', 'auth.db')
@@ -245,6 +249,10 @@ def init_auth_db():
 
     # Mavjud DB uchun migration: user_credentials jadvali yo'q bo'lsa qo'shish
     _migrate_user_credentials(conn)
+    _migrate_figma_tokens(conn)
+    _migrate_gemini_model(conn)
+    _migrate_login_attempts(conn)
+    _migrate_global_settings(conn)
 
     conn.close()
 
@@ -271,12 +279,159 @@ def _migrate_user_credentials(conn: sqlite3.Connection):
         """)
         conn.commit()
     else:
-        # Mavjud jadvalga jira_project_keys ustunini qo'shish (migration)
+        # Mavjud jadvalga yangi ustunlarni qo'shish (migration)
         c.execute("PRAGMA table_info(user_credentials)")
         cols = {row[1] for row in c.fetchall()}
         if 'jira_project_keys' not in cols:
             c.execute("ALTER TABLE user_credentials ADD COLUMN jira_project_keys TEXT DEFAULT ''")
+        if 'figma_tokens' not in cols:
+            c.execute("ALTER TABLE user_credentials ADD COLUMN figma_tokens TEXT DEFAULT '[]'")
+        conn.commit()
+
+
+def _parse_figma_tokens(raw) -> list:
+    """figma_tokens JSON satrini list ga o'girish. Noto'g'ri format bo'lsa [] qaytaradi."""
+    if not raw:
+        return []
+    if isinstance(raw, list):
+        return raw
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, list) else []
+    except Exception:
+        return []
+
+
+def _migrate_figma_tokens(conn: sqlite3.Connection):
+    """company_settings va user_credentials ga figma_tokens ustunini qo'shish."""
+    c = conn.cursor()
+    for table in ('company_settings', 'user_credentials'):
+        c.execute(f"PRAGMA table_info({table})")
+        cols = {row[1] for row in c.fetchall()}
+        if 'figma_tokens' not in cols:
+            c.execute(f"ALTER TABLE {table} ADD COLUMN figma_tokens TEXT DEFAULT '[]'")
+    conn.commit()
+
+
+def _migrate_global_settings(conn: sqlite3.Connection):
+    """global_settings jadvali yo'q bo'lsa yaratish."""
+    c = conn.cursor()
+    c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='global_settings'")
+    if c.fetchone() is None:
+        c.execute("""
+            CREATE TABLE global_settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT DEFAULT ''
+            )
+        """)
+        conn.commit()
+
+
+def _migrate_gemini_model(conn: sqlite3.Connection):
+    """user_credentials va company_settings ga gemini_model ustunini qo'shish."""
+    c = conn.cursor()
+    for table in ('user_credentials', 'company_settings'):
+        c.execute(f"PRAGMA table_info({table})")
+        cols = {row[1] for row in c.fetchall()}
+        if 'gemini_model' not in cols:
+            c.execute(f"ALTER TABLE {table} ADD COLUMN gemini_model TEXT DEFAULT ''")
+    conn.commit()
+
+
+def _migrate_login_attempts(conn: sqlite3.Connection):
+    """login_attempts jadvali yo'q bo'lsa yaratish (migration)."""
+    c = conn.cursor()
+    c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='login_attempts'")
+    if c.fetchone() is None:
+        c.execute("""
+            CREATE TABLE login_attempts (
+                identifier   TEXT PRIMARY KEY,
+                failed_count INTEGER DEFAULT 0,
+                locked_until TEXT    DEFAULT NULL,
+                updated_at   TEXT    DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# LOGIN BLOKLASH (brute-force himoya)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def get_login_attempt_state(identifier: str) -> dict:
+    """
+    identifier uchun login holati.
+    Returns: {failed_count, is_locked, seconds_remaining}
+    """
+    try:
+        conn = _get_conn()
+        c = conn.cursor()
+        c.execute("SELECT * FROM login_attempts WHERE identifier = ?", (identifier,))
+        row = c.fetchone()
+        if not row:
+            conn.close()
+            return {'failed_count': 0, 'is_locked': False, 'seconds_remaining': 0}
+        row = dict(row)
+        locked_until = row.get('locked_until')
+        if locked_until:
+            locked_dt = datetime.fromisoformat(locked_until)
+            if datetime.now() < locked_dt:
+                conn.close()
+                remaining = int((locked_dt - datetime.now()).total_seconds())
+                return {'failed_count': row['failed_count'], 'is_locked': True, 'seconds_remaining': remaining}
+            # Blok muddati o'tgan — tozalash
+            c.execute("DELETE FROM login_attempts WHERE identifier = ?", (identifier,))
             conn.commit()
+        conn.close()
+        return {'failed_count': row['failed_count'], 'is_locked': False, 'seconds_remaining': 0}
+    except Exception:
+        return {'failed_count': 0, 'is_locked': False, 'seconds_remaining': 0}
+
+
+def record_failed_login(identifier: str) -> dict:
+    """
+    Muvaffaqiyatsiz urinishni qayd qilish.
+    MAX_LOGIN_ATTEMPTS ga yetganda LOCKOUT_SECONDS muddatga bloklaydi.
+    Returns: {failed_count, is_locked, seconds_remaining}
+    """
+    try:
+        conn = _get_conn()
+        c = conn.cursor()
+        c.execute("SELECT failed_count FROM login_attempts WHERE identifier = ?", (identifier,))
+        row = c.fetchone()
+        new_count = (row['failed_count'] + 1) if row else 1
+        locked_until = None
+        if new_count >= MAX_LOGIN_ATTEMPTS:
+            locked_until = (datetime.now() + timedelta(seconds=LOCKOUT_SECONDS)).isoformat()
+        c.execute("""
+            INSERT INTO login_attempts (identifier, failed_count, locked_until, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(identifier) DO UPDATE SET
+                failed_count = excluded.failed_count,
+                locked_until = excluded.locked_until,
+                updated_at   = excluded.updated_at
+        """, (identifier, new_count, locked_until, datetime.now().isoformat()))
+        conn.commit()
+        conn.close()
+        is_locked = locked_until is not None
+        return {
+            'failed_count':      new_count,
+            'is_locked':         is_locked,
+            'seconds_remaining': LOCKOUT_SECONDS if is_locked else 0,
+        }
+    except Exception:
+        return {'failed_count': 0, 'is_locked': False, 'seconds_remaining': 0}
+
+
+def reset_login_attempts(identifier: str):
+    """Muvaffaqiyatli logindan keyin urinishlar hisobini tiklash."""
+    try:
+        conn = _get_conn()
+        conn.execute("DELETE FROM login_attempts WHERE identifier = ?", (identifier,))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -298,6 +453,48 @@ def verify_password(password: str, stored_hash: str) -> bool:
         return secrets.compare_digest(dk.hex(), expected)
     except Exception:
         return False
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# GLOBAL SETTINGS (super admin tomonidan belgilanadi)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def get_global_setting(key: str, default: str = '') -> str:
+    """Global sozlamadan qiymat olish."""
+    try:
+        conn = _get_conn()
+        c = conn.cursor()
+        c.execute("SELECT value FROM global_settings WHERE key = ?", (key,))
+        row = c.fetchone()
+        conn.close()
+        return (row['value'] or '').strip() if row else default
+    except Exception:
+        return default
+
+
+def set_global_setting(key: str, value: str) -> bool:
+    """Global sozlamani saqlash (upsert)."""
+    try:
+        conn = _get_conn()
+        conn.execute(
+            "INSERT INTO global_settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, (value or '').strip())
+        )
+        conn.commit()
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+
+def get_global_gemini_defaults() -> dict:
+    """Super admin tomonidan belgilangan global Gemini default sozlamalar."""
+    return {
+        'api_key_1': get_global_setting('gemini_default_api_key_1'),
+        'api_key_2': get_global_setting('gemini_default_api_key_2'),
+        'model':     get_global_setting('gemini_default_model'),
+    }
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -670,8 +867,8 @@ def save_company_settings(company_id: int, settings: Dict) -> bool:
     """
     allowed_keys = {
         'jira_server', 'jira_email', 'jira_token',
-        'github_token', 'github_org', 'figma_token',
-        'gemini_api_key_1', 'gemini_api_key_2',
+        'github_token', 'github_org', 'figma_token', 'figma_tokens',
+        'gemini_api_key_1', 'gemini_api_key_2', 'gemini_model',
         'webhook_project_keys', 'webhook_trigger_status', 'webhook_trigger_aliases',
         'webhook_return_status', 'webhook_allowed_issue_types', 'webhook_excluded_assignees',
         'webhook_auto_return_enabled', 'webhook_return_threshold',
@@ -748,8 +945,13 @@ def get_company_credentials(company_id: int) -> dict:
     github_token = (cs.get('github_token') or '').strip()
     github_org   = (cs.get('github_org')   or '').strip()
     figma_token  = (cs.get('figma_token')  or '').strip()
-    gemini_k1 = (cs.get('gemini_api_key_1') or '').strip()
-    gemini_k2 = (cs.get('gemini_api_key_2') or '').strip()
+    figma_tokens = _parse_figma_tokens(cs.get('figma_tokens'))
+    # Backward compat: eski yagona figma_token ni ro'yxatga qo'shish
+    if not figma_tokens and figma_token:
+        figma_tokens = [{'name': '', 'token': figma_token}]
+    gemini_k1    = (cs.get('gemini_api_key_1') or '').strip()
+    gemini_k2    = (cs.get('gemini_api_key_2') or '').strip()
+    gemini_model = (cs.get('gemini_model')     or '').strip()
 
     if not jira_email:
         missing.append("JIRA Email")
@@ -769,13 +971,15 @@ def get_company_credentials(company_id: int) -> dict:
     gemini_keys = [k for k in [gemini_k1, gemini_k2] if k]
 
     return {
-        'jira_server':  jira_server or 'https://yourcompany.atlassian.net',
-        'jira_email':   jira_email,
-        'jira_token':   jira_token,
-        'github_token': github_token,
-        'github_org':   github_org,
-        'figma_token':  figma_token,
-        'gemini_keys':  gemini_keys,
+        'jira_server':   jira_server or 'https://yourcompany.atlassian.net',
+        'jira_email':    jira_email,
+        'jira_token':    jira_token,
+        'github_token':  github_token,
+        'github_org':    github_org,
+        'figma_token':   figma_token,
+        'figma_tokens':  figma_tokens,
+        'gemini_keys':   gemini_keys,
+        'gemini_model':  gemini_model or None,
     }
 
 
@@ -785,8 +989,8 @@ def get_company_credentials(company_id: int) -> dict:
 
 _USER_CRED_FIELDS = {
     'jira_server', 'jira_email', 'jira_token', 'jira_project_keys',
-    'github_token', 'github_org', 'figma_token',
-    'gemini_api_key_1', 'gemini_api_key_2',
+    'github_token', 'github_org', 'figma_token', 'figma_tokens',
+    'gemini_api_key_1', 'gemini_api_key_2', 'gemini_model',
 }
 
 
@@ -836,7 +1040,8 @@ def save_user_credentials(user_id: int, data: Dict) -> bool:
 def get_user_credentials_for_service(user_id: int) -> dict:
     """
     User API kalitlarini service uchun validatsiya bilan qaytarish.
-    Majburiy: jira_email, jira_token, github_token, gemini_api_key_1.
+    Majburiy: jira_email, jira_token, github_token.
+    Gemini: user kaliti bo'lmasa → GEMINI_DEFAULT_API_KEY env dan olinadi.
     Yetishmasa → RuntimeError.
     """
     uc = get_user_credentials(user_id)
@@ -847,14 +1052,37 @@ def get_user_credentials_for_service(user_id: int) -> dict:
     github_token = (uc.get('github_token') or '').strip()
     github_org   = (uc.get('github_org')   or '').strip()
     figma_token  = (uc.get('figma_token')  or '').strip()
+    figma_tokens = _parse_figma_tokens(uc.get('figma_tokens'))
+    if not figma_tokens and figma_token:
+        figma_tokens = [{'name': '', 'token': figma_token}]
     gemini_k1    = (uc.get('gemini_api_key_1') or '').strip()
     gemini_k2    = (uc.get('gemini_api_key_2') or '').strip()
+    gemini_model = (uc.get('gemini_model') or '').strip()
+
+    # Gemini kalit: user → env → global default (super admin) → kompaniya webhook kaliti
+    if not gemini_k1:
+        gemini_k1 = os.getenv('GEMINI_DEFAULT_API_KEY', '').strip()
+    if not gemini_k1:
+        glb = get_global_gemini_defaults()
+        gemini_k1 = glb['api_key_1']
+        if not gemini_k2:
+            gemini_k2 = glb['api_key_2']
+        if not gemini_model:
+            gemini_model = glb['model']
+    if not gemini_k1:
+        user_row = get_user_by_id(user_id)
+        if user_row:
+            cs = get_company_settings(user_row['company_id'])
+            gemini_k1 = (cs.get('gemini_api_key_1') or '').strip()
+            if not gemini_k2:
+                gemini_k2 = (cs.get('gemini_api_key_2') or '').strip()
+            if not gemini_model:
+                gemini_model = (cs.get('gemini_model') or '').strip()
 
     missing = []
     if not jira_email:   missing.append("JIRA Email")
     if not jira_token:   missing.append("JIRA API Token")
     if not github_token: missing.append("GitHub Token")
-    if not gemini_k1:    missing.append("Gemini API Key")
 
     if missing:
         raise RuntimeError(
@@ -862,26 +1090,34 @@ def get_user_credentials_for_service(user_id: int) -> dict:
             f"Sozlamalar → API Kalitlar bo'limini to'ldiring."
         )
 
+    if not gemini_k1:
+        raise RuntimeError(
+            "Gemini API Key topilmadi. Sozlamalar → Webhook API Kalitlar bo'limida "
+            "kompaniya Gemini kalitini kiriting."
+        )
+
     return {
-        'jira_server':  jira_server or 'https://yourcompany.atlassian.net',
-        'jira_email':   jira_email,
-        'jira_token':   jira_token,
-        'github_token': github_token,
-        'github_org':   github_org,
-        'figma_token':  figma_token,
-        'gemini_keys':  [k for k in [gemini_k1, gemini_k2] if k],
+        'jira_server':   jira_server or 'https://yourcompany.atlassian.net',
+        'jira_email':    jira_email,
+        'jira_token':    jira_token,
+        'github_token':  github_token,
+        'github_org':    github_org,
+        'figma_token':   figma_token,
+        'figma_tokens':  figma_tokens,
+        'gemini_keys':   [k for k in [gemini_k1, gemini_k2] if k],
+        'gemini_model':  gemini_model or None,
     }
 
 
 def has_user_credentials_configured(user_id: int) -> bool:
-    """User majburiy API kalitlarini kiritganligini tekshirish."""
+    """User majburiy API kalitlarini kiritganligini tekshirish.
+    Gemini majburiy emas — tizim default kalit ishlatadi."""
     uc = get_user_credentials(user_id)
     return bool(
         uc.get('jira_email') and
         uc.get('jira_token') and
         uc.get('jira_project_keys') and
-        uc.get('github_token') and
-        uc.get('gemini_api_key_1')
+        uc.get('github_token')
     )
 
 

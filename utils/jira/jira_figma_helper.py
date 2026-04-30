@@ -15,6 +15,7 @@ class FigmaLink:
     name: str
     source: str
     author: str = None
+    node_id: str = None  # node-id parametri (masalan: "1337:16")
 
 
 class JiraFigmaHelper:
@@ -41,14 +42,16 @@ class JiraFigmaHelper:
                     continue
 
                 seen_file_keys.add(file_key)
-                clean_url = url.replace('&amp;', '&').rstrip('<>')
+                clean_url = JiraFigmaHelper._clean_url(url)
                 name = JiraFigmaHelper._extract_name_from_url(clean_url)
+                node_id = JiraFigmaHelper._extract_node_id(clean_url)
 
                 figma_links.append(FigmaLink(
                     url=clean_url,
                     file_key=file_key,
                     name=name,
-                    source='description'
+                    source='description',
+                    node_id=node_id
                 ))
 
         # 2. Comments
@@ -65,18 +68,39 @@ class JiraFigmaHelper:
                     continue
 
                 seen_file_keys.add(file_key)
-                clean_url = url.replace('&amp;', '&').rstrip('<>')
+                clean_url = JiraFigmaHelper._clean_url(url)
                 name = JiraFigmaHelper._extract_name_from_url(clean_url)
+                node_id = JiraFigmaHelper._extract_node_id(clean_url)
 
                 figma_links.append(FigmaLink(
                     url=clean_url,
                     file_key=file_key,
                     name=name,
                     source='comment',
-                    author=comment.get('author', 'Unknown')
+                    author=comment.get('author', 'Unknown'),
+                    node_id=node_id
                 ))
 
         return figma_links
+
+    @staticmethod
+    def _clean_url(raw_url: str) -> str:
+        """JIRA smart-card formatidagi URL ni tozalash.
+
+        JIRA ADF da link: https://figma.com/.../File?node-id=X|https://...|smart-card]
+        Pipe belgisidan oldingi qism — haqiqiy URL.
+        """
+        url = raw_url.split('|')[0]
+        url = url.replace('&amp;', '&').rstrip('<>[]')
+        return url
+
+    @staticmethod
+    def _extract_node_id(url: str) -> str | None:
+        """URL dan node-id parametrini olish (masalan: "1337-16" → "1337:16")."""
+        match = re.search(r'node-id=([^&\s|]+)', url)
+        if match:
+            return match.group(1).replace('-', ':')
+        return None
 
     @staticmethod
     def _extract_name_from_url(url: str) -> str:

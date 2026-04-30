@@ -239,9 +239,57 @@ def _render_company_save_buttons(settings, rendered: dict, webhook_cfg: dict = N
             # Webhook routing config (project keys, trigger status, filters) → company_settings
             wh_ok = _save_cs(company_id, webhook_cfg) if webhook_cfg else True
 
-            if ok_tz and ok_tc and ok_whtz and ok_whtc and ok_q and wh_ok:
+            import json as _json
+
+            # User shaxsiy API kalitlari (uc_* session keys) → user_credentials
+            _uc_rows = st.session_state.get('uc_figma_rows', [])
+            _uc_figma = [
+                {'name': st.session_state.get(f"uc_figma_n_{i}", '').strip(),
+                 'token': st.session_state.get(f"uc_figma_t_{i}", '').strip()}
+                for i in range(len(_uc_rows))
+                if st.session_state.get(f"uc_figma_t_{i}", '').strip()
+            ]
+            user_creds = {
+                'jira_server':       (st.session_state.get('uc_jira_server') or '').strip(),
+                'jira_email':        (st.session_state.get('uc_jira_email') or '').strip(),
+                'jira_token':        (st.session_state.get('uc_jira_token') or '').strip(),
+                'jira_project_keys': (st.session_state.get('uc_jira_project_keys') or '').strip(),
+                'github_token':      (st.session_state.get('uc_github_token') or '').strip(),
+                'github_org':        (st.session_state.get('uc_github_org') or '').strip(),
+                'figma_tokens':      _json.dumps(_uc_figma, ensure_ascii=False),
+                'gemini_api_key_1':  (st.session_state.get('uc_gemini_1') or '').strip(),
+                'gemini_api_key_2':  (st.session_state.get('uc_gemini_2') or '').strip(),
+                'gemini_model':      (st.session_state.get('uc_gemini_model') or '').strip(),
+            }
+            from utils.auth.auth_db import save_user_credentials, save_company_settings as _save_company
+            ok_creds = save_user_credentials(user_id, user_creds)
+
+            # Webhook company API kalitlari (wh_cred_* session keys) → company_settings
+            _wh_rows = st.session_state.get('wh_figma_rows', [])
+            _wh_figma = [
+                {'name': st.session_state.get(f"wh_figma_n_{i}", '').strip(),
+                 'token': st.session_state.get(f"wh_figma_t_{i}", '').strip()}
+                for i in range(len(_wh_rows))
+                if st.session_state.get(f"wh_figma_t_{i}", '').strip()
+            ]
+            wh_api_settings = {
+                'jira_server':      (st.session_state.get('wh_cred_jira_server') or '').strip(),
+                'jira_email':       (st.session_state.get('wh_cred_jira_email') or '').strip(),
+                'jira_token':       (st.session_state.get('wh_cred_jira_token') or '').strip(),
+                'github_token':     (st.session_state.get('wh_cred_github_token') or '').strip(),
+                'github_org':       (st.session_state.get('wh_cred_github_org') or '').strip(),
+                'figma_tokens':     _json.dumps(_wh_figma, ensure_ascii=False),
+                'gemini_api_key_1': (st.session_state.get('wh_cred_gemini_1') or '').strip(),
+                'gemini_api_key_2': (st.session_state.get('wh_cred_gemini_2') or '').strip(),
+                'gemini_model':     (st.session_state.get('wh_cred_gemini_model') or '').strip(),
+            }
+            ok_wh_api = _save_company(company_id, wh_api_settings)
+
+            if ok_tz and ok_tc and ok_whtz and ok_whtc and ok_q and wh_ok and ok_creds and ok_wh_api:
                 _show_save_success_animation()
                 st.balloons()
+                st.session_state.pop('uc_figma_rows', None)
+                st.session_state.pop('wh_figma_rows', None)
                 st.session_state.show_settings = False
             else:
                 st.error("❌ Saqlashda xato yuz berdi")
@@ -1108,15 +1156,41 @@ def _render_webhook_api_keys_section():
 
     st.markdown("---")
 
-    # ━━━ Figma ━━━
+    # ━━━ Figma (bir nechta token) ━━━
+    import json as _json
     st.markdown("#### 🎨 Figma (ixtiyoriy)")
-    figma_token = st.text_input(
-        "Figma Access Token",
-        value=cs.get('figma_token', ''),
-        type="password",
-        placeholder="figd_xxxx...",
-        key="wh_cred_figma_token"
-    )
+
+    _raw_tokens = cs.get('figma_tokens', [])
+    if isinstance(_raw_tokens, str):
+        try:
+            _raw_tokens = _json.loads(_raw_tokens) if _raw_tokens else []
+        except Exception:
+            _raw_tokens = []
+    # Backward compat: eski figma_token (yagona) ni ro'yxatga qo'shish
+    if not _raw_tokens and cs.get('figma_token', '').strip():
+        _raw_tokens = [{'name': '', 'token': cs['figma_token'].strip()}]
+
+    if 'wh_figma_rows' not in st.session_state:
+        st.session_state['wh_figma_rows'] = _raw_tokens if _raw_tokens else [{'name': '', 'token': ''}]
+
+    st.caption("Har bir BA yoki loyiha uchun alohida Figma token kiriting. Webhook har birini sinab ko'radi.")
+    rows = st.session_state['wh_figma_rows']
+    for i in range(len(rows)):
+        c1, c2, c3 = st.columns([2, 4, 1])
+        with c1:
+            st.text_input("Ism / izoh", value=rows[i].get('name', ''),
+                          key=f"wh_figma_n_{i}", placeholder="BA Jasur")
+        with c2:
+            st.text_input("Figma Token", value=rows[i].get('token', ''),
+                          type="password", key=f"wh_figma_t_{i}", placeholder="figd_xxx...")
+        with c3:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("✕", key=f"wh_figma_del_{i}"):
+                st.session_state['wh_figma_rows'].pop(i)
+                st.rerun()
+    if st.button("＋ Token qo'shish", key="wh_figma_add"):
+        st.session_state['wh_figma_rows'].append({'name': '', 'token': ''})
+        st.rerun()
 
     st.markdown("---")
 
@@ -1142,25 +1216,16 @@ def _render_webhook_api_keys_section():
             key="wh_cred_gemini_2",
             help="Ixtiyoriy: birinchi kalit limitga tushsa ishlatiladi"
         )
+    st.text_input(
+        "Gemini model nomi (Webhook)",
+        value=cs.get('gemini_model', ''),
+        placeholder="gemini-2.5-pro",
+        key="wh_cred_gemini_model",
+        help="Bo'sh qoldirsangiz server default modeli ishlatiladi (hozir: " + __import__('os').getenv('GEMINI_MODEL', 'gemini-2.5-flash') + ")"
+    )
 
     st.markdown("<br>", unsafe_allow_html=True)
-
-    if st.button("💾 Webhook Kalitlarni Saqlash", type="primary", key="save_wh_creds"):
-        new_settings = {
-            'jira_server':      jira_server.strip(),
-            'jira_email':       jira_email.strip(),
-            'jira_token':       jira_token.strip(),
-            'github_token':     github_token.strip(),
-            'github_org':       github_org.strip(),
-            'figma_token':      figma_token.strip(),
-            'gemini_api_key_1': gemini_key_1.strip(),
-            'gemini_api_key_2': gemini_key_2.strip(),
-        }
-        if save_company_settings(company_id, new_settings):
-            st.success("✅ Webhook API kalitlar saqlandi!")
-            st.rerun()
-        else:
-            st.error("❌ Saqlashda xato yuz berdi")
+    st.info("💡 O'zgarishlarni saqlash uchun pastdagi **💾 Saqlash** tugmasini bosing.")
 
 
 def _render_api_keys_settings():
@@ -1247,20 +1312,40 @@ def _render_api_keys_settings():
 
     # ━━━ Figma ━━━
     st.markdown("#### 🎨 Figma (ixtiyoriy)")
-    figma_token = st.text_input(
-        "Figma Access Token",
-        value=uc.get('figma_token', ''),
-        type="password",
-        placeholder="figd_xxxx...",
-        key="uc_figma_token",
-        help="Figma → Account Settings → Personal Access Tokens"
-    )
+    import json as _json
+    _loaded_ft = uc.get('figma_tokens', [])
+    if isinstance(_loaded_ft, str):
+        try:
+            _loaded_ft = _json.loads(_loaded_ft) if _loaded_ft else []
+        except Exception:
+            _loaded_ft = []
+    if 'uc_figma_rows' not in st.session_state:
+        st.session_state['uc_figma_rows'] = _loaded_ft if _loaded_ft else [{'name': '', 'token': ''}]
+
+    st.caption("Har bir Biznes Analitik uchun alohida token kiriting")
+    uc_rows = st.session_state['uc_figma_rows']
+    for i in range(len(uc_rows)):
+        c1, c2, c3 = st.columns([2, 4, 1])
+        with c1:
+            st.text_input("Ism", value=uc_rows[i].get('name', ''),
+                          key=f"uc_figma_n_{i}", placeholder="BA Jasur")
+        with c2:
+            st.text_input("Token", value=uc_rows[i].get('token', ''),
+                          type="password", key=f"uc_figma_t_{i}", placeholder="figd_xxx...")
+        with c3:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("✕", key=f"uc_figma_del_{i}"):
+                st.session_state['uc_figma_rows'].pop(i)
+                st.rerun()
+    if st.button("＋ Token qo'shish", key="uc_figma_add"):
+        st.session_state['uc_figma_rows'].append({'name': '', 'token': ''})
+        st.rerun()
 
     st.markdown("---")
 
     # ━━━ Google Gemini ━━━
-    st.markdown("#### 🤖 Google Gemini AI")
-    st.caption("UI modullar uchun bepul kalit yetarli (Google AI Studio)")
+    st.markdown("#### 🤖 Google Gemini AI (ixtiyoriy)")
+    st.caption("Bo'sh qoldirsangiz tizim admin tomonidan sozlangan default kalit va model ishlatiladi.")
     col1, col2 = st.columns(2)
     with col1:
         gemini_key_1 = st.text_input(
@@ -1269,7 +1354,7 @@ def _render_api_keys_settings():
             type="password",
             placeholder="AIzaSy...",
             key="uc_gemini_1",
-            help="Google AI Studio → Get API Key (bepul tier yetarli)"
+            help="Bo'sh qoldirsangiz tizim default kaliti ishlatiladi"
         )
     with col2:
         gemini_key_2 = st.text_input(
@@ -1280,26 +1365,16 @@ def _render_api_keys_settings():
             key="uc_gemini_2",
             help="Ixtiyoriy: birinchi kalit limitga tushsa ishlatiladi"
         )
+    gemini_model = st.text_input(
+        "Gemini model nomi",
+        value=uc.get('gemini_model', ''),
+        placeholder="gemini-2.5-pro",
+        key="uc_gemini_model",
+        help="Bo'sh qoldirsangiz tizim default modeli ishlatiladi (hozir: " + __import__('os').getenv('GEMINI_MODEL', 'gemini-2.5-flash') + ")"
+    )
 
     st.markdown("<br>", unsafe_allow_html=True)
-
-    if st.button("💾 API Kalitlarni Saqlash", type="primary", key="save_user_creds"):
-        new_creds = {
-            'jira_server':        jira_server.strip(),
-            'jira_email':         jira_email.strip(),
-            'jira_token':         jira_token.strip(),
-            'jira_project_keys':  jira_project_keys.strip(),
-            'github_token':       github_token.strip(),
-            'github_org':         github_org.strip(),
-            'figma_token':        figma_token.strip(),
-            'gemini_api_key_1':   gemini_key_1.strip(),
-            'gemini_api_key_2':   gemini_key_2.strip(),
-        }
-        if save_user_credentials(user_id, new_creds):
-            st.success("✅ API kalitlar saqlandi!")
-            st.rerun()
-        else:
-            st.error("❌ Saqlashda xato yuz berdi")
+    st.info("💡 O'zgarishlarni saqlash uchun pastdagi **💾 Saqlash** tugmasini bosing.")
 
 
 def _render_module_visibility_settings(settings: AppSettings) -> ModuleVisibility:

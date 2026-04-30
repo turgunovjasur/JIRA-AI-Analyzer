@@ -38,13 +38,15 @@ class GeminiHelper:
     - Barcha keylar freeze bo'lsa → RuntimeError raise
     """
 
+    # Kalit muammosi — keyingi kalitga o'tish kerak
     FALLBACK_ERROR_KEYWORDS = [
         'resource_exhausted', '429', 'quota', 'rate limit',
         'api key', 'invalid', 'permission', 'forbidden', '403',
-        'billing', 'exceeded', '503', 'unavailable', 'overloaded',
+        'billing', 'exceeded',
     ]
 
     # Vaqtinchalik server xatoliklari — xuddi shu kalit bilan qayta urinish
+    # (kalit muammosi EMAS — freeze qilish noto'g'ri)
     TRANSIENT_ERROR_KEYWORDS = [
         '503', 'unavailable', 'overloaded', 'high demand',
         'temporarily', 'server error', '500', '502', '504',
@@ -53,7 +55,7 @@ class GeminiHelper:
     # Transient xatolik uchun kutish vaqtlari (soniya)
     TRANSIENT_RETRY_DELAYS = [5, 10, 20]
 
-    def __init__(self, api_keys: list = None):
+    def __init__(self, api_keys: list = None, model_name: str = None):
         if api_keys is not None:
             if not api_keys:
                 raise RuntimeError("Kompaniya Gemini API kalitlari kiritilmagan. Sozlamalar sahifasida kalit kiriting.")
@@ -66,7 +68,7 @@ class GeminiHelper:
 
         self._frozen_until = {}
         self._current_idx = 0
-        self.model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+        self.model_name = model_name or os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
         self.last_request_time = 0
         self.request_count = 0
         self._client = genai.Client(api_key=self.api_keys[self._current_idx])
@@ -128,20 +130,38 @@ class GeminiHelper:
         error_msg = str(error).lower()
         return any(kw in error_msg for kw in self.TRANSIENT_ERROR_KEYWORDS)
 
-    def _request(self, prompt, generation_config):
+    def _build_generation_config(self, model_name: str, max_output_tokens: int):
+        """Model nomiga qarab to'g'ri GenerateContentConfig yaratish."""
+        requires_thinking = 'flash' not in model_name.lower()
+        if requires_thinking:
+            return types.GenerateContentConfig(max_output_tokens=max_output_tokens)
+        return types.GenerateContentConfig(
+            max_output_tokens=max_output_tokens,
+            thinking_config=types.ThinkingConfig(thinking_budget=0),
+        )
+
+    def _get_fallback_model(self) -> str | None:
+        """GEMINI_FALLBACK_MODEL .env dan olinadi. Asosiy model bilan bir xil bo'lsa None."""
+        fallback = os.getenv('GEMINI_FALLBACK_MODEL', '').strip()
+        if fallback and fallback != self.model_name:
+            return fallback
+        return None
+
+    def _request(self, prompt, generation_config, model_name: str = None):
         """Bitta Gemini so'rov — transient xato bo'lsa backoff bilan N marta qayta urinish."""
+        target_model = model_name or self.model_name
         last_error = None
         for attempt, delay in enumerate([0] + list(self.TRANSIENT_RETRY_DELAYS)):
             if delay > 0:
                 log.warning(
                     f"AI -> transient xato, retry {attempt}/{len(self.TRANSIENT_RETRY_DELAYS)} "
-                    f"| {delay}s kutilmoqda | key={self._key_name(self._current_idx)}"
+                    f"| {delay}s kutilmoqda | model={target_model} | key={self._key_name(self._current_idx)}"
                 )
                 time.sleep(delay)
 
             try:
                 response = self._client.models.generate_content(
-                    model=self.model_name,
+                    model=target_model,
                     contents=prompt,
                     config=generation_config,
                 )
@@ -154,17 +174,22 @@ class GeminiHelper:
         # Barcha transient retry tugadi — oxirgi xatoni yuqoriga uzatish
         raise last_error
 
-    def analyze(self, prompt, max_output_tokens=8192):
+    def _requires_thinking(self) -> bool:
+        """Pro modellar thinking_budget=0 qabul qilmaydi — faqat flash modellarda o'chirsa bo'ladi."""
+        return 'flash' not in self.model_name.lower()
+
+    def analyze(self, prompt, max_output_tokens=32768):
         """
-        Gemini bilan tahlil — transient retry + N ta key fallback bilan.
-        Thinking o'chirilgan (thinking_budget=0) — tezlik uchun.
+        Gemini bilan tahlil — transient retry + model fallback + key fallback bilan.
+
+        Oqim:
+          1. Asosiy model (GEMINI_MODEL) bilan 3 marta retry (5s→10s→20s)
+          2. Transient xato (503) → GEMINI_FALLBACK_MODEL bilan 3 marta retry
+          3. Permanent xato (429/403) → keyingi API key bilan urinish
         """
         self._rate_limit()
 
-        generation_config = types.GenerateContentConfig(
-            max_output_tokens=max_output_tokens,
-            thinking_config=types.ThinkingConfig(thinking_budget=0),
-        )
+        generation_config = self._build_generation_config(self.model_name, max_output_tokens)
 
         best_idx = self._get_best_available_idx()
         if best_idx is None:
@@ -191,6 +216,28 @@ class GeminiHelper:
 
             except Exception as e:
                 last_error = e
+
+                # Transient xato (503/unavailable): kalit yaxshi, server band —
+                # GEMINI_FALLBACK_MODEL bilan urinib ko'rish
+                if self._is_transient_error(e):
+                    fallback_model = self._get_fallback_model()
+                    if fallback_model:
+                        log.warning(
+                            f"AI -> {self.model_name} unavailable (503), "
+                            f"fallback: {fallback_model} bilan urinilmoqda..."
+                        )
+                        fallback_config = self._build_generation_config(fallback_model, max_output_tokens)
+                        try:
+                            result = self._request(prompt, fallback_config, model_name=fallback_model)
+                            log.info(f"AI -> {fallback_model} muvaffaqiyatli javob berdi")
+                            return result
+                        except Exception as e_fb:
+                            raise RuntimeError(
+                                f"Gemini API: {self.model_name} ham, {fallback_model} ham ishlamadi. "
+                                f"({str(e_fb)})"
+                            ) from e_fb
+                    raise RuntimeError(f"Gemini API xatosi ({current_name}): {str(e)}") from e
+
                 if not self._is_fallback_error(e):
                     raise RuntimeError(f"Gemini API error: {str(e)}") from e
 

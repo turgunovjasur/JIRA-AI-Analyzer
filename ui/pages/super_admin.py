@@ -24,6 +24,8 @@ from utils.auth.auth_db import (
     update_user_password,
     update_user_status,
     delete_user,
+    get_global_gemini_defaults,
+    set_global_setting,
 )
 from ui.components import render_header
 
@@ -48,12 +50,14 @@ def render_super_admin():
     )
     st.markdown("---")
 
-    tabs = st.tabs(["🏢 Kompaniyalar", "➕ Yangi Kompaniya"])
+    tabs = st.tabs(["🏢 Kompaniyalar", "➕ Yangi Kompaniya", "🤖 AI Default"])
 
     with tabs[0]:
         _render_companies_list()
     with tabs[1]:
         _render_create_company()
+    with tabs[2]:
+        _render_ai_default()
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -304,7 +308,7 @@ def _render_user_row(user: dict, company_code: str):
             c1, c2 = st.columns([3, 1])
             with c1:
                 new_p = st.text_input(
-                    f"Yangi parol ({name})",
+                    f"Yangi parol ({full_login})",
                     type="password",
                     placeholder="Kamida 6 ta belgi",
                     key=f"reset_pass_{uid}"
@@ -452,3 +456,111 @@ def _render_create_company():
                 """, unsafe_allow_html=True)
             else:
                 st.error(f"❌ '{clean_code}' kodi allaqachon mavjud yoki xato yuz berdi.")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# GLOBAL AI DEFAULT SOZLAMALARI
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def _render_ai_default():
+    """Super admin global Gemini AI default sozlamalari"""
+    st.markdown("### 🤖 Global AI Default Sozlamalari")
+
+    st.markdown("""
+    <div style="background:rgba(88,166,255,0.08); border:1px solid rgba(88,166,255,0.2);
+                padding:1rem; border-radius:8px; margin-bottom:1.5rem;">
+        <p style="color:#8b949e; margin:0; font-size:0.85rem; line-height:1.6;">
+            Bu yerda belgilangan Gemini API kalit va model <strong style="color:#58a6ff;">barcha userlar uchun default</strong> bo'ladi.<br>
+            Agar user o'z kalitini kiritmagan bo'lsa → tizim shu default kalitdan foydalanadi.<br>
+            Agar user o'z kalitini kiritsa → user kaliti ustun turadi.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    defaults = get_global_gemini_defaults()
+
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.markdown("""
+        <div style="background:rgba(22,27,34,0.7); border:1px solid rgba(48,54,61,0.8);
+                    border-radius:12px; padding:1.5rem;">
+        <h4 style="color:#58a6ff; margin:0 0 1rem 0;">🔑 Gemini API Kalitlari</h4>
+        """, unsafe_allow_html=True)
+
+        key1 = st.text_input(
+            "Gemini API Key 1 (asosiy)",
+            value=defaults.get('api_key_1', ''),
+            type="password",
+            placeholder="AIzaSy...",
+            key="global_gemini_key1",
+            help="Google AI Studio → Get API Key"
+        )
+        key2 = st.text_input(
+            "Gemini API Key 2 (zaxira)",
+            value=defaults.get('api_key_2', ''),
+            type="password",
+            placeholder="AIzaSy...",
+            key="global_gemini_key2",
+            help="Ixtiyoriy: birinchi kalit limitga tushsa ishlatiladi"
+        )
+        model = st.text_input(
+            "Gemini Model nomi",
+            value=defaults.get('model', ''),
+            placeholder="gemini-2.5-pro",
+            key="global_gemini_model",
+            help="Bo'sh qoldirsangiz GeminiHelper o'zining default modelini ishlatadi (GEMINI_MODEL env yoki gemini-2.5-flash)"
+        )
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        if st.button("💾 Saqlash", type="primary", key="save_global_ai"):
+            ok1 = set_global_setting('gemini_default_api_key_1', key1.strip())
+            ok2 = set_global_setting('gemini_default_api_key_2', key2.strip())
+            ok3 = set_global_setting('gemini_default_model', model.strip())
+            if ok1 and ok2 and ok3:
+                st.success("✅ Global AI sozlamalari saqlandi!")
+                st.rerun()
+            else:
+                st.error("❌ Saqlashda xato yuz berdi")
+
+    with col2:
+        st.markdown("""
+        <div style="background:rgba(22,27,34,0.5); border:1px solid rgba(48,54,61,0.5);
+                    border-radius:10px; padding:1rem; margin-top:0.2rem;">
+            <h5 style="color:#e6edf3; margin:0 0 0.8rem 0;">📋 Fallback tartibi</h5>
+            <ol style="color:#8b949e; font-size:0.82rem; margin:0; padding-left:1.2rem; line-height:2;">
+                <li style="color:#36B37E;">User o'z kaliti</li>
+                <li>GEMINI_DEFAULT_API_KEY (.env)</li>
+                <li style="color:#58a6ff;"><strong>Global default (bu yerda)</strong></li>
+                <li>Kompaniya webhook kaliti</li>
+            </ol>
+            <p style="color:#8b949e; font-size:0.78rem; margin:0.8rem 0 0 0;">
+                Birinchi topilgan kalit ishlatiladi.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Joriy holat
+        st.markdown("<br>", unsafe_allow_html=True)
+        has_key = bool(defaults.get('api_key_1'))
+        has_model = bool(defaults.get('model'))
+        st.markdown(f"""
+        <div style="background:rgba(22,27,34,0.5); border:1px solid rgba(48,54,61,0.5);
+                    border-radius:10px; padding:1rem;">
+            <h5 style="color:#e6edf3; margin:0 0 0.8rem 0;">📊 Joriy holat</h5>
+            <p style="margin:0.3rem 0; font-size:0.85rem;">
+                {'✅' if has_key else '⚠️'}
+                <span style="color:{'#36B37E' if has_key else '#FF5630'};">
+                    {'Kalit sozlangan' if has_key else 'Kalit kiritilmagan'}
+                </span>
+            </p>
+            <p style="margin:0.3rem 0; font-size:0.85rem;">
+                {'✅' if has_model else '🔵'}
+                <span style="color:{'#36B37E' if has_model else '#8b949e'};">
+                    {'Model: ' + defaults.get('model', '') if has_model else 'Model: (default)'}
+                </span>
+            </p>
+        </div>
+        """, unsafe_allow_html=True)

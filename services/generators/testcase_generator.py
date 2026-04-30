@@ -184,6 +184,7 @@ class TestCaseGeneratorService(BaseService):
 
             # 1. JIRA dan task olish
             log.info(f"[{task_key}] Testcase ▶ JIRA task olinmoqda...")
+            update_status("progress", "JIRA task ma'lumotlari olinmoqda...")
             task_details = self.jira.get_task_details(task_key)
             if not task_details:
                 return TestCaseGenerationResult(
@@ -290,6 +291,7 @@ class TestCaseGeneratorService(BaseService):
 
             # 5. TZ va Comment tahlili
             log.info(f"[{task_key}] Testcase ▶ TZ formatlanyapti...")
+            update_status("progress", "TZ va comment'lar tahlil qilinmoqda...")
             if not tc_settings.read_comments_enabled:
                 task_no_comments = dict(task_details)
                 task_no_comments['comments'] = []
@@ -310,6 +312,7 @@ class TestCaseGeneratorService(BaseService):
             )
 
             log.info(f"[{task_key}] Testcase ▶ AI ga so'rov yuborilmoqda (test turlari: {test_types})...")
+            update_status("progress", "AI test case'lar yaratmoqda...")
             ai_result = self._generate_with_ai(
                 task_key=task_key,
                 task_details=task_details,
@@ -381,7 +384,7 @@ class TestCaseGeneratorService(BaseService):
                 task_key=task_key,
                 task_summary="",
                 success=False,
-                error_message=f"Error: {str(e)}"
+                error_message=str(e)
             )
 
     def _is_tz_absent_or_minimal(self, task_details: Dict, min_description_chars: int = 50) -> bool:
@@ -811,6 +814,7 @@ Endi {len(test_types)} xil test ({types_text}) uchun test case'lar yarating!
                 return []
 
             json_str = raw_response[json_start:json_end]
+            json_str = self._sanitize_json_escapes(json_str)
 
             # Parse
             data = json.loads(json_str)
@@ -897,6 +901,19 @@ Endi {len(test_types)} xil test ({types_text}) uchun test case'lar yarating!
         log.info(f"Parse natija: {len(test_cases)} ta test case")
         return test_cases
 
+    @staticmethod
+    def _sanitize_json_escapes(s: str) -> str:
+        """JSON da noto'g'ri \\escape larni tuzatish.
+
+        AI Kirill yoki boshqa maxsus harflar oldiga backslash qo'yganda
+        (masalan \\е, \\и) JSON.loads xato beradi. Bunday backslash'lar
+        doubled (\\\\) qilinadi — JSON da literal backslash sifatida o'qiladi.
+
+        Saqlanadi: \\" \\\\ \\/ \\b \\f \\n \\r \\t \\uXXXX
+        """
+        import re
+        return re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', s)
+
     def _try_repair_json(self, broken_json: str) -> Optional[str]:
         """
         Yarim kesilgan (truncated) JSON ni tiklab, to'liq va yaroqli holga keltirish.
@@ -934,7 +951,17 @@ Endi {len(test_types)} xil test ({types_text}) uchun test case'lar yarating!
         if not broken_json:
             return None
 
+        broken_json = self._sanitize_json_escapes(broken_json)
+
         try:
+            # 0-urinish: Sanitize shunday tuzatib qo'yganmi?
+            try:
+                json.loads(broken_json)
+                log.info("JSON repair: 0-urinish muvaffaqiyatli (escape sanitize)")
+                return broken_json
+            except json.JSONDecodeError:
+                pass
+
             # 1-urinish: Oxirgi to'liq test case obyektini topish
             #    Har bir test case "}, " bilan tugaydi (array ichida)
             last_complete = broken_json.rfind('},')

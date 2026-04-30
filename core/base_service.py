@@ -120,7 +120,10 @@ class BaseService:
         if self._gemini_helper is None:
             from utils.ai.gemini_helper import GeminiHelper
             creds = self._get_creds()
-            self._gemini_helper = GeminiHelper(api_keys=creds['gemini_keys'])
+            self._gemini_helper = GeminiHelper(
+                api_keys=creds['gemini_keys'],
+                model_name=creds.get('gemini_model') or None,
+            )
         return self._gemini_helper
 
     def _create_status_updater(

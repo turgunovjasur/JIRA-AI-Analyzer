@@ -194,7 +194,10 @@ def render_bug_analyzer():
         if _user_id:
             from utils.auth.auth_db import get_user_credentials_for_service
             _creds = get_user_credentials_for_service(_user_id)
-            gemini_helper = GeminiHelper(api_keys=_creds['gemini_keys'])
+            gemini_helper = GeminiHelper(
+                api_keys=_creds['gemini_keys'],
+                model_name=_creds.get('gemini_model') or None,
+            )
         else:
             gemini_helper = None
 
