@@ -20,9 +20,19 @@ class JiraClient:
     def __init__(self, server: str = None, email: str = None, token: str = None):
         from config.settings import settings
 
-        self.server = server or settings.JIRA_SERVER
-        self.email  = email  or settings.JIRA_EMAIL
-        self.token  = token  or settings.JIRA_API_TOKEN
+        self.server = (server or "").strip()
+        self.email  = (email or "").strip()
+        self.token  = (token or "").strip()
+
+        missing = []
+        if not self.server:
+            missing.append("JIRA Server")
+        if not self.email:
+            missing.append("JIRA Email")
+        if not self.token:
+            missing.append("JIRA API Token")
+        if missing:
+            raise ValueError(f"JIRA credentials to'liq emas: {', '.join(missing)}")
 
         # Custom fields
         self.story_points_field = settings.STORY_POINTS_FIELD

@@ -16,9 +16,15 @@ Version: 1.0
 """
 import json
 import os
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, replace as dc_replace
 from typing import Optional, List
 from core.logger import get_logger
+from config.token_limits import (
+    AI_MAX_INPUT_TOKENS,
+    CHARS_PER_TOKEN,
+    CHECKER_MAX_OUTPUT_TOKENS,
+    TESTCASE_MAX_OUTPUT_TOKENS,
+)
 
 log = get_logger("config.settings")
 
@@ -118,7 +124,9 @@ class TZPRCheckerSettings:
     auto_return_enabled: bool = False
 
     # AI Token Sozlamalari
-    ai_max_output_tokens: int = 16384  # Gemini javob uchun max token
+    ai_max_output_tokens: int = CHECKER_MAX_OUTPUT_TOKENS  # Gemini javob uchun max token
+    # Smart patch defaulti (checker run'da use_smart_patch berilmasa shu qiymat ishlatiladi)
+    default_use_smart_patch: bool = True
 
     # Status Nomlari
     trigger_status: str = "READY TO TEST"
@@ -235,6 +243,7 @@ class TZPRCheckerSettings:
     trigger_status_help: str = "Qaysi statusda TZ-PR tekshirish boshlanadi"
     trigger_aliases_help: str = "Trigger status uchun alternativ nomlar (vergul bilan ajrating)"
     return_status_help: str = "Moslik past bo'lganda qaysi statusga qaytarish"
+    smart_patch_help: str = "Checker uchun smart patch default holati (True tavsiya etiladi)"
     use_adf_help: str = "ADF formatda dropdown/collapsible panellar ishlatish"
     show_statistics_help: str = "PR statistikasini comment'da ko'rsatish"
     show_compliance_help: str = "Moslik balini comment'da ko'rsatish"
@@ -304,7 +313,7 @@ class TestcaseGeneratorSettings:
     # AI yaratadigan maksimal test case soni
     max_test_cases: int = 10
     # AI javob uchun maksimal token soni (truncation oldini olish uchun)
-    ai_max_output_tokens: int = 16384
+    ai_max_output_tokens: int = TESTCASE_MAX_OUTPUT_TOKENS
 
     # ━━━ AI ga ma'lumotlar tartibi (darajasi) ━━━
     # Sozlamadagi tartib bo'yicha AI promtiga bo'limlar qo'shiladi. Servis SHU tartibga qat'iy amal qiladi.
@@ -335,7 +344,7 @@ class TestcaseGeneratorSettings:
     smart_patch_help: str = "Faqat o'zgargan qismlarni AI ga yuborish (tezroq va arzonroq)"
     test_types_help: str = "Default test turlari: positive (asosiy), negative (xato holatlari)"
     max_test_cases_help: str = "AI yaratadigan maksimal test case soni (1-30)"
-    ai_max_output_tokens_help: str = "AI javob uchun maksimal token soni (16384 tavsiya etiladi)"
+    ai_max_output_tokens_help: str = "AI javob uchun maksimal token soni (platform policy bo'yicha boshqariladi)"
     ai_data_section_order_help: str = (
         "AI ga ma'lumotlar qaysi tartibda berilishi. Birinchi o'rinda eng ustun. "
         "tz = TZ, comments = comment'lar, custom_context = qo'shimcha kontekst, code = kod statistikasi. "
@@ -406,9 +415,9 @@ class QueueSettings:
     # AI so'rov muvaffaqiyatsiz bo'lsa qayta urinish limiti
     ai_max_retries: int = 3            # DEFAULT 3 marta
     # Gemini ga yuboriladigan max input token soni
-    ai_max_input_tokens: int = 900000  # DEFAULT 900K (Gemini 2.5 Flash limit 1M)
+    ai_max_input_tokens: int = AI_MAX_INPUT_TOKENS  # DEFAULT 900K (Gemini 2.5 Flash limit 1M)
     # Token hisoblash koeffitsiyenti (1 token ≈ nechta belgi)
-    chars_per_token: int = 4           # DEFAULT 4 belgi
+    chars_per_token: int = CHARS_PER_TOKEN           # DEFAULT 4 belgi
     # SQLite bloklanganda kutish (millisekund)
     db_busy_timeout: int = 30000       # DEFAULT 30000 ms (30 sek)
     # SQLite ulanish timeout (sekund)
@@ -451,12 +460,12 @@ class QueueSettings:
     )
     ai_max_input_tokens_help: str = (
         "Gemini AI ga yuboriladigan max input token soni. "
-        "Gemini 2.5 Flash limiti 1M token. 900000 xavfsiz chegaradir. "
+        "Gemini 2.5 Flash limiti 1M token. Platform policy bo'yicha boshqariladi. "
         "Katta TZ+PR lar uchun oshirish mumkin."
     )
     chars_per_token_help: str = (
         "Token hisoblash koeffitsiyenti — 1 token taxminan nechta belgiga teng. "
-        "4 standart qiymat. O'zgartirish tavsiya etilmaydi."
+        "Platform policy bo'yicha boshqariladi."
     )
     db_busy_timeout_help: str = (
         "SQLite boshqa jarayon tomonidan bloklanganda qancha vaqt kutadi (millisekund). "
@@ -518,6 +527,17 @@ class AppSettings:
     # testcase_generator — QA moduli (manual), webhook_testcase — webhook auto-comment.
     webhook_testcase: TestcaseGeneratorSettings = field(default_factory=TestcaseGeneratorSettings)
     queue: QueueSettings = field(default_factory=QueueSettings)
+
+
+def _enforce_token_policy(settings: AppSettings) -> AppSettings:
+    """Platform token policy ni AppSettings obyektiga majburan qo'llash."""
+    settings.tz_pr_checker.ai_max_output_tokens = CHECKER_MAX_OUTPUT_TOKENS
+    settings.webhook_tz_pr.ai_max_output_tokens = CHECKER_MAX_OUTPUT_TOKENS
+    settings.testcase_generator.ai_max_output_tokens = TESTCASE_MAX_OUTPUT_TOKENS
+    settings.webhook_testcase.ai_max_output_tokens = TESTCASE_MAX_OUTPUT_TOKENS
+    settings.queue.ai_max_input_tokens = AI_MAX_INPUT_TOKENS
+    settings.queue.chars_per_token = CHARS_PER_TOKEN
+    return settings
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -631,12 +651,12 @@ class AppSettingsManager:
                     queue=QueueSettings(**data.get('queue', {}))
                 )
 
-                return settings
+                return _enforce_token_policy(settings)
             else:
-                return AppSettings()
+                return _enforce_token_policy(AppSettings())
         except Exception as e:
             log.warning(f"Failed to load settings: {e}, using defaults")
-            return AppSettings()
+            return _enforce_token_policy(AppSettings())
 
     def _settings_to_dict(self, settings: AppSettings) -> dict:
         """Settings'ni dictionary'ga o'tkazish (help matnlarsiz)"""
@@ -708,6 +728,58 @@ class AppSettingsManager:
 _settings_manager: Optional[AppSettingsManager] = None
 
 
+def _parse_positive_int_or_default(raw: str, default: int) -> int:
+    try:
+        value = int(str(raw).strip())
+        return value if value > 0 else default
+    except Exception:
+        return default
+
+
+def _apply_global_queue_overrides(settings: AppSettings) -> AppSettings:
+    """
+    Platform-level (super admin) queue override qiymatlarini qo'llash.
+
+    Bu override'lar global_setting jadvalidan o'qiladi va company-level queue
+    sozlamalari bilan birga yakuniy runtime qiymatni shakllantiradi.
+    """
+    try:
+        from utils.auth.auth_db import get_global_setting
+    except Exception:
+        return settings
+
+    current = settings.queue
+    queue_overrides = {
+        "ai_max_retries": _parse_positive_int_or_default(
+            get_global_setting("queue_ai_max_retries", str(current.ai_max_retries)),
+            current.ai_max_retries,
+        ),
+        "key_freeze_duration": _parse_positive_int_or_default(
+            get_global_setting("queue_key_freeze_duration_sec", str(current.key_freeze_duration)),
+            current.key_freeze_duration,
+        ),
+        "db_busy_timeout": _parse_positive_int_or_default(
+            get_global_setting("queue_db_busy_timeout_ms", str(current.db_busy_timeout)),
+            current.db_busy_timeout,
+        ),
+        "db_connection_timeout": _parse_positive_int_or_default(
+            get_global_setting("queue_db_connection_timeout_sec", str(current.db_connection_timeout)),
+            current.db_connection_timeout,
+        ),
+        "http_timeout": _parse_positive_int_or_default(
+            get_global_setting("queue_http_timeout_sec", str(current.http_timeout)),
+            current.http_timeout,
+        ),
+        "executor_timeout": _parse_positive_int_or_default(
+            get_global_setting("queue_executor_timeout_sec", str(current.executor_timeout)),
+            current.executor_timeout,
+        ),
+    }
+
+    settings.queue = dc_replace(current, **queue_overrides)
+    return settings
+
+
 def get_app_settings(force_reload: bool = False) -> AppSettings:
     """Tizim sozlamalarini olish (global funksiya)
     
@@ -718,7 +790,8 @@ def get_app_settings(force_reload: bool = False) -> AppSettings:
     global _settings_manager
     if _settings_manager is None:
         _settings_manager = AppSettingsManager()
-    return _settings_manager.get_settings(force_reload=force_reload)
+    settings = _settings_manager.get_settings(force_reload=force_reload)
+    return _apply_global_queue_overrides(settings)
 
 
 def save_app_settings(settings: AppSettings) -> bool:
@@ -783,16 +856,22 @@ def get_app_settings_for_company(company_id: int) -> AppSettings:
         except Exception:
             return base_obj
 
-    return AppSettings(
+    merged_webhook_tz_pr = _merge(base.webhook_tz_pr, company_wh.get('webhook_tz_pr', {}))
+    merged_webhook_tz_pr.use_adf_format = True
+    merged_webhook_testcase = _merge(base.webhook_testcase, company_wh.get('webhook_testcase', {}))
+    merged_webhook_testcase.use_adf_format = True
+
+    settings = AppSettings(
         modules=base.modules,
         bug_analyzer=base.bug_analyzer,
         statistics=base.statistics,
         tz_pr_checker=base.tz_pr_checker,
-        webhook_tz_pr=_merge(base.webhook_tz_pr,       company_wh.get('webhook_tz_pr', {})),
+        webhook_tz_pr=merged_webhook_tz_pr,
         testcase_generator=base.testcase_generator,
-        webhook_testcase=_merge(base.webhook_testcase, company_wh.get('webhook_testcase', {})),
+        webhook_testcase=merged_webhook_testcase,
         queue=_merge(base.queue,                       company_wh.get('queue', {})),
     )
+    return _enforce_token_policy(settings)
 
 
 def get_app_settings_for_user(user_id: int, company_id: int) -> AppSettings:
@@ -834,13 +913,19 @@ def get_app_settings_for_user(user_id: int, company_id: int) -> AppSettings:
     except Exception:
         return base
 
-    return AppSettings(
+    merged_webhook_tz_pr = _merge(base.webhook_tz_pr, company_wh.get('webhook_tz_pr', {}))
+    merged_webhook_tz_pr.use_adf_format = True
+    merged_webhook_testcase = _merge(base.webhook_testcase, company_wh.get('webhook_testcase', {}))
+    merged_webhook_testcase.use_adf_format = True
+
+    settings = AppSettings(
         modules=base.modules,
         bug_analyzer=_merge(base.bug_analyzer,            user_mods.get('bug_analyzer', {})),
         statistics=_merge(base.statistics,                user_mods.get('statistics', {})),
         tz_pr_checker=_merge(base.tz_pr_checker,          user_mods.get('tz_pr_checker', {})),
-        webhook_tz_pr=_merge(base.webhook_tz_pr,          company_wh.get('webhook_tz_pr', {})),
+        webhook_tz_pr=merged_webhook_tz_pr,
         testcase_generator=_merge(base.testcase_generator, user_mods.get('testcase_generator', {})),
-        webhook_testcase=_merge(base.webhook_testcase,    company_wh.get('webhook_testcase', {})),
+        webhook_testcase=merged_webhook_testcase,
         queue=_merge(base.queue,                          company_wh.get('queue', {})),
     )
+    return _enforce_token_policy(settings)

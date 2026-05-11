@@ -100,35 +100,61 @@ python 2_load_sprints.py
 
 ## 💻 Ishga Tushirish
 ```bash
-streamlit run app.py
+./start.sh
 ```
 
-Browser: `http://localhost:8501`
+Browser: `http://localhost:3000`
+
+Izoh:
+- `start.sh` endi default holatda `Next.js` frontend + `FastAPI` backendni birga ko'taradi.
+- Customer, company admin va super admin oqimlari yangi web portal ichida ishlaydi.
+- `.env` ichida `APP_WEBHOOK_EXECUTION_MODE=queue` bo'lsa, `start.sh` worker'ni ham avtomatik ko'taradi.
+- Local run paytida `.env` ichida `APP_DB_BACKEND=postgres` bo'lsa-yu Postgres ulanmasa, `start.sh` mavjud `data/auth.db` va `data/processing.db` orqali avtomatik `sqlite` fallback qiladi.
+- `.env` ichida Windows pathlar qolgan bo'lsa, `start.sh` local session uchun ularni repo ichidagi `data/` va `models/` papkalariga almashtirib beradi.
+- Yangi build'larda local backend avtomatik ko'tarishga urinadi; agar bu ishlamasa `logs/backend_api.log` ni tekshiring.
+- Qo'lda ishga tushirish kerak bo'lsa:
+```bash
+python -m uvicorn services.webhook.jira_webhook_handler:app --host 0.0.0.0 --port 8000
+python -m services.worker.main   # queue rejimi uchun
+cd frontend && npm run dev
+```
+
+## 🌐 Web Portal
+
+Customer, company admin va super admin oqimlari endi yagona `Next.js` portal ichida ishlaydi:
+
+```bash
+./start.sh
+```
+
+Asosiy fayllar:
+- [frontend/README.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/README.md)
+- [DEPLOY_WEB.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/DEPLOY_WEB.md)
+- [ROADMAP_SAAS.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/ROADMAP_SAAS.md)
+- [PERMISSION_MATRIX.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/PERMISSION_MATRIX.md)
+- [PROGRESS_LOG.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/PROGRESS_LOG.md)
+
+Hozirgi bosqich:
+- backend-managed auth session tayyor
+- `Monitoring`, `TZ-PR Checker`, `Test Case Generator`, `Settings`, `Team`, `Super Admin` sahifalari `Next.js`da real backend flow bilan ishlaydi
+- `Streamlit` runtime va legacy UI qatlamlari kodbasedan chiqarildi
+- Docker/compose deploy packaging qo'shildi
+- worker/queue boundary va alohida worker runtime qo'shildi
+- qolgan asosiy ishlar endi infra/ops bosqichida: prod deploy, billing/security polish
 
 ---
 
 ## 📁 Struktura
 ```
 jira-bug-analyzer/
-├── app.py                  # Main app
+├── frontend/               # Next.js web portal
+├── services/               # FastAPI API, webhook va domain services
+├── utils/                  # Auth, database, helper qatlamlari
+├── docker-compose.yml
+├── Dockerfile.backend
+├── start.sh
 ├── requirements.txt
 ├── .env
-│
-├── ui/                     # UI components
-│   ├── bug_analyzer.py
-│   ├── statistics.py
-│   └── pages/
-│       └── tz_pr_checker.py
-│
-├── utils/                  # Helpers
-│   ├── embedding_helper.py
-│   ├── vectordb_helper.py
-│   ├── gemini_helper.py
-│   └── chunking_helper.py
-│
-├── services/
-│   └── tz_pr_service.py
-│
 └── data/
     ├── excel_reports/
     ├── vector_db/
@@ -145,14 +171,6 @@ jira-bug-analyzer/
 2. Tizim VectorDB'dan o'xshash tasklar qidiradi
 3. Gemini AI tahlil qiladi
 4. Root cause va yechim ko'rsatadi
-
-### Sprint Statistics
-
-- Umumiy ko'rsatkichlar
-- Developer performance
-- Bug analysis
-- Return statistics
-- Interactive charts
 
 ### TZ-PR Checker
 
@@ -175,37 +193,11 @@ TOP_K_RESULTS=20       # Candidates
 FINAL_TOP_N=5          # Final results
 ```
 
-### Chunking Weights
-
-`utils/chunking_helper.py`:
-```python
-weights = {
-    'summary': 3.5,
-    'root_cause': 3.0,
-    'solution': 3.0,
-    'description': 2.5,
-}
-```
-
----
-
-## 📊 Performance
-
-- **Search**: < 2s
-- **AI Analysis**: 15-30s
-- **Loading**: Incremental (faqat yangi fayllar)
-- **Memory**: ~2-4 GB
-
----
-
 ## 🧪 Testing
 ```bash
-python utils/test_chunking_system.py
+pytest
+cd frontend && npm run typecheck && npm run build
 ```
-
----
-
-## 👨‍💻 Author
 
 **Jasur Turgunov**  
 Automation QA Engineer  
@@ -227,4 +219,6 @@ Private - Turgunon Jasur
 - **Gemini AI** - Bug analysis
 - **Sentence Transformers** - Embeddings
 - **ChromaDB** - Vector database
-- **Streamlit** - Web framework
+- **Next.js** - Web frontend
+- **FastAPI** - Backend API
+- **PostgreSQL** - Primary runtime database

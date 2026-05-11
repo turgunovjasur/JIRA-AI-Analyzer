@@ -44,6 +44,11 @@ class CommentSeparator:
         return bool(comment.get('body', '').strip())
 
     @classmethod
+    def filter_human_comments(cls, comments: List[Dict]) -> List[Dict]:
+        """AI yozgan comment'lardan tozalangan human comment'lar."""
+        return [comment for comment in comments if cls.is_valid_dev_comment(comment)]
+
+    @classmethod
     def separate(cls, comments: List[Dict], marker: str = 'S1') -> Dict:
         """
         Comment'larni AI va dev tomonidan yozilganlarga ajratadi.
@@ -165,7 +170,8 @@ class TZHelper:
     def format_tz_with_comments(
             task_details: Dict,
             max_comments: Optional[int] = None,
-            highlight_changes: bool = True
+            highlight_changes: bool = True,
+            exclude_ai_comments: bool = True,
     ) -> tuple[str, Dict]:
         """
         TZ + Comments (to'liq versiya)
@@ -190,13 +196,18 @@ class TZHelper:
         parts = [TZHelper.format_tz_basic(task_details)]
 
         # 2. Comment'lar
-        comments = task_details.get('comments', [])
+        raw_comments = task_details.get('comments', [])
+        comments = (
+            CommentSeparator.filter_human_comments(raw_comments)
+            if exclude_ai_comments else raw_comments
+        )
 
         if comments:
             # Comment'larni tahlil qilish
             comment_analysis = TZHelper.analyze_comments(
                 task_details.get('description', ''),
-                comments
+                comments,
+                exclude_ai_comments=False,
             )
 
             # Comment section
@@ -225,14 +236,26 @@ class TZHelper:
                 'has_changes': False,
                 'summary': "Comment yo'q",
                 'change_count': 0,
-                'important_comments': []
+                'important_comments': [],
+                'filtered_out_ai_comments': (
+                    len(raw_comments) - len(comments)
+                    if exclude_ai_comments else 0
+                ),
+                'total_comments': 0,
             }
+
+        if exclude_ai_comments:
+            comment_analysis['filtered_out_ai_comments'] = len(raw_comments) - len(comments)
 
         tz_text = "\n".join(parts)
         return tz_text, comment_analysis
 
     @staticmethod
-    def analyze_comments(description: str, comments: List[Dict]) -> Dict:
+    def analyze_comments(
+            description: str,
+            comments: List[Dict],
+            exclude_ai_comments: bool = True,
+    ) -> Dict:
         """
         Comment'lardagi o'zgarishlarni tahlil qilish
 
@@ -256,12 +279,23 @@ class TZHelper:
             >>> if analysis['has_changes']:
             >>>     print("Diqqat! TZ o'zgargan!")
         """
+        raw_comments = comments or []
+        comments = (
+            CommentSeparator.filter_human_comments(raw_comments)
+            if exclude_ai_comments else raw_comments
+        )
+
         if not comments:
             return {
                 'has_changes': False,
                 'summary': "Comment yo'q",
                 'change_count': 0,
-                'important_comments': []
+                'important_comments': [],
+                'filtered_out_ai_comments': (
+                    len(raw_comments) - len(comments)
+                    if exclude_ai_comments else 0
+                ),
+                'total_comments': 0,
             }
 
         # O'zgarish bildiruvchi so'zlar (multilingual)
@@ -314,7 +348,11 @@ class TZHelper:
             'summary': summary,
             'change_count': change_count,
             'important_comments': important_comments,
-            'total_comments': len(comments)
+            'total_comments': len(comments),
+            'filtered_out_ai_comments': (
+                len(raw_comments) - len(comments)
+                if exclude_ai_comments else 0
+            ),
         }
 
     @staticmethod

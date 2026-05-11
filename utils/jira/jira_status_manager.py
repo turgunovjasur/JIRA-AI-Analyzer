@@ -11,12 +11,8 @@ Author: JASUR TURGUNOV
 Version: 1.0
 """
 from jira import JIRA
-import os
 from typing import List, Dict, Optional, Tuple
-from dotenv import load_dotenv
 from core.logger import get_logger
-
-load_dotenv()
 
 log = get_logger("jira.status")
 
@@ -26,9 +22,20 @@ class JiraStatusManager:
 
     def __init__(self, server: str = None, email: str = None, token: str = None):
         """JIRA client yaratish"""
-        _server = server or os.getenv('JIRA_SERVER', 'https://smartupx.atlassian.net')
-        _email  = email  or os.getenv('JIRA_EMAIL')
-        _token  = token  or os.getenv('JIRA_API_TOKEN')
+        _server = (server or "").strip()
+        _email  = (email or "").strip()
+        _token  = (token or "").strip()
+
+        missing = []
+        if not _server:
+            missing.append("JIRA Server")
+        if not _email:
+            missing.append("JIRA Email")
+        if not _token:
+            missing.append("JIRA API Token")
+        if missing:
+            raise ValueError(f"JIRA status credentials to'liq emas: {', '.join(missing)}")
+
         try:
             self.jira = JIRA(
                 server=_server,
@@ -207,13 +214,6 @@ class JiraStatusManager:
             return False, f"Qaytarishda xato: {msg}"
 
 
-# Singleton instance
-_status_manager: Optional[JiraStatusManager] = None
-
-
-def get_status_manager() -> JiraStatusManager:
-    """Status manager instance olish"""
-    global _status_manager
-    if _status_manager is None:
-        _status_manager = JiraStatusManager()
-    return _status_manager
+def get_status_manager(server: str, email: str, token: str) -> JiraStatusManager:
+    """Status manager yaratish (har chaqiriqda explicit tenant credential talab qilinadi)."""
+    return JiraStatusManager(server=server, email=email, token=token)

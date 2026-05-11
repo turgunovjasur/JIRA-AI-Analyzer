@@ -263,7 +263,8 @@ async def _write_timeout_error_comment(task_key: str, timeout_seconds: int, comp
         from utils.jira.jira_comment_writer import JiraCommentWriter
         from utils.auth.auth_db import get_company_credentials
         adf_formatter = get_adf_formatter()
-        creds = get_company_credentials(company_id)
+        from utils.auth.auth_db import get_company_webhook_credentials
+        creds = get_company_webhook_credentials(company_id)
         comment_writer = JiraCommentWriter(
             server=creds['jira_server'],
             email=creds['jira_email'],
@@ -322,5 +323,4 @@ async def _write_skip_notification(
 
     except Exception as e:
         log.error(f"[{task_key}] Skip notification xato: {e}")
-
 

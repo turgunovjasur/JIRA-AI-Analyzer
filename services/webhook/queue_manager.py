@@ -29,55 +29,62 @@ from utils.database.task_db import get_task, mark_blocked
 log = get_logger("webhook.queue_manager")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# GLOBAL AI QUEUE STATE
-# Asyncio single-event-loop muhitida thread-safe (lock ichida mutatsiya)
+# AI QUEUE STATE
+# Tenant kesimida alohida lock va rate-limit state saqlanadi.
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-_ai_queue_lock: Optional[asyncio.Lock] = None
-_ai_last_call_time: float = 0.0
+_GLOBAL_QUEUE_SCOPE = "__global__"
+_ai_queue_locks: dict[str, asyncio.Lock] = {}
+_ai_last_call_times: dict[str, float] = {}
 
 
-def _get_ai_queue_lock() -> asyncio.Lock:
+def _queue_scope(company_id: Optional[int]) -> str:
+    return f"company:{company_id}" if company_id is not None else _GLOBAL_QUEUE_SCOPE
+
+
+def _get_ai_queue_lock(company_id: Optional[int] = None) -> asyncio.Lock:
     """
-    Global AI queue lock — lazy singleton.
+    Tenant uchun AI queue lock — lazy singleton.
 
-    Singleton pattern: birinchi chaqiruvda yaratiladi, keyingilarda bir xil obyekt.
+    Har bir kompaniya uchun alohida lock yaratiladi, shunda bitta tenantning
+    AI navbati boshqasini bloklamaydi.
     asyncio.Lock event loop'ga bog'liq — faqat asinxron muhitda to'g'ri ishlaydi.
 
     Returns:
-        asyncio.Lock — global lock obyekti
+        asyncio.Lock — tenantga tegishli lock obyekti
     """
-    global _ai_queue_lock
-    if _ai_queue_lock is None:
-        _ai_queue_lock = asyncio.Lock()
-    return _ai_queue_lock
+    scope = _queue_scope(company_id)
+    if scope not in _ai_queue_locks:
+        _ai_queue_locks[scope] = asyncio.Lock()
+    return _ai_queue_locks[scope]
 
 
-async def _wait_for_ai_slot(task_key: str) -> None:
+async def _wait_for_ai_slot(task_key: str, company_id: Optional[int] = None, min_interval: Optional[int] = None) -> None:
     """
     AI so'rov yuborishdan oldin rate limit kutish.
 
     Google Gemini API: 10 so'rov/daqiqa (free tier) → har so'rov orasida
     kamida gemini_min_interval sekund bo'lishi kerak (default: 6 sekund).
 
-    _ai_last_call_time global o'zgaruvchisi oxirgi AI chaqruv vaqtini saqlaydi.
+    _ai_last_call_times tenant kesimidagi oxirgi AI chaqruv vaqtini saqlaydi.
     Bu funksiya faqat _ai_queue_lock ichida chaqiriladi — global o'zgaruvchi
     lock himoyasida (asyncio single-thread, race condition yo'q).
 
     Args:
         task_key: Log uchun JIRA task identifikatori
     """
-    global _ai_last_call_time
+    scope = _queue_scope(company_id)
+    if min_interval is None:
+        app_settings = get_app_settings(force_reload=False)
+        min_interval = app_settings.queue.gemini_min_interval
 
-    app_settings = get_app_settings(force_reload=False)
-    min_interval = app_settings.queue.gemini_min_interval
-
-    elapsed = time.time() - _ai_last_call_time
+    last_call_time = _ai_last_call_times.get(scope, 0.0)
+    elapsed = time.time() - last_call_time
     if elapsed < min_interval:
         wait_time = min_interval - elapsed
         log.queue_waiting(task_key, "AI rate limit", int(wait_time))
         await asyncio.sleep(wait_time)
 
-    _ai_last_call_time = time.time()
+    _ai_last_call_times[scope] = time.time()
 
 
 async def _write_timeout_error_comment(task_key: str, timeout_seconds: int, company_id: int = None) -> None:
@@ -132,21 +139,22 @@ async def _run_task_group(task_key: str, new_status: str, company_id: int = None
             await _run_testcase_generation(task_key=task_key, new_status=new_status, company_id=company_id)
         return
 
-    lock = _get_ai_queue_lock()
+    lock = _get_ai_queue_lock(company_id)
     timeout = queue_settings.task_wait_timeout
     delay = queue_settings.checker_testcase_delay
+    retry_minutes = queue_settings.blocked_retry_delay
 
     try:
         await asyncio.wait_for(lock.acquire(), timeout=timeout)
     except asyncio.TimeoutError:
         log.queue_timeout(task_key, timeout)
-        mark_blocked(task_key, f"Queue timeout: {timeout}s", retry_minutes=5)
+        mark_blocked(task_key, f"Queue timeout: {timeout}s", retry_minutes=retry_minutes)
         await _write_timeout_error_comment(task_key, timeout, company_id=company_id)
         return
 
     try:
         # Service1
-        await _wait_for_ai_slot(task_key)
+        await _wait_for_ai_slot(task_key, company_id=company_id, min_interval=queue_settings.gemini_min_interval)
         await check_tz_pr_and_comment(task_key=task_key, new_status=new_status, company_id=company_id)
 
         # Service1 → Service2 orasidagi kutish
@@ -156,7 +164,7 @@ async def _run_task_group(task_key: str, new_status: str, company_id: int = None
         # Service2 — faqat shartlar bajarilsa
         task_db = get_task(task_key)
         if task_db and _can_run_service2(task_db, app_settings):
-            await _wait_for_ai_slot(task_key)
+            await _wait_for_ai_slot(task_key, company_id=company_id, min_interval=queue_settings.gemini_min_interval)
             await _run_testcase_generation(task_key=task_key, new_status=new_status, company_id=company_id)
         elif task_db:
             s1 = task_db.get('service1_status', 'pending')
@@ -196,19 +204,20 @@ async def _queued_check_tz_pr(task_key: str, new_status: str, company_id: int = 
         await check_tz_pr_and_comment(task_key=task_key, new_status=new_status, company_id=company_id)
         return
 
-    lock = _get_ai_queue_lock()
+    lock = _get_ai_queue_lock(company_id)
     timeout = queue_settings.task_wait_timeout
+    retry_minutes = queue_settings.blocked_retry_delay
 
     try:
         await asyncio.wait_for(lock.acquire(), timeout=timeout)
     except asyncio.TimeoutError:
         log.queue_timeout(task_key, timeout)
-        mark_blocked(task_key, f"Queue timeout: {timeout}s", retry_minutes=5)
+        mark_blocked(task_key, f"Queue timeout: {timeout}s", retry_minutes=retry_minutes)
         await _write_timeout_error_comment(task_key, timeout, company_id=company_id)
         return
 
     try:
-        await _wait_for_ai_slot(task_key)
+        await _wait_for_ai_slot(task_key, company_id=company_id, min_interval=queue_settings.gemini_min_interval)
         await check_tz_pr_and_comment(task_key=task_key, new_status=new_status, company_id=company_id)
     finally:
         lock.release()
@@ -246,5 +255,3 @@ def _can_run_service2(task_db: dict, app_settings) -> bool:
             return True
 
     return False
-
-

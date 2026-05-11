@@ -67,7 +67,8 @@ async def check_and_generate_testcases(
         if company_id is not None:
             from utils.auth.auth_db import get_company_credentials
             try:
-                get_company_credentials(company_id)  # kalit yo'q bo'lsa RuntimeError
+                from utils.auth.auth_db import get_company_webhook_credentials
+                get_company_webhook_credentials(company_id)  # kalit yo'q bo'lsa RuntimeError
             except RuntimeError as key_err:
                 log.warning(f"[{task_key}] {key_err}")
                 return False, str(key_err)
@@ -102,7 +103,8 @@ async def check_and_generate_testcases(
                     from services.webhook.error_handler import _write_error_comment
                     from utils.jira.jira_comment_writer import JiraCommentWriter
                     from utils.auth.auth_db import get_company_credentials
-                    _creds = get_company_credentials(company_id)
+                    from utils.auth.auth_db import get_company_webhook_credentials
+                    _creds = get_company_webhook_credentials(company_id)
                     writer = JiraCommentWriter(
                         server=_creds['jira_server'],
                         email=_creds['jira_email'],
@@ -175,7 +177,8 @@ def _write_testcases_comment(
     from utils.auth.auth_db import get_company_credentials
 
     try:
-        creds = get_company_credentials(company_id)
+        from utils.auth.auth_db import get_company_webhook_credentials
+        creds = get_company_webhook_credentials(company_id)
         writer = JiraCommentWriter(
             server=creds['jira_server'],
             email=creds['jira_email'],

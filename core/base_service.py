@@ -13,6 +13,7 @@ Xususiyatlari:
 
 from typing import Optional, Callable
 from core.logger import get_logger
+from config.token_limits import AI_MAX_INPUT_TOKENS, CHARS_PER_TOKEN
 
 # Logger instance
 log = get_logger("base.service")
@@ -30,8 +31,8 @@ def _get_base_settings():
         except Exception as e:
             # Default values
             class DefaultSettings:
-                ai_max_input_tokens = 900000
-                chars_per_token = 4
+                ai_max_input_tokens = AI_MAX_INPUT_TOKENS
+                chars_per_token = CHARS_PER_TOKEN
                 ai_max_retries = 3
             _settings_cache = DefaultSettings()
     return _settings_cache
@@ -76,8 +77,8 @@ class BaseService:
                 from utils.auth.auth_db import get_user_credentials_for_service
                 self._cached_creds = get_user_credentials_for_service(self._user_id)
             elif self._company_id is not None:
-                from utils.auth.auth_db import get_company_credentials
-                self._cached_creds = get_company_credentials(self._company_id)
+                from utils.auth.auth_db import get_company_webhook_credentials
+                self._cached_creds = get_company_webhook_credentials(self._company_id)
             else:
                 raise RuntimeError(
                     "BaseService: user_id yoki company_id ko'rsatilmagan. "

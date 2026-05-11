@@ -4,18 +4,54 @@ Sprint Report API - FastAPI endpoints for sprint analytics
 Author: JASUR TURGUNOV
 Version: 1.0
 """
-from fastapi import APIRouter, HTTPException, Query
+import secrets
+from fastapi import APIRouter, HTTPException, Query, Header
 from pydantic import BaseModel
 from typing import List, Optional
-from datetime import datetime, timedelta
-import sqlite3
+from datetime import datetime
 import os
+
+from services.api.session_scope import get_session_company_id, get_session_role, load_api_session
+from utils.database.runtime import get_processing_db_path, connect_processing_db, get_db_backend, is_sqlite_backend
+from utils.database.sprint_report_repository import (
+    fetch_total_tasks,
+    fetch_task_type_stats,
+    fetch_top_features,
+    fetch_bug_distribution,
+    fetch_developer_workload,
+)
 
 router = APIRouter(prefix="/api", tags=["sprint-report"])
 
-# DB fayl yo'li - project root/data papkasi
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DB_FILE = os.path.join(PROJECT_ROOT, 'data', 'processing.db')
+DB_FILE = get_processing_db_path()
+
+
+def _require_api_token(x_api_token: Optional[str]) -> None:
+    """Sprint report API uchun oddiy token himoyasi."""
+    expected_token = os.getenv("SPRINT_REPORT_API_TOKEN")
+    if not expected_token:
+        raise HTTPException(status_code=503, detail="Sprint report API disabled")
+    if not x_api_token or not secrets.compare_digest(x_api_token, expected_token):
+        raise HTTPException(status_code=401, detail="Invalid API token")
+
+
+def _resolve_company_scope(
+    company_id: int,
+    x_session_id: Optional[str],
+    x_api_token: Optional[str],
+) -> int:
+    if x_session_id:
+        session = load_api_session(x_session_id, allowed_roles={"super_admin", "company_admin"})
+        role = get_session_role(session)
+        if role == "company_admin":
+            session_company_id = get_session_company_id(session)
+            if not session_company_id or company_id != session_company_id:
+                raise HTTPException(status_code=403, detail="Boshqa company sprint reportini ko'rib bo'lmaydi")
+            return session_company_id
+        return company_id
+
+    _require_api_token(x_api_token)
+    return company_id
 
 
 # Response models
@@ -64,8 +100,11 @@ class SprintReportResponse(BaseModel):
 
 @router.get("/sprint-report", response_model=SprintReportResponse)
 async def get_sprint_report(
+    company_id: int = Query(..., ge=1, description="Company ID"),
     days: int = Query(default=7, ge=1, le=365, description="Period in days"),
-    limit: int = Query(default=10, ge=1, le=100, description="Top features limit")
+    limit: int = Query(default=10, ge=1, le=100, description="Top features limit"),
+    x_api_token: Optional[str] = Header(default=None, alias="X-API-Token"),
+    x_session_id: Optional[str] = Header(default=None, alias="X-Session-ID"),
 ):
     """
     Sprint report with task statistics.
@@ -76,34 +115,16 @@ async def get_sprint_report(
     - Bug/error distribution by feature
     - Developer workload statistics
     """
-    if not os.path.exists(DB_FILE):
+    scoped_company_id = _resolve_company_scope(company_id, x_session_id, x_api_token)
+
+    if is_sqlite_backend() and not os.path.exists(DB_FILE):
         raise HTTPException(status_code=404, detail="Database not found")
 
     try:
-        conn = sqlite3.connect(DB_FILE)
-        conn.row_factory = sqlite3.Row
+        conn = connect_processing_db(row_factory=True)
         cursor = conn.cursor()
 
-        cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
-
-        # 1. Total tasks
-        cursor.execute("""
-            SELECT COUNT(*) as total
-            FROM task_processing
-            WHERE created_at >= ?
-        """, (cutoff_date,))
-        total_tasks = cursor.fetchone()['total']
-
-        # 2. Task by type
-        cursor.execute("""
-            SELECT
-                COALESCE(task_type, 'other') as task_type,
-                COUNT(*) as count
-            FROM task_processing
-            WHERE created_at >= ?
-            GROUP BY task_type
-            ORDER BY count DESC
-        """, (cutoff_date,))
+        total_tasks = fetch_total_tasks(cursor, scoped_company_id, days)
 
         task_by_type = [
             TaskTypeStats(
@@ -111,64 +132,18 @@ async def get_sprint_report(
                 count=row['count'],
                 percentage=round(row['count'] / total_tasks * 100, 2) if total_tasks > 0 else 0
             )
-            for row in cursor.fetchall()
+            for row in fetch_task_type_stats(cursor, scoped_company_id, days)
         ]
 
-        # 3. Top features
-        cursor.execute("""
-            SELECT
-                COALESCE(feature_name, 'unknown') as feature_name,
-                COUNT(*) as total_tasks,
-                SUM(CASE WHEN task_type = 'product' THEN 1 ELSE 0 END) as product,
-                SUM(CASE WHEN task_type = 'client' THEN 1 ELSE 0 END) as client,
-                SUM(CASE WHEN task_type = 'bug' THEN 1 ELSE 0 END) as bug,
-                SUM(CASE WHEN task_type = 'error' THEN 1 ELSE 0 END) as error,
-                SUM(CASE WHEN task_type = 'analiz' THEN 1 ELSE 0 END) as analiz,
-                SUM(CASE WHEN task_type NOT IN ('product','client','bug','error','analiz')
-                    OR task_type IS NULL THEN 1 ELSE 0 END) as other
-            FROM task_processing
-            WHERE created_at >= ?
-              AND feature_name IS NOT NULL
-              AND feature_name != ''
-            GROUP BY feature_name
-            ORDER BY total_tasks DESC
-            LIMIT ?
-        """, (cutoff_date, limit))
+        top_features = [
+            FeatureStats(**row)
+            for row in fetch_top_features(cursor, scoped_company_id, days, limit)
+        ]
 
-        top_features = [FeatureStats(**dict(row)) for row in cursor.fetchall()]
-
-        # 4. Bug distribution
-        cursor.execute("""
-            SELECT
-                COALESCE(feature_name, 'unknown') as feature_name,
-                SUM(CASE WHEN task_type = 'bug' THEN 1 ELSE 0 END) as bug_count,
-                SUM(CASE WHEN task_type = 'error' THEN 1 ELSE 0 END) as error_count,
-                SUM(CASE WHEN task_type IN ('bug', 'error') THEN 1 ELSE 0 END) as total
-            FROM task_processing
-            WHERE created_at >= ?
-              AND feature_name IS NOT NULL
-              AND task_type IN ('bug', 'error')
-            GROUP BY feature_name
-            ORDER BY total DESC
-        """, (cutoff_date,))
-
-        bug_distribution = [BugDistribution(**dict(row)) for row in cursor.fetchall()]
-
-        # 5. Developer workload
-        cursor.execute("""
-            SELECT
-                COALESCE(assignee, 'Unassigned') as assignee,
-                COUNT(*) as total_tasks,
-                SUM(CASE WHEN task_status = 'completed' THEN 1 ELSE 0 END) as completed,
-                SUM(CASE WHEN task_status = 'progressing' THEN 1 ELSE 0 END) as in_progress,
-                SUM(CASE WHEN task_status = 'returned' THEN 1 ELSE 0 END) as returned,
-                AVG(compliance_score) as avg_compliance_score
-            FROM task_processing
-            WHERE created_at >= ?
-              AND assignee IS NOT NULL
-            GROUP BY assignee
-            ORDER BY total_tasks DESC
-        """, (cutoff_date,))
+        bug_distribution = [
+            BugDistribution(**row)
+            for row in fetch_bug_distribution(cursor, scoped_company_id, days)
+        ]
 
         developer_workload = [
             DeveloperWorkload(
@@ -180,7 +155,7 @@ async def get_sprint_report(
                 avg_compliance_score=round(row['avg_compliance_score'], 2)
                     if row['avg_compliance_score'] else None
             )
-            for row in cursor.fetchall()
+            for row in fetch_developer_workload(cursor, scoped_company_id, days)
         ]
 
         conn.close()
@@ -196,4 +171,4 @@ async def get_sprint_report(
         )
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database error ({get_db_backend()}): {str(e)}")

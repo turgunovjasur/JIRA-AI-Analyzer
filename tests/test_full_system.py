@@ -630,9 +630,10 @@ class TestWebhookEndpoint:
         from fastapi.testclient import TestClient
         from services.webhook.jira_webhook_handler import app
         client = TestClient(app)
+        task_key = "TEST-WEBHOOK-DUP-001"
         payload = {
             "webhookEvent": "jira:issue_updated",
-            "issue": {"key": "TEST-WEBHOOK-001", "fields": {"issuetype": {"name": "DEV-BUG"}}},
+            "issue": {"key": task_key, "fields": {"issuetype": {"name": "DEV-BUG"}}},
             "changelog": {
                 "items": [
                     {"field": "status", "fromString": "In Progress", "toString": "READY TO TEST"}

@@ -8,7 +8,6 @@ echo   JIRA AI Analyzer - Ishga tushirish
 echo ============================================================
 echo.
 
-:: Virtual environment tekshirish
 if not exist ".venv\Scripts\python.exe" (
     echo [XATO] Virtual environment topilmadi!
     echo        Avval setup.bat ni ishga tushiring.
@@ -16,7 +15,6 @@ if not exist ".venv\Scripts\python.exe" (
     exit /b 1
 )
 
-:: .env tekshirish
 if not exist ".env" (
     echo [XATO] .env fayl topilmadi!
     echo        .env faylini to'ldiring.
@@ -24,7 +22,29 @@ if not exist ".env" (
     exit /b 1
 )
 
-:: Tarmoq IP aniqlash
+if not exist "frontend\node_modules" (
+    echo [XATO] Frontend dependency topilmadi!
+    echo        Avval: cd frontend ^&^& npm install
+    pause
+    exit /b 1
+)
+
+set START_WORKER=0
+set WEBHOOK_EXECUTION_MODE=%APP_WEBHOOK_EXECUTION_MODE%
+if "%WEBHOOK_EXECUTION_MODE%"=="" (
+    for /f "usebackq tokens=1,* delims==" %%a in (".env") do (
+        if /i "%%a"=="APP_WEBHOOK_EXECUTION_MODE" (
+            set WEBHOOK_EXECUTION_MODE=%%b
+        )
+    )
+)
+if /i "%WEBHOOK_EXECUTION_MODE%"=="queue" (
+    set START_WORKER=1
+)
+if "%WEBHOOK_EXECUTION_MODE%"=="" (
+    set WEBHOOK_EXECUTION_MODE=inline
+)
+
 set LOCAL_IP=127.0.0.1
 for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /i "IPv4"') do (
     set TMP_IP=%%a
@@ -34,22 +54,27 @@ for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /i "IPv4"') do (
     )
 )
 
-echo  UI  (Streamlit) : http://!LOCAL_IP!:8501
-echo  API (Webhook)   : http://!LOCAL_IP!:8000
-echo  Localhost UI    : http://localhost:8501
+echo  UI  (Next.js)   : http://!LOCAL_IP!:3000
+echo  API (FastAPI)   : http://!LOCAL_IP!:8000
+echo  Mode            : %WEBHOOK_EXECUTION_MODE%
+echo  Localhost UI    : http://localhost:3000
 echo.
 echo  Ctrl+C bosib to'xtatish mumkin
 echo.
 
-:: Webhook serverni alohida oynada ishga tushirish
-start "Webhook Server :8000" cmd /k ".venv\Scripts\python.exe -m uvicorn services.webhook.jira_webhook_handler:app --host 0.0.0.0 --port 8000"
+start "Backend API :8000" cmd /k ".venv\Scripts\python.exe -m uvicorn services.webhook.jira_webhook_handler:app --host 0.0.0.0 --port 8000"
 
-:: 3 soniya kutish
+if "%START_WORKER%"=="1" (
+    start "Background Worker" cmd /k ".venv\Scripts\python.exe -m services.worker.main"
+)
+
 timeout /t 3 /nobreak >nul
 
-:: Streamlit UI
-echo [UI] Streamlit ishga tushmoqda...
-.venv\Scripts\python.exe -m streamlit run app.py --server.address=0.0.0.0 --server.port=8501 --server.headless=true --browser.gatherUsageStats=false
+echo [WEB] Next.js ishga tushmoqda...
+cd frontend
+set BACKEND_API_BASE_URL=http://127.0.0.1:8000
+set NEXT_PUBLIC_BACKEND_API_BASE_URL=http://127.0.0.1:8000
+call npm run dev -- --hostname 0.0.0.0 --port 3000
 
 pause
 endlocal

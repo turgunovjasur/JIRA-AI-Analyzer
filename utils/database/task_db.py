@@ -9,11 +9,40 @@ Date: 2026-02-09
 Version: 1.0
 """
 import sqlite3
-import os
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
-from pathlib import Path
 from core.logger import get_logger
+from utils.database.runtime import (
+    ensure_data_dir,
+    get_processing_db_path,
+    connect_processing_sqlite,
+    connect_processing_db,
+    is_sqlite_backend,
+)
+from utils.database.task_repository import (
+    fetch_task_by_id,
+    upsert_task_record,
+    fetch_blocked_tasks_ready_for_retry as repo_fetch_blocked_tasks_ready_for_retry,
+    delete_task_record,
+    fetch_stuck_tasks as repo_fetch_stuck_tasks,
+    insert_status_history,
+    fetch_status_history_for_report as repo_fetch_status_history_for_report,
+)
+from utils.database.job_queue_repository import (
+    ensure_job_queue_tables,
+    enqueue_job as repo_enqueue_job,
+    claim_next_job as repo_claim_next_job,
+    mark_job_done as repo_mark_job_done,
+    mark_job_retry as repo_mark_job_retry,
+    mark_job_failed as repo_mark_job_failed,
+    fetch_queue_snapshot as repo_fetch_queue_snapshot,
+)
+from utils.database.processing_schema import (
+    apply_sqlite_processing_pragmas,
+    create_core_processing_tables,
+    migrate_task_processing_company_id,
+    migrate_task_processing_return_reason,
+)
 
 log = get_logger("database")
 
@@ -36,15 +65,12 @@ def _get_db_settings():
             _settings_cache = DefaultSettings()
     return _settings_cache
 
-# DB fayl joylashuvi - loyiha root/data papkasi
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DB_DIR = os.path.join(PROJECT_ROOT, 'data')
-DB_FILE = os.path.join(DB_DIR, 'processing.db')
+DB_FILE = get_processing_db_path()
 
 
 def _ensure_db_dir():
     """Data papkasini yaratish"""
-    Path(DB_DIR).mkdir(parents=True, exist_ok=True)
+    ensure_data_dir()
 
 
 def init_db() -> None:
@@ -77,8 +103,9 @@ def init_db() -> None:
         - block_reason: bloklash sababi (masalan: AI 429 limit)
 
     Side Effects:
-        - data/ katalogi yaratiladi (agar mavjud bo'lmasa)
-        - data/processing.db fayli yaratiladi yoki mavjud faylga ulanadi
+        - `sqlite` backendda data/ katalogi yaratiladi (agar mavjud bo'lmasa)
+        - `sqlite` backendda data/processing.db fayli yaratiladi yoki mavjud faylga ulanadi
+        - `postgres` backendda runtime schema tekshiruvlari orqali primary DB ishlatiladi
 
     Raises:
         Exception: DB fayli yaratish yoki PRAGMA bajarishda muvaffaqiyatsiz bo'lsa
@@ -87,107 +114,21 @@ def init_db() -> None:
         _ensure_db_dir()
         settings = _get_db_settings()
 
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
+        if is_sqlite_backend():
+            conn = connect_processing_sqlite()
+            apply_sqlite_processing_pragmas(conn, settings.db_busy_timeout)
+            create_core_processing_tables(conn)
+            ensure_job_queue_tables(conn)
+            conn.close()
+        else:
+            conn = connect_processing_db(timeout=settings.db_connection_timeout)
+            ensure_job_queue_tables(conn)
+            conn.close()
 
-        # SQLite optimizatsiyalar concurrent access uchun
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute(f"PRAGMA busy_timeout={settings.db_busy_timeout}")
-        cursor.execute("PRAGMA foreign_keys=ON")
-
-        # task_processing jadvali (v3: blocked_*, assignee, task_type ustunlari bilan)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS task_processing (
-                task_id TEXT PRIMARY KEY,
-                task_status TEXT DEFAULT 'none',
-                task_update_time DATETIME,
-                return_count INTEGER DEFAULT 0,
-                last_jira_status TEXT,
-                last_processed_at DATETIME,
-                error_message TEXT NULL,
-                skip_detected INTEGER DEFAULT 0,
-
-                -- Servis-bosqich holatlari
-                service1_status TEXT DEFAULT 'pending',
-                service2_status TEXT DEFAULT 'pending',
-                service1_error TEXT NULL,
-                service2_error TEXT NULL,
-                service1_done_at DATETIME NULL,
-                service2_done_at DATETIME NULL,
-
-                -- Qo'shimcha ma'lumotlar
-                compliance_score INTEGER NULL,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-
-                -- v2: task metadata (assignee, tur, xususiyat, texnologiya)
-                assignee TEXT NULL,
-                task_type TEXT NULL,
-                feature_name TEXT NULL,
-                technology_stack TEXT NULL,
-
-                -- v3: blocked holat boshqaruvi
-                blocked_at DATETIME NULL,
-                blocked_retry_at DATETIME NULL,
-                block_reason TEXT NULL,
-
-                -- v4: multi-tenant company tracking
-                company_id INTEGER NULL,
-
-                -- v5: return reason code (nima sababli qaytarilgani)
-                return_reason TEXT NULL
-            )
-        """)
-
-        # Index yaratish (tez qidirish uchun)
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_task_status
-            ON task_processing(task_status)
-        """)
-
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_service1_status
-            ON task_processing(service1_status)
-        """)
-
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_service2_status
-            ON task_processing(service2_status)
-        """)
-
-        # v4: task_status_history jadvali — har bir JIRA status o'zgarishini saqlash
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS task_status_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                task_id TEXT NOT NULL,
-                from_status TEXT,
-                to_status TEXT NOT NULL,
-                changed_at DATETIME NOT NULL,
-                assignee TEXT,
-                story_points REAL,
-                issue_type TEXT
-            )
-        """)
-
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_history_task_id
-            ON task_status_history(task_id)
-        """)
-
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_history_changed_at
-            ON task_status_history(changed_at)
-        """)
-
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_history_assignee
-            ON task_status_history(assignee)
-        """)
-
-        conn.commit()
-        conn.close()
-
-        log.info(f"DB initialized: {DB_FILE}")
+        if is_sqlite_backend():
+            log.info(f"DB initialized (sqlite): {DB_FILE}")
+        else:
+            log.info("DB initialized (postgres runtime)")
 
     except Exception as e:
         log.warning(f"DB initialization error: {e}")
@@ -200,32 +141,26 @@ def init_db() -> None:
 
 def _migrate_db_v4():
     """v4 migration: company_id ustunini qo'shish (mavjud DB uchun)"""
+    if not is_sqlite_backend():
+        return
     try:
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA table_info(task_processing)")
-        columns = [row[1] for row in cursor.fetchall()]
-        if 'company_id' not in columns:
-            cursor.execute("ALTER TABLE task_processing ADD COLUMN company_id INTEGER NULL")
-            conn.commit()
-            log.info("DB migration v4: company_id ustuni qo'shildi")
+        conn = connect_processing_sqlite()
+        migrate_task_processing_company_id(conn)
         conn.close()
+        log.info("DB migration v4 checked: company_id ustuni tayyor")
     except Exception as e:
         log.warning(f"DB migration v4 error: {e}")
 
 
 def _migrate_db_v5():
     """v5 migration: return_reason ustunini qo'shish (mavjud DB uchun)"""
+    if not is_sqlite_backend():
+        return
     try:
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA table_info(task_processing)")
-        columns = [row[1] for row in cursor.fetchall()]
-        if 'return_reason' not in columns:
-            cursor.execute("ALTER TABLE task_processing ADD COLUMN return_reason TEXT NULL")
-            conn.commit()
-            log.info("DB migration v5: return_reason ustuni qo'shildi")
+        conn = connect_processing_sqlite()
+        migrate_task_processing_return_reason(conn)
         conn.close()
+        log.info("DB migration v5 checked: return_reason ustuni tayyor")
     except Exception as e:
         log.warning(f"DB migration v5 error: {e}")
 
@@ -258,24 +193,7 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
     """
     try:
         settings = _get_db_settings()
-        conn = sqlite3.connect(DB_FILE, timeout=settings.db_connection_timeout)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        # WAL mode'da fresh data o'qish uchun
-        cursor.execute("PRAGMA synchronous=FULL")
-
-        cursor.execute("""
-            SELECT * FROM task_processing
-            WHERE task_id = ?
-        """, (task_id,))
-
-        row = cursor.fetchone()
-        conn.close()
-
-        if row:
-            return dict(row)
-        return None
+        return fetch_task_by_id(connect_processing_db, task_id, settings.db_connection_timeout)
 
     except Exception as e:
         log.warning(f"[{task_id}] get_task error: {e}")
@@ -314,39 +232,13 @@ def upsert_task(task_id: str, fields: Dict[str, Any]) -> None:
     """
     try:
         settings = _get_db_settings()
-        conn = sqlite3.connect(DB_FILE, timeout=settings.db_connection_timeout)
-        cursor = conn.cursor()
-
-        # SQLite optimizatsiyalar
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute(f"PRAGMA busy_timeout={settings.db_busy_timeout}")
-
-        # IMMEDIATE transaction - lock olish
-        cursor.execute("BEGIN IMMEDIATE")
-
-        # Mavjud taskni tekshirish
-        cursor.execute("SELECT task_id FROM task_processing WHERE task_id = ?", (task_id,))
-        exists = cursor.fetchone()
-
-        # updated_at avtomatik yangilanadi
-        fields['updated_at'] = datetime.now().isoformat()
-
-        if exists:
-            # UPDATE
-            set_clause = ", ".join([f"{k} = ?" for k in fields.keys()])
-            values = list(fields.values()) + [task_id]
-            cursor.execute(f"UPDATE task_processing SET {set_clause} WHERE task_id = ?", values)
-        else:
-            # INSERT
-            fields['task_id'] = task_id
-            fields['created_at'] = datetime.now().isoformat()
-            columns = ", ".join(fields.keys())
-            placeholders = ", ".join(["?" for _ in fields])
-            values = list(fields.values())
-            cursor.execute(f"INSERT INTO task_processing ({columns}) VALUES ({placeholders})", values)
-
-        conn.commit()
-        conn.close()
+        upsert_task_record(
+            connect_processing_db,
+            task_id,
+            fields,
+            settings.db_connection_timeout,
+            settings.db_busy_timeout,
+        )
 
     except sqlite3.OperationalError as e:
         log.warning(f"[{task_id}] SQLite lock error: {e}")
@@ -744,31 +636,14 @@ def get_blocked_tasks_ready_for_retry() -> List[Dict[str, Any]]:
             Bo'sh ro'yxat qaytadi agar tayyor task yo'q bo'lsa yoki xato yuz bersa.
     """
     try:
-        conn = sqlite3.connect(DB_FILE)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        now = datetime.now().isoformat()
-
-        cursor.execute("""
-            SELECT * FROM task_processing
-            WHERE task_status = 'blocked'
-              AND blocked_retry_at IS NOT NULL
-              AND blocked_retry_at <= ?
-            ORDER BY blocked_retry_at ASC
-        """, (now,))
-
-        rows = cursor.fetchall()
-        conn.close()
-
-        return [dict(row) for row in rows]
+        return repo_fetch_blocked_tasks_ready_for_retry(connect_processing_db)
 
     except Exception as e:
         log.warning(f"get_blocked_tasks_ready_for_retry error: {e}")
         return []
 
 
-def delete_task(task_id: str) -> bool:
+def delete_task(task_id: str, company_id: Optional[int] = None) -> bool:
     """
     Taskni DB dan to'liq o'chirish (transaction-safe)
 
@@ -778,50 +653,19 @@ def delete_task(task_id: str) -> bool:
     Returns:
         True agar o'chirilsa, False agar topilmasa
     """
-    conn = None
     try:
         settings = _get_db_settings()
-        conn = sqlite3.connect(DB_FILE, timeout=settings.db_connection_timeout)
-        cursor = conn.cursor()
-
-        # SQLite optimizatsiyalar
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute(f"PRAGMA busy_timeout={settings.db_busy_timeout}")
-
-        # IMMEDIATE transaction - lock olish va to'liq o'chirishni ta'minlash
-        cursor.execute("BEGIN IMMEDIATE")
-
-        # Avval taskni tekshirish
-        cursor.execute("SELECT task_id FROM task_processing WHERE task_id = ?", (task_id,))
-        exists = cursor.fetchone()
-
-        if exists:
-            # Taskni o'chirish
-            cursor.execute("DELETE FROM task_processing WHERE task_id = ?", (task_id,))
-            deleted_count = cursor.rowcount
-            conn.commit()
-
-            # WAL mode checkpoint (to'liq yozish)
-            cursor.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-
-            # O'chirilganini tekshirish (verification)
-            cursor.execute("SELECT task_id FROM task_processing WHERE task_id = ?", (task_id,))
-            still_exists = cursor.fetchone()
-
-            if still_exists:
-                conn.close()
-                conn = None
-                log.warning(f"[{task_id}] DB-DELETE -> failed, task still exists after DELETE")
-                return False
-            else:
-                conn.close()
-                conn = None
-                log.info(f"[{task_id}] DB-DELETE -> ok (count={deleted_count})")
-                return True
+        deleted = delete_task_record(
+            connect_processing_db,
+            task_id,
+            company_id,
+            settings.db_connection_timeout,
+            settings.db_busy_timeout,
+        )
+        if deleted:
+            log.info(f"[{task_id}] DB-DELETE -> ok")
+            return True
         else:
-            conn.commit()
-            conn.close()
-            conn = None
             log.warning(f"[{task_id}] DB-DELETE -> task not found, nothing to delete")
             return False
 
@@ -829,28 +673,10 @@ def delete_task(task_id: str) -> bool:
         log.warning(f"[{task_id}] SQLite lock error: {e}")
         if 'locked' in str(e).lower():
             log.warning(f"[{task_id}] Database locked, retry recommended")
-        if conn:
-            try:
-                conn.rollback()
-                conn.close()
-            except:
-                pass
         return False
     except Exception as e:
         log.warning(f"[{task_id}] delete_task error: {e}")
-        if conn:
-            try:
-                conn.rollback()
-                conn.close()
-            except:
-                pass
         return False
-    finally:
-        if conn:
-            try:
-                conn.close()
-            except:
-                pass
 
 
 def reset_service_statuses(task_id: str) -> None:
@@ -1086,26 +912,7 @@ def get_stuck_tasks(timeout_minutes: int = 30) -> List[Dict[str, Any]]:
             - ``stuck_minutes``: necha daqiqa stuck bo'lgani (hisoblangan)
     """
     try:
-        conn = sqlite3.connect(DB_FILE)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        cutoff_time = (datetime.now() - timedelta(minutes=timeout_minutes)).isoformat()
-
-        cursor.execute("""
-            SELECT task_id, task_status, service1_status, service2_status,
-                   last_processed_at, updated_at,
-                   ROUND((julianday('now') - julianday(updated_at)) * 1440) as stuck_minutes
-            FROM task_processing
-            WHERE task_status = 'progressing'
-              AND updated_at < ?
-            ORDER BY updated_at ASC
-        """, (cutoff_time,))
-
-        rows = cursor.fetchall()
-        conn.close()
-
-        return [dict(row) for row in rows]
+        return repo_fetch_stuck_tasks(connect_processing_db, timeout_minutes)
 
     except Exception as e:
         log.warning(f"get_stuck_tasks error: {e}")
@@ -1120,6 +927,7 @@ def log_status_change(
     assignee: Optional[str] = None,
     story_points: Optional[float] = None,
     issue_type: Optional[str] = None,
+    company_id: Optional[int] = None,
 ) -> None:
     """
     JIRA task status o'zgarishini task_status_history jadvaliga yozish.
@@ -1138,14 +946,8 @@ def log_status_change(
     """
     try:
         settings = _get_db_settings()
-        conn = sqlite3.connect(DB_FILE, timeout=settings.db_connection_timeout)
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            INSERT INTO task_status_history
-                (task_id, from_status, to_status, changed_at, assignee, story_points, issue_type)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
+        insert_status_history(
+            connect_processing_db,
             task_id,
             from_status,
             to_status,
@@ -1153,10 +955,9 @@ def log_status_change(
             assignee,
             story_points,
             issue_type,
-        ))
-
-        conn.commit()
-        conn.close()
+            company_id,
+            settings.db_connection_timeout,
+        )
 
     except Exception as e:
         log.warning(f"[{task_id}] log_status_change error: {e}")
@@ -1179,34 +980,103 @@ def get_status_history_for_report(days: int = 30) -> List[Dict[str, Any]]:
         List[Dict]: Tarix qatorlari ro'yxati
     """
     try:
-        conn = sqlite3.connect(DB_FILE)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
-
-        cursor.execute("""
-            SELECT
-                id,
-                task_id,
-                from_status,
-                to_status,
-                changed_at,
-                assignee,
-                story_points,
-                issue_type
-            FROM task_status_history
-            WHERE changed_at >= ?
-            ORDER BY task_id, changed_at ASC
-        """, (cutoff,))
-
-        rows = cursor.fetchall()
-        conn.close()
-        return [dict(r) for r in rows]
+        return repo_fetch_status_history_for_report(connect_processing_db, days)
 
     except Exception as e:
         log.warning(f"get_status_history_for_report error: {e}")
         return []
+
+
+def enqueue_background_job(
+    job_type: str,
+    task_key: str,
+    *,
+    company_id: Optional[int] = None,
+    payload: Optional[Dict[str, Any]] = None,
+    dedupe_key: Optional[str] = None,
+    scheduled_at: Optional[str] = None,
+    max_attempts: int = 3,
+) -> Dict[str, Any]:
+    """Background worker uchun job navbatga qo'shish."""
+    try:
+        settings = _get_db_settings()
+        conn = connect_processing_db(timeout=settings.db_connection_timeout, row_factory=True)
+        job = repo_enqueue_job(
+            conn,
+            job_type=job_type,
+            task_key=task_key,
+            company_id=company_id,
+            payload=payload,
+            dedupe_key=dedupe_key,
+            scheduled_at=scheduled_at,
+            max_attempts=max_attempts,
+        )
+        conn.close()
+        return job
+    except Exception as e:
+        log.warning(f"[{task_key}] enqueue_background_job error: {e}")
+        return {}
+
+
+def claim_next_background_job(worker_name: str) -> Optional[Dict[str, Any]]:
+    """Worker uchun keyingi queued jobni claim qilish."""
+    try:
+        settings = _get_db_settings()
+        conn = connect_processing_db(timeout=settings.db_connection_timeout, row_factory=True)
+        job = repo_claim_next_job(conn, worker_name=worker_name)
+        conn.close()
+        return job or None
+    except Exception as e:
+        log.warning(f"[worker:{worker_name}] claim_next_background_job error: {e}")
+        return None
+
+
+def complete_background_job(job: Dict[str, Any]) -> bool:
+    try:
+        settings = _get_db_settings()
+        conn = connect_processing_db(timeout=settings.db_connection_timeout, row_factory=True)
+        repo_mark_job_done(conn, job)
+        conn.close()
+        return True
+    except Exception as e:
+        log.warning(f"[job:{job.get('id')}] complete_background_job error: {e}")
+        return False
+
+
+def retry_background_job(job: Dict[str, Any], error_message: str, delay_seconds: int) -> bool:
+    try:
+        settings = _get_db_settings()
+        conn = connect_processing_db(timeout=settings.db_connection_timeout, row_factory=True)
+        repo_mark_job_retry(conn, job, error_message, delay_seconds)
+        conn.close()
+        return True
+    except Exception as e:
+        log.warning(f"[job:{job.get('id')}] retry_background_job error: {e}")
+        return False
+
+
+def fail_background_job(job: Dict[str, Any], error_message: str) -> bool:
+    try:
+        settings = _get_db_settings()
+        conn = connect_processing_db(timeout=settings.db_connection_timeout, row_factory=True)
+        repo_mark_job_failed(conn, job, error_message)
+        conn.close()
+        return True
+    except Exception as e:
+        log.warning(f"[job:{job.get('id')}] fail_background_job error: {e}")
+        return False
+
+
+def get_background_queue_snapshot() -> Dict[str, Any]:
+    try:
+        settings = _get_db_settings()
+        conn = connect_processing_db(timeout=settings.db_connection_timeout, row_factory=True)
+        payload = repo_fetch_queue_snapshot(conn)
+        conn.close()
+        return payload
+    except Exception as e:
+        log.warning(f"get_background_queue_snapshot error: {e}")
+        return {"queued": 0, "running": 0, "done": 0, "failed": 0}
 
 
 # DB initialization on import

@@ -28,9 +28,17 @@ class GitHubClient:
         """
         from config.settings import settings
 
-        self.token    = token or settings.GITHUB_TOKEN
+        self.token    = (token or "").strip()
         self.base_url = settings.GITHUB_API_URL
-        self.org      = org or settings.GITHUB_ORG
+        self.org      = (org or "").strip()
+
+        missing = []
+        if not self.token:
+            missing.append("GitHub Token")
+        if not self.org:
+            missing.append("GitHub Organization")
+        if missing:
+            raise ValueError(f"GitHub credentials to'liq emas: {', '.join(missing)}")
 
         self.headers = {
             'Accept': 'application/vnd.github.v3+json',

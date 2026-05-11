@@ -222,7 +222,10 @@ class SprintDataService:
                     token=creds['jira_token'],
                 )
             else:
-                self._jira = JiraClient()
+                raise RuntimeError(
+                    "SprintDataService uchun user_id yoki company_id talab qilinadi. "
+                    "Global JIRA default ishlatilmaydi."
+                )
         return self._jira
 
     # ── Yuklab olish ────────────────────────────────────────────────────

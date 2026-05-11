@@ -78,6 +78,7 @@ plotly==6.5.0
 posthog==5.4.0
 proto-plus==1.26.1
 protobuf==5.29.5
+psycopg[binary]==3.3.4
 pyarrow==22.0.0
 pyasn1==0.6.1
 pyasn1_modules==0.4.2
@@ -112,7 +113,6 @@ shellingham==1.5.4
 six==1.17.0
 smmap==5.0.2
 starlette==0.50.0
-streamlit==1.52.1
 sympy==1.14.0
 tenacity==9.1.2
 threadpoolctl==3.6.0

@@ -4,6 +4,7 @@ import os
 from dotenv import load_dotenv
 import time
 from core.logger import get_logger
+from config.token_limits import GEMINI_HELPER_DEFAULT_MAX_OUTPUT_TOKENS
 
 load_dotenv()
 
@@ -178,7 +179,7 @@ class GeminiHelper:
         """Pro modellar thinking_budget=0 qabul qilmaydi — faqat flash modellarda o'chirsa bo'ladi."""
         return 'flash' not in self.model_name.lower()
 
-    def analyze(self, prompt, max_output_tokens=32768):
+    def analyze(self, prompt, max_output_tokens=GEMINI_HELPER_DEFAULT_MAX_OUTPUT_TOKENS):
         """
         Gemini bilan tahlil — transient retry + model fallback + key fallback bilan.
 

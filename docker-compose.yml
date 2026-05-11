@@ -1,0 +1,80 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-jira_ai_analyzer}"
+      POSTGRES_USER: "${POSTGRES_USER:-jira_ai_analyzer}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-jira_ai_analyzer_dev}"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-jira_ai_analyzer} -d ${POSTGRES_DB:-jira_ai_analyzer}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    env_file:
+      - .env
+    environment:
+      APP_DB_BACKEND: "postgres"
+      APP_POSTGRES_DSN: "postgresql://${POSTGRES_USER:-jira_ai_analyzer}:${POSTGRES_PASSWORD:-jira_ai_analyzer_dev}@postgres:5432/${POSTGRES_DB:-jira_ai_analyzer}"
+      APP_USE_BACKEND_API: "true"
+      APP_WEBHOOK_EXECUTION_MODE: "queue"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    command: ["python", "-m", "services.worker.main"]
+    env_file:
+      - .env
+    environment:
+      APP_DB_BACKEND: "postgres"
+      APP_POSTGRES_DSN: "postgresql://${POSTGRES_USER:-jira_ai_analyzer}:${POSTGRES_PASSWORD:-jira_ai_analyzer_dev}@postgres:5432/${POSTGRES_DB:-jira_ai_analyzer}"
+      APP_WEBHOOK_EXECUTION_MODE: "queue"
+      APP_WORKER_NAME: "worker-compose"
+      APP_WORKER_POLL_INTERVAL_SECONDS: "3"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    depends_on:
+      - backend
+      - worker
+    environment:
+      BACKEND_API_BASE_URL: "http://backend:8000"
+      NEXT_PUBLIC_BACKEND_API_BASE_URL: "http://backend:8000"
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

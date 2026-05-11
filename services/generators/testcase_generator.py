@@ -18,6 +18,7 @@ import json
 
 # Core imports
 from core import BaseService, PRHelper, PRNotMergedError, TZHelper
+from core.analysis_policy import build_full_analysis_blocked
 from core.logger import get_logger
 
 log = get_logger("testcase.gen")
@@ -60,6 +61,10 @@ class TestCaseGenerationResult:
     error_message: str = ""
     warnings: List[str] = field(default_factory=list)
     custom_context_used: bool = False
+    status_banner: Optional[Dict] = None
+    ai_prompt_size: int = 0
+    ai_model: str = ""
+    files_analyzed: int = 0
 
 
 class TestCaseGeneratorService(BaseService):
@@ -194,7 +199,6 @@ class TestCaseGeneratorService(BaseService):
                     error_message=f"{task_key} topilmadi"
                 )
 
-            from config.app_settings import get_app_settings
             from utils.pr_cache import (
                 get_skip_cache, get_pr_exists_cache, get_pr_merged_cache, get_pr_cache
             )
@@ -269,7 +273,10 @@ class TestCaseGeneratorService(BaseService):
             # 4. TZ uzunlik tekshiruvi
             tc_settings = self._get_settings()
             max_test_cases = tc_settings.max_test_cases
-            if self._company_id is not None:
+            if self._user_id is not None and self._company_id is not None:
+                from config.app_settings import get_app_settings_for_user
+                min_tz_chars = get_app_settings_for_user(self._user_id, self._company_id).tz_pr_checker.min_tz_description_chars
+            elif self._company_id is not None:
                 from config.app_settings import get_app_settings_for_company
                 min_tz_chars = get_app_settings_for_company(self._company_id).webhook_tz_pr.min_tz_description_chars
             else:
@@ -326,13 +333,26 @@ class TestCaseGeneratorService(BaseService):
             )
 
             if not ai_result['success']:
+                blocked = build_full_analysis_blocked(
+                    module_name="Test Case Generator",
+                    task_key=task_key,
+                    error_message=ai_result.get("error", "AI full analysis failed"),
+                    files_total=pr_info['files_changed'] if pr_info else 0,
+                    files_included=ai_result.get("files_included", pr_info['files_changed'] if pr_info else 0),
+                    prompt_size_chars=ai_result.get("prompt_size", 0),
+                    model=ai_result.get("model_name"),
+                )
                 return TestCaseGenerationResult(
                     task_key=task_key,
                     task_summary=task_details['summary'],
                     task_full_details=task_details,
                     task_overview=overview,
                     success=False,
-                    error_message=ai_result['error']
+                    error_message=blocked["error_message"],
+                    status_banner=blocked["status_banner"],
+                    ai_prompt_size=ai_result.get("prompt_size", 0),
+                    ai_model=ai_result.get("model_name") or "",
+                    files_analyzed=ai_result.get("files_included", pr_info['files_changed'] if pr_info else 0),
                 )
 
             _ai_sek = round(_time.time() - _t0, 1)
@@ -374,7 +394,10 @@ class TestCaseGeneratorService(BaseService):
                 by_priority=by_priority,
                 success=True,
                 warnings=warnings,
-                custom_context_used=bool(custom_context)
+                custom_context_used=bool(custom_context),
+                ai_prompt_size=ai_result.get("prompt_size", 0),
+                ai_model=ai_result.get("model_name") or "",
+                files_analyzed=ai_result.get("files_included", pr_info['files_changed'] if pr_info else 0),
             )
 
         except Exception as e:
@@ -467,11 +490,18 @@ class TestCaseGeneratorService(BaseService):
             text_info = self._calculate_text_length(prompt)
             prompt_chars = len(prompt)
             prompt_k_tokens = round(prompt_chars / 4000, 1)
-            log.info(f"[{task_key}] AI prompt: {prompt_chars:,} belgi (~{prompt_k_tokens}K token) | limit: {'✅' if text_info['within_limit'] else '⚠ oshdi, qisqartiriladi'}")
+            limit_label = "✅" if text_info["within_limit"] else "⚠ oshdi, FULL policy bo'yicha bloklanadi"
+            log.info(f"[{task_key}] AI prompt: {prompt_chars:,} belgi (~{prompt_k_tokens}K token) | limit: {limit_label}")
 
             if not text_info['within_limit']:
-                prompt = self._truncate_text(prompt)
-                log.info(f"[{task_key}] AI prompt qisqartirildi → {len(prompt):,} belgi")
+                # FULL-only policy: prompt qisqartirilmaydi, aks holda partial analysis bo'ladi.
+                return {
+                    'success': False,
+                    'error': "AI token limit: prompt too large for full analysis",
+                    'prompt_size': prompt_chars,
+                    'model_name': getattr(self.gemini, "model_name", None),
+                    'files_included': pr_info['files_changed'] if pr_info else 0,
+                }
 
             # AI chaqirish (max_output_tokens — truncation oldini olish uchun)
             max_tokens = self._get_settings().ai_max_output_tokens
@@ -483,13 +513,19 @@ class TestCaseGeneratorService(BaseService):
 
             return {
                 'success': True,
-                'raw_response': response
+                'raw_response': response,
+                'prompt_size': prompt_chars,
+                'model_name': getattr(self.gemini, "model_name", None),
+                'files_included': pr_info['files_changed'] if pr_info else 0,
             }
 
         except Exception as e:
             return {
                 'success': False,
-                'error': f"AI xatosi: {str(e)}"
+                'error': f"AI xatosi: {str(e)}",
+                'prompt_size': len(prompt) if 'prompt' in locals() else 0,
+                'model_name': getattr(getattr(self, "_gemini_helper", None), "model_name", None),
+                'files_included': pr_info['files_changed'] if pr_info else 0,
             }
 
     def _create_test_case_prompt(
@@ -612,9 +648,6 @@ Developer to'g'ri qayta bajargan funksiyalar uchun test yoz.
         code_block = ""
         if pr_info:
             # Kod o'zgarishlari bo'limi: servis-1 dagi kabi, ammo testcase uchun qisqaroq format
-            tc_settings = self._get_settings()
-            max_files = getattr(tc_settings, "pr_max_files", None)
-
             lines = []
             lines.append("📊 PR Summary:")
             lines.append(f"   PR Count: {pr_info['pr_count']}")
@@ -624,8 +657,6 @@ Developer to'g'ri qayta bajargan funksiyalar uchun test yoz.
             lines.append("")
 
             files_to_show = pr_info["files_changed"]
-            if max_files:
-                files_to_show = min(files_to_show, max_files)
 
             shown_files = 0
             for pr in pr_info["pr_details"]:

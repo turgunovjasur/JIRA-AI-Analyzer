@@ -24,6 +24,7 @@ import asyncio
 import logging
 import sys
 import os
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime
 from typing import Optional, Dict, Any
 
@@ -52,7 +53,7 @@ from utils.database.task_db import (
     set_service1_done, set_service1_error, set_service1_skip, set_service1_blocked,
     set_service2_done, set_service2_error, set_service2_blocked,
     set_task_timeout_error, reset_service_statuses, get_blocked_tasks_ready_for_retry,
-    log_status_change,
+    log_status_change, enqueue_background_job, get_background_queue_snapshot,
 )
 
 # Yangi modullar (biznes logika shu fayllarda)
@@ -81,24 +82,6 @@ from services.webhook.retry_scheduler import (
 )
 
 log = get_logger("webhook.handler")
-
-# ============================================================================
-# FASTAPI APP
-# ============================================================================
-
-app = FastAPI(
-    title="JIRA TZ-PR Auto Checker",
-    description="Avtomatik TZ-PR moslik tekshirish + Testcase Auto-Comment + Sprint Report",
-    version="4.0.0"
-)
-
-# Sprint Report API ni ulash (ixtiyoriy modul)
-try:
-    from services.api.sprint_report_api import router as sprint_report_router
-    app.include_router(sprint_report_router)
-except ImportError:
-    pass
-
 
 # ============================================================================
 # SINGLETON FACTORY FUNKSIYALAR
@@ -147,6 +130,164 @@ _blocked_retry_task: Optional[asyncio.Task] = None
 _last_task_key: Optional[str] = None
 
 
+def _webhook_execution_mode() -> str:
+    raw = (os.getenv("APP_WEBHOOK_EXECUTION_MODE") or "inline").strip().lower()
+    return raw if raw in {"inline", "queue"} else "inline"
+
+
+def _worker_queue_enabled() -> bool:
+    return _webhook_execution_mode() == "queue"
+
+
+def _queue_job(
+    *,
+    job_type: str,
+    task_key: str,
+    company_id: int | None,
+    new_status: str | None = None,
+    include_testcase: bool | None = None,
+    dedupe_key: str | None = None,
+) -> dict[str, Any]:
+    payload: Dict[str, Any] = {"task_key": task_key}
+    if company_id is not None:
+        payload["company_id"] = company_id
+    if new_status is not None:
+        payload["new_status"] = new_status
+    if include_testcase is not None:
+        payload["include_testcase"] = include_testcase
+    return enqueue_background_job(
+        job_type,
+        task_key,
+        company_id=company_id,
+        payload=payload,
+        dedupe_key=dedupe_key,
+        max_attempts=5,
+    )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Server lifecycle boshqaruvi.
+
+    Startup:
+      - access log'larni pasaytirish
+      - sozlamalarni log qilish
+      - blocked retry scheduler ni ishga tushirish
+    Shutdown:
+      - scheduler taskini toza to'xtatish
+    """
+    global _blocked_retry_task
+
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+
+    app_settings = get_app_settings(force_reload=False)
+    settings = app_settings.webhook_tz_pr
+
+    log.system_started("4.0.0", 8000)
+    log.settings_loaded(
+        adf=settings.use_adf_format,
+        auto_return=settings.auto_return_enabled,
+        threshold=settings.return_threshold
+    )
+    ai_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    ai_keys = 1
+    i = 2
+    while os.getenv(f"GOOGLE_API_KEY_{i}"):
+        ai_keys += 1
+        i += 1
+    log.ai_ready(ai_model, ai_keys)
+    log.info(f"TRIGGER       {settings.trigger_status}")
+    log.info(f"RETRY-DELAY   {app_settings.queue.blocked_retry_delay} min")
+
+    log.info(f"EXECUTION-MODE { _webhook_execution_mode() }")
+    if not _worker_queue_enabled():
+        _blocked_retry_task = asyncio.create_task(_blocked_retry_scheduler())
+
+    try:
+        yield
+    finally:
+        if _blocked_retry_task is not None:
+            _blocked_retry_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await _blocked_retry_task
+            _blocked_retry_task = None
+
+
+# ============================================================================
+# FASTAPI APP
+# ============================================================================
+
+app = FastAPI(
+    title="JIRA TZ-PR Auto Checker",
+    description="Avtomatik TZ-PR moslik tekshirish + Testcase Auto-Comment + Sprint Report",
+    version="4.0.0",
+    lifespan=lifespan,
+)
+
+
+def _resolve_company_for_webhook(task_key: str, company_code: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Webhook uchun kompaniyani aniqlash."""
+    from utils.auth.auth_db import get_company_by_code, get_company_by_project_key
+
+    if company_code:
+        company = get_company_by_code(company_code)
+        if company and company.get("is_active"):
+            return company
+        return None
+
+    return get_company_by_project_key(task_key.split('-')[0].upper())
+
+# Sprint Report API ni ulash (ixtiyoriy modul)
+try:
+    from services.api.sprint_report_api import router as sprint_report_router
+    app.include_router(sprint_report_router)
+except ImportError:
+    pass
+
+# Monitoring API ni ulash (frontend/backend ajratishning birinchi slice'i)
+try:
+    from services.api.monitoring_api import router as monitoring_router
+    app.include_router(monitoring_router)
+except ImportError:
+    pass
+
+# Settings API ni ulash (Unified Settings ichidagi API keys slice'i)
+try:
+    from services.api.settings_api import router as settings_router
+    app.include_router(settings_router)
+except ImportError:
+    pass
+
+# Auth API ni ulash
+try:
+    from services.api.auth_api import router as auth_router
+    app.include_router(auth_router)
+except ImportError:
+    pass
+
+# TZ-PR API ni ulash
+try:
+    from services.api.tzpr_api import router as tzpr_router
+    app.include_router(tzpr_router)
+except ImportError:
+    pass
+
+# Testcase API ni ulash
+try:
+    from services.api.testcase_api import router as testcase_router
+    app.include_router(testcase_router)
+except ImportError:
+    pass
+
+# Internal RPC API ni ulash
+try:
+    from services.api.internal_rpc_api import router as internal_rpc_router
+    app.include_router(internal_rpc_router)
+except ImportError:
+    pass
+
+
 # ============================================================================
 # WEBHOOK MODELS
 # ============================================================================
@@ -167,8 +308,11 @@ class WebhookPayload(BaseModel):
 # ASOSIY WEBHOOK ENDPOINT
 # ============================================================================
 
-@app.post("/webhook/jira")
-async def jira_webhook(request: Request, background_tasks: BackgroundTasks):
+async def _jira_webhook_impl(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    company_code: Optional[str] = None,
+):
     """
     JIRA webhook endpoint — barcha JIRA event'larini qabul qiluvchi asosiy nuqta.
 
@@ -237,18 +381,21 @@ async def jira_webhook(request: Request, background_tasks: BackgroundTasks):
         if not status_changed:
             return {"status": "ignored", "reason": "status not changed", "debug_items": items}
 
-        # Kompaniyani project key orqali topish
-        from utils.auth.auth_db import get_company_by_project_key
+        # Tavsiya etilgan routing: company-specific endpoint.
+        # Legacy endpoint faqat backward compatibility uchun qoldirilgan.
         from config.app_settings import get_app_settings_for_company
         project_key = task_key.split('-')[0].upper()
-        company = get_company_by_project_key(project_key)
+        company = _resolve_company_for_webhook(task_key, company_code)
         if company:
             company_id = company['id']
             app_settings = get_app_settings_for_company(company_id)
             log.info(f"[{task_key}] Company: {company.get('company_code')} (id={company_id})")
         else:
-            log.warning(f"[{task_key}] Project key '{project_key}' uchun kompaniya topilmadi — ignored")
-            return {"status": "ignored", "reason": f"unknown project key '{project_key}'"}
+            if company_code:
+                log.warning(f"[{task_key}] Company code '{company_code}' uchun kompaniya topilmadi — ignored")
+                return {"status": "ignored", "reason": f"unknown company code '{company_code}'"}
+            log.warning(f"[{task_key}] Project key '{project_key}' uchun kompaniya topilmadi yoki ambiguous — ignored")
+            return {"status": "ignored", "reason": f"unknown or ambiguous project key '{project_key}'"}
 
         # Yangi status trigger status'lardan birimi?
         settings = app_settings.webhook_tz_pr
@@ -313,6 +460,7 @@ async def jira_webhook(request: Request, background_tasks: BackgroundTasks):
             assignee=assignee_name or None,
             story_points=story_points,
             issue_type=issue_type or None,
+            company_id=company_id,
         )
 
         # DB holat boshqaruvi (state machine)
@@ -360,16 +508,25 @@ async def jira_webhook(request: Request, background_tasks: BackgroundTasks):
         skip_code = settings.skip_code.strip() if settings.skip_code else ""
         from utils.pr_cache import set_skip_cache
         from utils.auth.auth_db import get_company_credentials
-        _creds = get_company_credentials(company_id)
-        _skip_writer = JiraCommentWriter(
-            server=_creds['jira_server'],
-            email=_creds['jira_email'],
-            token=_creds['jira_token'],
-        )
+        skip_detected = False
+        _skip_writer = None
         if skip_code:
-            skip_detected = await _check_skip_code(task_key, skip_code, _skip_writer)
-        else:
-            skip_detected = False
+            try:
+                from utils.auth.auth_db import get_company_webhook_credentials
+                _creds = get_company_webhook_credentials(company_id)
+                _skip_writer = JiraCommentWriter(
+                    server=_creds['jira_server'],
+                    email=_creds['jira_email'],
+                    token=_creds['jira_token'],
+                )
+                skip_detected = await _check_skip_code(
+                    task_key,
+                    skip_code,
+                    _skip_writer,
+                    max_comments=settings.max_skip_check_comments,
+                )
+            except Exception as skip_error:
+                log.warning(f"[{task_key}] AI_SKIP tekshiruvi o'tkazib yuborildi: {skip_error}")
         set_skip_cache(task_key, skip_detected)
         if skip_detected:
             log.service_skip(task_key, "service_1", f"skip_code='{skip_code}'")
@@ -379,19 +536,29 @@ async def jira_webhook(request: Request, background_tasks: BackgroundTasks):
 
             # JIRA'ga skip notification yozish
             adf_formatter = get_adf_formatter()
-            await _write_skip_notification(task_key, settings, _skip_writer, adf_formatter)
+            if _skip_writer is not None:
+                await _write_skip_notification(task_key, settings, _skip_writer, adf_formatter)
 
             # Service2 faqat testcase trigger status bo'lsa ishlaydi
             testcase_should_run = is_testcase_trigger_status(new_status, app_settings)
             if testcase_should_run:
-                background_tasks.add_task(
-                    _run_testcase_generation, task_key=task_key, new_status=new_status,
-                    company_id=company_id
-                )
+                if _worker_queue_enabled():
+                    _queue_job(
+                        job_type="run_testcase_generation",
+                        task_key=task_key,
+                        company_id=company_id,
+                        new_status=new_status,
+                        dedupe_key=f"testcase:{company_id}:{task_key}",
+                    )
+                else:
+                    background_tasks.add_task(
+                        _run_testcase_generation, task_key=task_key, new_status=new_status,
+                        company_id=company_id
+                    )
                 log.service_running(task_key, "service_2")
 
             return {
-                "status": "skipped_service1",
+                "status": "queued" if _worker_queue_enabled() else "skipped_service1",
                 "task_key": task_key,
                 "reason": f"Skip code '{skip_code}' topildi",
                 "skipped_tasks": ["tz_pr_check"],
@@ -402,22 +569,40 @@ async def jira_webhook(request: Request, background_tasks: BackgroundTasks):
         testcase_should_run = is_testcase_trigger_status(new_status, app_settings)
 
         if testcase_should_run:
-            # Service1 + Service2 bitta lock ichida (Service1 tugagach Service2)
-            background_tasks.add_task(
-                _run_task_group, task_key=task_key, new_status=new_status, company_id=company_id
-            )
+            if _worker_queue_enabled():
+                _queue_job(
+                    job_type="run_task_group",
+                    task_key=task_key,
+                    company_id=company_id,
+                    new_status=new_status,
+                    dedupe_key=f"group:{company_id}:{task_key}",
+                )
+            else:
+                # Service1 + Service2 bitta lock ichida (Service1 tugagach Service2)
+                background_tasks.add_task(
+                    _run_task_group, task_key=task_key, new_status=new_status, company_id=company_id
+                )
         else:
-            # Faqat Service1
-            background_tasks.add_task(
-                _queued_check_tz_pr, task_key=task_key, new_status=new_status, company_id=company_id
-            )
+            if _worker_queue_enabled():
+                _queue_job(
+                    job_type="run_checker_only",
+                    task_key=task_key,
+                    company_id=company_id,
+                    new_status=new_status,
+                    dedupe_key=f"checker:{company_id}:{task_key}",
+                )
+            else:
+                # Faqat Service1
+                background_tasks.add_task(
+                    _queued_check_tz_pr, task_key=task_key, new_status=new_status, company_id=company_id
+                )
 
         return {
-            "status": "processing",
+            "status": "queued" if _worker_queue_enabled() else "processing",
             "task_key": task_key,
             "old_status": old_status,
             "new_status": new_status,
-            "message": "TZ-PR check started",
+            "message": "TZ-PR check queued" if _worker_queue_enabled() else "TZ-PR check started",
             "testcase_triggered": testcase_should_run,
             "settings": {
                 "use_adf": settings.use_adf_format,
@@ -429,6 +614,16 @@ async def jira_webhook(request: Request, background_tasks: BackgroundTasks):
     except Exception as e:
         log.error(f"Webhook error: {e}", exc_info=True)
         return {"status": "error", "error": str(e)}
+
+
+@app.post("/webhook/jira")
+async def jira_webhook(request: Request, background_tasks: BackgroundTasks):
+    return await _jira_webhook_impl(request, background_tasks, company_code=None)
+
+
+@app.post("/webhook/jira/{company_code}")
+async def jira_webhook_company(request: Request, background_tasks: BackgroundTasks, company_code: str):
+    return await _jira_webhook_impl(request, background_tasks, company_code=company_code.strip().lower())
 
 
 # ============================================================================
@@ -518,6 +713,10 @@ async def health_check():
         health["services"]["database"] = f"error: {str(e)}"
         health["status"] = "unhealthy"
 
+    health["services"]["execution_mode"] = _webhook_execution_mode()
+    if _worker_queue_enabled():
+        health["queue"] = get_background_queue_snapshot()
+
     return health
 
 
@@ -560,30 +759,42 @@ async def manual_check(task_key: str, background_tasks: BackgroundTasks):
     """
     log.info(f"Manual check triggered for {task_key}")
 
-    background_tasks.add_task(
-        check_tz_pr_and_comment,
-        task_key=task_key,
-        new_status="Manual Check"
-    )
-
     app_settings = get_app_settings(force_reload=False)
     tc_settings = app_settings.webhook_testcase
-    testcase_triggered = False
+    testcase_triggered = bool(tc_settings.auto_comment_enabled)
 
-    if tc_settings.auto_comment_enabled:
-        trigger_status = tc_settings.auto_comment_trigger_status
-        background_tasks.add_task(
-            _run_testcase_generation,
+    if _worker_queue_enabled():
+        _queue_job(
+            job_type="manual_check",
             task_key=task_key,
-            new_status=trigger_status
+            company_id=None,
+            include_testcase=testcase_triggered,
+            dedupe_key=f"manual:{task_key}",
         )
-        testcase_triggered = True
-        log.info(f"[{task_key}] Testcase generation also triggered (status='{trigger_status}')")
+    else:
+        background_tasks.add_task(
+            check_tz_pr_and_comment,
+            task_key=task_key,
+            new_status="Manual Check"
+        )
+
+        if testcase_triggered:
+            trigger_status = tc_settings.auto_comment_trigger_status
+            background_tasks.add_task(
+                _run_testcase_generation,
+                task_key=task_key,
+                new_status=trigger_status
+            )
+            log.info(f"[{task_key}] Testcase generation also triggered (status='{trigger_status}')")
 
     return {
-        "status": "processing",
+        "status": "queued" if _worker_queue_enabled() else "processing",
         "task_key": task_key,
-        "message": f"Manual TZ-PR check + Testcase generation started for {task_key}",
+        "message": (
+            f"Manual TZ-PR check + Testcase generation queued for {task_key}"
+            if _worker_queue_enabled()
+            else f"Manual TZ-PR check + Testcase generation started for {task_key}"
+        ),
         "testcase_triggered": testcase_triggered
     }
 
@@ -605,60 +816,31 @@ async def manual_testcase(task_key: str, background_tasks: BackgroundTasks):
     tc_settings = app_settings.webhook_testcase
     trigger_status = tc_settings.auto_comment_trigger_status
 
-    background_tasks.add_task(
-        _run_testcase_generation,
-        task_key=task_key,
-        new_status=trigger_status
-    )
+    if _worker_queue_enabled():
+        _queue_job(
+            job_type="run_testcase_generation",
+            task_key=task_key,
+            company_id=None,
+            new_status=trigger_status,
+            dedupe_key=f"manual-testcase:{task_key}",
+        )
+    else:
+        background_tasks.add_task(
+            _run_testcase_generation,
+            task_key=task_key,
+            new_status=trigger_status
+        )
 
     return {
-        "status": "processing",
+        "status": "queued" if _worker_queue_enabled() else "processing",
         "task_key": task_key,
-        "message": f"Manual testcase generation started for {task_key}",
+        "message": (
+            f"Manual testcase generation queued for {task_key}"
+            if _worker_queue_enabled()
+            else f"Manual testcase generation started for {task_key}"
+        ),
         "trigger_status": trigger_status
     }
-
-
-# ============================================================================
-# STARTUP EVENT
-# ============================================================================
-
-@app.on_event("startup")
-async def startup_event():
-    """
-    Server startup'da avtomatik ishga tushadigan vazifalar.
-
-    Bajaradigan amallar:
-    1. Uvicorn access log'larini o'chirish (har request uchun chiqadigan POST loglar spam)
-    2. Tizim sozlamalarini log qilish
-    3. Blocked retry scheduler'ni background task sifatida ishga tushirish
-    """
-    global _blocked_retry_task
-
-    # Uvicorn access loglarini o'chirish
-    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
-
-    app_settings = get_app_settings(force_reload=False)
-    settings = app_settings.webhook_tz_pr
-
-    log.system_started("4.0.0", 8000)
-    log.settings_loaded(
-        adf=settings.use_adf_format,
-        auto_return=settings.auto_return_enabled,
-        threshold=settings.return_threshold
-    )
-    ai_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-    ai_keys = 1
-    i = 2
-    while os.getenv(f"GOOGLE_API_KEY_{i}"):
-        ai_keys += 1
-        i += 1
-    log.ai_ready(ai_model, ai_keys)
-    log.info(f"TRIGGER       {settings.trigger_status}")
-    log.info(f"RETRY-DELAY   {app_settings.queue.blocked_retry_delay} min")
-
-    # Blocked retry scheduler ni background'da ishga tushirish
-    _blocked_retry_task = asyncio.create_task(_blocked_retry_scheduler())
 
 
 # ============================================================================

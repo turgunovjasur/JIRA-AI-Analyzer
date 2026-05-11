@@ -20,6 +20,10 @@ import re
 
 # Core imports
 from core import BaseService, PRHelper, PRNotMergedError, TZHelper, CommentSeparator, WARN_LOW_SCORE, RECHECK_REASONS
+from core.analysis_policy import (
+    build_full_analysis_blocked,
+    build_full_policy_input_violation,
+)
 from core.logger import get_logger
 
 # Initialize logger
@@ -119,6 +123,10 @@ REANALYSIS_CONTEXT_TEMPLATE_UZ = """
 
 # Keys must match TZPRCheckerSettings.visible_sections values
 _SECTION_PROMPT_BLOCKS = {
+    'summary': (
+        "## 🧭 XULOSA\n"
+        "[2-4 qatorda umumiy verdict, asosiy sabab va eng muhim keyingi signal]\n"
+    ),
     'completed': (
         "## ✅ BAJARILGAN TALABLAR\n"
         "[TZ dan olingan har bir talab va uning bajarilish holati]\n"
@@ -138,7 +146,23 @@ _SECTION_PROMPT_BLOCKS = {
 }
 
 # Canonical order in which sections appear in the prompt
-_SECTION_ORDER = ['completed', 'partial', 'failed', 'issues', 'figma']
+_SECTION_ORDER = ['summary', 'completed', 'partial', 'failed', 'issues', 'figma']
+
+UI_VISIBLE_SECTIONS = ['summary', 'completed', 'partial', 'failed', 'issues', 'figma']
+COMMENT_VISIBLE_SECTION_KEYS = {'completed', 'partial', 'failed', 'issues', 'figma'}
+
+_ANALYSIS_TITLE_TO_KEY = {
+    'summary': 'summary',
+    'xulosa': 'summary',
+    'bajarilgan': 'completed',
+    'qisman': 'partial',
+    'bajarilmagan': 'failed',
+    'muammo': 'issues',
+    'potensial': 'issues',
+    'figma': 'figma',
+    'moslik bali': 'score',
+    'compliance_score': 'score',
+}
 
 
 def _build_response_format_sections(
@@ -175,6 +199,29 @@ def _build_response_format_sections(
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @dataclass
+class TZPRAnalysisSection:
+    """Frontend uchun strukturalashtirilgan AI bo'limi."""
+    key: str
+    title: str
+    lines: List[str] = field(default_factory=list)
+    items: List[str] = field(default_factory=list)
+    item_count: int = 0
+    empty: bool = False
+
+
+@dataclass
+class TZPRAnalysisOverview:
+    """Frontend checker header/summary uchun qisqa overview."""
+    verdict: str = "unknown"
+    verdict_label: str = "Unknown"
+    verdict_reason: str = ""
+    summary_lines: List[str] = field(default_factory=list)
+    section_counts: Dict[str, int] = field(default_factory=dict)
+    missing_figma_access: bool = False
+    requested_sections: List[str] = field(default_factory=list)
+
+
+@dataclass
 class TZPRAnalysisResult:
     """Tahlil natijasi"""
     task_key: str
@@ -190,6 +237,7 @@ class TZPRAnalysisResult:
     success: bool = True
     error_message: str = ""
     warnings: List[str] = field(default_factory=list)
+    status_banner: Optional[Dict] = None
 
     # AI retry info
     ai_retry_count: int = 0
@@ -201,6 +249,8 @@ class TZPRAnalysisResult:
     comment_analysis: Optional[Dict] = None  # TZHelper.analyze_comments() natijasi (zid commentlar)
 
     dev_objections: List[Dict] = field(default_factory=list)  # [AI_S1] dan keyin yozilgan dev comment'lar
+    analysis_sections: List[TZPRAnalysisSection] = field(default_factory=list)
+    analysis_overview: Optional[TZPRAnalysisOverview] = None
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -232,6 +282,15 @@ class TZPRService(BaseService):
             return get_app_settings_for_company(self._company_id).webhook_tz_pr
         from config.app_settings import get_app_settings
         return get_app_settings().tz_pr_checker
+
+    def _get_visible_sections_for_profile(self, output_profile: str) -> List[str]:
+        """UI checker uchun to'liq section set, comment profile uchun esa konfiguratsiya."""
+        if output_profile == "ui":
+            return list(UI_VISIBLE_SECTIONS)
+
+        configured = self._get_settings().visible_sections or []
+        filtered = [key for key in configured if key in COMMENT_VISIBLE_SECTION_KEYS]
+        return filtered or ['partial', 'failed', 'figma']
 
     @property
     def pr_helper(self):
@@ -265,9 +324,10 @@ class TZPRService(BaseService):
             task_key: str,
             max_files: Optional[int] = None,
             show_full_diff: bool = True,
-            use_smart_patch: bool = False,
+            use_smart_patch: Optional[bool] = None,
             status_callback: Optional[Callable[[str, str], None]] = None,
-            return_reason: Optional[str] = None
+            return_reason: Optional[str] = None,
+            output_profile: str = "comment",
     ) -> TZPRAnalysisResult:
         """
         TZ-PR moslik tahlilining asosiy funksiyasi — 7 bosqichli pipeline.
@@ -282,7 +342,7 @@ class TZPRService(BaseService):
             3. GitHub'dan PR ma'lumotlarini olish; PR topilmasa — 'pr_not_found' xatosi.
             3.5 Figma havolalarini ajratib olish va Figma API'dan ma'lumot olish (ixtiyoriy,
                muvaffaqiyatsizlik bo'lsa ham asosiy jarayon to'xtatilmaydi).
-            4. AI tahlilini amalga oshirish (_analyze_with_retry() orqali 3 ta strategiya).
+            4. AI tahlilini amalga oshirish (FULL-only policy).
             5. Moslik balini ajratib olish (_extract_compliance_score() orqali 4 regex).
             6. Task meta-ma'lumotlarini DB'ga saqlash (assignee, task_type, feature_name).
             7. TZPRAnalysisResult natijasini qaytarish.
@@ -293,8 +353,9 @@ class TZPRService(BaseService):
                 None bo'lsa — barcha o'zgargan fayllar qo'shiladi.
             show_full_diff (bool): True bo'lsa — har bir fayl uchun to'liq diff/patch
                 AI promtiga kiritiladi. False bo'lsa — faqat fayl nomi va statistika.
-            use_smart_patch (bool): True bo'lsa — standart diff o'rniga smart_context
-                (to'liq kontekst) ishlatiladi (SMART_PATCH_AVAILABLE = True bo'lishi kerak).
+            use_smart_patch (Optional[bool]): True bo'lsa — standart diff o'rniga smart_context
+                (to'liq kontekst) ishlatiladi. None bo'lsa setting'dagi
+                `default_use_smart_patch` qiymati ishlatiladi.
             status_callback (Optional[Callable[[str, str], None]]): Ixtiyoriy.
                 Progress yangilanishi uchun callback(level, message).
                 UI progress bar yoki logging uchun ishlatiladi.
@@ -322,6 +383,26 @@ class TZPRService(BaseService):
         update_status = self._create_status_updater(status_callback)
 
         try:
+            # Full-only policy: partial analysis taqiqlanadi
+            if max_files is not None or not show_full_diff:
+                banner = build_full_policy_input_violation(
+                    module_name="TZ-PR Checker",
+                    task_key=task_key,
+                    max_files=max_files,
+                    show_full_diff=show_full_diff,
+                )
+                return self._create_error_result(
+                    task_key=task_key,
+                    error_message=banner["message"],
+                    status_banner=banner,
+                )
+
+            effective_use_smart_patch = (
+                use_smart_patch
+                if use_smart_patch is not None
+                else bool(getattr(self._get_settings(), "default_use_smart_patch", True))
+            )
+
             # Step 1: Get task details
             task_details = self._get_task_details(task_key, update_status)
             if not task_details:
@@ -333,7 +414,7 @@ class TZPRService(BaseService):
             # Step 2: PR bor? merged? (birinchi tekshiruv — keraksiz ishni oldini olish)
             from utils.pr_cache import set_pr_exists_cache, set_pr_merged_cache
             try:
-                pr_info = self._get_pr_info(task_key, task_details, update_status, use_smart_patch)
+                pr_info = self._get_pr_info(task_key, task_details, update_status, effective_use_smart_patch)
             except PRNotMergedError as e:
                 set_pr_exists_cache(task_key, True)
                 set_pr_merged_cache(task_key, False)
@@ -390,10 +471,11 @@ class TZPRService(BaseService):
                 figma_data,
                 max_files,
                 show_full_diff,
-                use_smart_patch,
+                effective_use_smart_patch,
                 update_status,
                 is_recheck=is_recheck,
-                comment_separated=comment_separated
+                comment_separated=comment_separated,
+                output_profile=output_profile,
             )
 
             if not ai_result['success']:
@@ -404,11 +486,21 @@ class TZPRService(BaseService):
                     task_summary=task_details['summary'],
                     pr_info=pr_info,
                     warnings=ai_result.get('warnings', []),
-                    figma_data=figma_data
+                    figma_data=figma_data,
+                    status_banner=ai_result.get("status_banner"),
+                    ai_retry_count=ai_result.get("retry_count", 0),
+                    files_analyzed=ai_result.get("files_analyzed", 0),
+                    total_prompt_size=ai_result.get("prompt_size", 0),
                 )
 
             # Step 5: Extract compliance score
             compliance_score = self._extract_compliance_score(ai_result['analysis'])
+            analysis_sections, analysis_overview = self._build_structured_analysis(
+                ai_result['analysis'],
+                compliance_score=compliance_score,
+                output_profile=output_profile,
+                figma_data=figma_data,
+            )
 
             # Step 6: Update metadata (assignee, task_type, features)
             try:
@@ -436,7 +528,9 @@ class TZPRService(BaseService):
                 total_prompt_size=ai_result.get('prompt_size', 0),
                 figma_data=figma_data,
                 comment_analysis=comment_analysis,
-                dev_objections=comment_separated.get('dev_after', []) if is_recheck else []
+                dev_objections=comment_separated.get('dev_after', []) if is_recheck else [],
+                analysis_sections=analysis_sections,
+                analysis_overview=analysis_overview,
             )
 
         except Exception as e:
@@ -514,7 +608,7 @@ class TZPRService(BaseService):
         Returns:
             tuple: (figma_section, figma_analysis_section, figma_response_section)
         """
-        if not figma_data or not figma_data.get('summaries'):
+        if not self._has_usable_figma_data(figma_data):
             # No Figma data - return empty sections
             return ("", "", "")
 
@@ -536,19 +630,68 @@ class TZPRService(BaseService):
         # Add Figma analysis instruction
         figma_analysis_section = """
 5. **FIGMA DIZAYN MOSLIGI**
-   - Yuqorida Figma frame ma'lumotlari berilgan — shu asosda tahlil qil.
-   - TZ da ko'rsatilgan UI elementlar Figma frame nomlari bilan mos keladimi?
-   - Figma da bor frame/sahifalar kodda implement qilinganmi?
-   - Qaysi Figma frame'lari TZ talablariga mos, qaysilari yo'q?
+   - Yuqorida Figma frame, matn va comment ma'lumotlari berilgan — shu asosda tahlil qil.
+   - TZ da ko'rsatilgan UI elementlar hamda matn talablar Figma'dagi real yozuvlarga mos keladimi?
+   - Figma'dagi comment'larda yozilgan aniq talablar (masalan import, ustun, limit) kodda implement qilinganmi?
+   - Qaysi Figma frame/matn/comment talablari bajarilgan, qaysilari yo'q?
 """
 
         # Add Figma response section
         figma_response_section = """
 ## 🎨 FIGMA DIZAYN MOSLIGI
-[Figma frame nomlari va TZ talablari asosida moslikni tahlil qil. "Figma'ga kirish imkoni yo'q" iborasini ISHLATMA — frame ma'lumotlari yuqorida berilgan.]
+[Figma frame, matn va comment'lardagi aniq talablar asosida moslikni tahlil qil. "Figma'ga kirish imkoni yo'q" iborasini ISHLATMA — Figma ma'lumotlari yuqorida berilgan.]
 """
 
         return (figma_section, figma_analysis_section, figma_response_section)
+
+    def _has_usable_figma_data(self, figma_data: Optional[Dict]) -> bool:
+        """Figma summary'lar ichida real frame/file ma'lumoti bormi."""
+        if not figma_data or not figma_data.get('summaries'):
+            return False
+
+        unusable_markers = (
+            "token topilmadi",
+            "ruxsat yo'q",
+            "access yo'q",
+            "error:",
+            "olinmadi",
+            "summary error",
+        )
+        for item in figma_data.get('summaries', []):
+            summary = str(item.get('summary') or '').strip().lower()
+            if summary and not any(marker in summary for marker in unusable_markers):
+                return True
+        return False
+
+    def _sanitize_ai_analysis_for_missing_figma(self, analysis: str, figma_data: Optional[Dict]) -> str:
+        """
+        Figma ma'lumoti bo'lmasa, Figma bo'limini halol status xabariga almashtiradi.
+        """
+        if self._has_usable_figma_data(figma_data):
+            return analysis
+
+        replacement = (
+            "## 🎨 FIGMA DIZAYN MOSLIGI\n"
+            "Figma ma'lumotlari olinmadi.\n\n"
+            "- Figma token yoki ruxsat mavjud emas, yoki faylga access bo'lmadi.\n"
+            "- Shu sabab Figma dizayni bilan moslik bo'yicha ishonchli xulosa berib bo'lmaydi.\n"
+            "- Quyidagi bajarilgan/bajarilmagan xulosalar faqat TZ va kod o'zgarishlariga asoslangan.\n"
+        )
+
+        sanitized = re.sub(
+            r'\n*##\s*(?:🎨\s*)?FIGMA\s*DIZAYN\s*MOSLIGI.*?(?=\n##\s*(?:🧭|✅|⚠|❌|🐛|📊|🎨)|\Z)',
+            f'\n{replacement}\n',
+            analysis,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        sanitized = re.sub(
+            r'(?im)^\s*5\.\s*\*\*FIGMA\s+DIZAYN\s+MOSLIGI\*\*.*$',
+            '',
+            sanitized,
+        )
+        if "## 🎨 FIGMA DIZAYN MOSLIGI" not in sanitized:
+            sanitized = sanitized.strip() + "\n\n" + replacement
+        return sanitized.strip()
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # STEP METHODS (UPDATED)
@@ -566,15 +709,26 @@ class TZPRService(BaseService):
             # Comments o'chirilgan: bo'sh comment list ile chaqirish
             task_no_comments = dict(task_details)
             task_no_comments['comments'] = []
-            tz_content, comment_analysis = TZHelper.format_tz_with_comments(task_no_comments)
+            tz_content, comment_analysis = TZHelper.format_tz_with_comments(
+                task_no_comments,
+                exclude_ai_comments=True,
+            )
         else:
             max_c = tz_settings.max_comments_to_read if tz_settings.max_comments_to_read > 0 else None
             tz_content, comment_analysis = TZHelper.format_tz_with_comments(
-                task_details, max_comments=max_c
+                task_details,
+                max_comments=max_c,
+                exclude_ai_comments=True,
             )
 
         if comment_analysis['has_changes']:
             update_status("warning", comment_analysis['summary'])
+        filtered_ai_comments = int(comment_analysis.get('filtered_out_ai_comments') or 0)
+        if filtered_ai_comments > 0:
+            update_status(
+                "info",
+                f"Promptdan {filtered_ai_comments} ta oldingi AI comment chiqarib tashlandi",
+            )
 
         return tz_content, comment_analysis
 
@@ -739,7 +893,8 @@ class TZPRService(BaseService):
             use_smart_patch: bool,
             update_status,
             is_recheck: bool = False,
-            comment_separated: Optional[Dict] = None
+            comment_separated: Optional[Dict] = None,
+            output_profile: str = "comment",
     ) -> Dict:
         """
         AI tahlil bosqichini boshqaruvchi oraliq funksiya.
@@ -789,11 +944,12 @@ class TZPRService(BaseService):
             max_files=max_files,
             show_full_diff=show_full_diff,
             use_smart_patch=use_smart_patch,
-            status_callback=update_status
+            status_callback=update_status,
+            output_profile=output_profile,
         )
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # AI ANALYSIS WITH RETRY (UPDATED)
+    # AI ANALYSIS (FULL-ONLY POLICY)
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     def _analyze_with_retry(
@@ -808,21 +964,16 @@ class TZPRService(BaseService):
             max_files: Optional[int],
             show_full_diff: bool,
             use_smart_patch: bool,
-            status_callback
+            status_callback,
+            output_profile: str = "comment",
     ) -> Dict:
         """
-        AI tahlilini 3 bosqichli strategiya bilan avtomatik qayta urinish.
+        AI tahlili: FULL-only policy.
 
-        Agar AI modeli band yoki haddan tashqari yuklanган bo'lsa, bu funksiya
-        turli strategiyalar bilan qayta urinib ko'radi va muvaffaqiyatli natijani
-        qaytaradi. Barcha strategiya muvaffaqiyatsiz bo'lsagina xatolik qaytariladi.
-
-        Strategiyalar (tartib bilan):
-            1. To'liq tahlil — barcha fayllar va to'liq diff bilan (_try_ai_analysis).
-            2. Qisqartirilgan fayllar — max_files ikki baravarga kamaytiriladi
-               (overloaded / rate-limit xatoligi aniqlansa ishga tushadi).
-            3. Diff'siz tahlil — show_full_diff=False, faqat 3 ta fayl
-               (2-strategiya ham muvaffaqiyatsiz bo'lsa).
+        Qoidalar:
+            1. Faqat bitta urinish: barcha fayllar va to'liq diff.
+            2. Faylni kamaytirish yoki diffni o'chirish taqiqlanadi.
+            3. AI xatoligida partial natija qaytmaydi; standart block xabari qaytadi.
 
         Args:
             task_key (str): JIRA task identifikatori (masalan: 'DEV-1234').
@@ -854,19 +1005,20 @@ class TZPRService(BaseService):
         figma_section, figma_analysis, figma_response = self._build_figma_prompt_section(figma_data)
 
         # Read visible_sections from settings
-        visible_sections = self._get_settings().visible_sections
+        visible_sections = self._get_visible_sections_for_profile(output_profile)
 
         # Build dynamic response format (respects visible_sections)
         response_format_sections = _build_response_format_sections(
             visible_sections, figma_response
         )
 
-        # Strategy 1: Try with all files
+        # Full attempt: all files + full diff
         result = self._try_ai_analysis(
             task_key=task_key,
             task_details=task_details,
             tz_content=tz_content,
             pr_info=pr_info,
+            figma_data=figma_data,
             figma_section=figma_section,
             figma_analysis=figma_analysis,
             dev_comments_section=dev_comments_section,
@@ -875,71 +1027,38 @@ class TZPRService(BaseService):
             max_files=max_files,
             show_full_diff=show_full_diff,
             use_smart_patch=use_smart_patch,
-            retry_attempt=0
+            retry_attempt=0,
+            output_profile=output_profile,
         )
 
-        if result['success']:
+        files_total = pr_info.get('files_changed', 0)
+        files_included = result.get('files_analyzed')
+        prompt_size = result.get('prompt_size')
+        model_name = result.get('model_name')
+
+        if result['success'] and files_included == files_total:
             return result
 
-        # Server muammosi (503/unavailable): diff hajmini o'zgartirish yordam bermaydi — darhol qaytarish
-        _err_lower = result.get('error', '').lower()
-        _server_kw = ('503', 'unavailable', 'high demand', '500', '502', '504', 'server error')
-        if any(kw in _err_lower for kw in _server_kw):
-            return result
-
-        # Strategy 2: Reduce files if overload
-        if "overloaded" in _err_lower or "rate" in _err_lower:
-            status_callback("warning", "AI overloaded, reducing file count...")
-
-            reduced_files = max(1, (max_files or pr_info['files_changed']) // 2)
-
-            result = self._try_ai_analysis(
-                task_key=task_key,
-                task_details=task_details,
-                tz_content=tz_content,
-                pr_info=pr_info,
-                figma_section=figma_section,
-                figma_analysis=figma_analysis,
-                dev_comments_section=dev_comments_section,
-                reanalysis_section=reanalysis_section,
-                response_format_sections=response_format_sections,
-                max_files=reduced_files,
-                show_full_diff=show_full_diff,
-                use_smart_patch=use_smart_patch,
-                retry_attempt=1
-            )
-
-            if result['success']:
-                result['warnings'].append(f"Faqat {reduced_files} ta fayl tahlil qilindi (overload)")
-                return result
-
-        # Strategy 3: Without full diff
-        if show_full_diff:
-            status_callback("warning", "Trying without full diff...")
-
-            result = self._try_ai_analysis(
-                task_key=task_key,
-                task_details=task_details,
-                tz_content=tz_content,
-                pr_info=pr_info,
-                figma_section=figma_section,
-                figma_analysis=figma_analysis,
-                dev_comments_section=dev_comments_section,
-                reanalysis_section=reanalysis_section,
-                response_format_sections=response_format_sections,
-                max_files=self._get_settings().pr_max_files,
-                show_full_diff=False,
-                use_smart_patch=use_smart_patch,
-                retry_attempt=2
-            )
-
-            if result['success']:
-                pr_max = self._get_settings().pr_max_files
-                result['warnings'].append(f"Limited analysis (faqat {pr_max} ta fayl, diff yo'q)")
-                return result
-
-        # All strategies failed
-        return result
+        # Any failure/partial -> block (standardized)
+        blocked = build_full_analysis_blocked(
+            module_name="TZ-PR Checker",
+            task_key=task_key,
+            error_message=result.get("error", "AI full analysis failed"),
+            files_total=files_total,
+            files_included=files_included,
+            prompt_size_chars=prompt_size,
+            model=model_name,
+        )
+        return {
+            "success": False,
+            "error": blocked["error_message"],
+            "warnings": [],
+            "retry_count": result.get("retry_count", 0),
+            "files_analyzed": files_included,
+            "prompt_size": prompt_size,
+            "status_banner": blocked["status_banner"],
+            "model_name": model_name,
+        }
 
     def _try_ai_analysis(
             self,
@@ -947,6 +1066,7 @@ class TZPRService(BaseService):
             task_details: Dict,
             tz_content: str,
             pr_info: Dict,
+            figma_data: Optional[Dict],
             figma_section: str,
             figma_analysis: str,
             dev_comments_section: str,
@@ -955,7 +1075,8 @@ class TZPRService(BaseService):
             max_files: Optional[int],
             show_full_diff: bool,
             use_smart_patch: bool,
-            retry_attempt: int
+            retry_attempt: int,
+            output_profile: str = "comment",
     ) -> Dict:
         """Single AI analysis attempt."""
 
@@ -989,13 +1110,22 @@ class TZPRService(BaseService):
                 'figma':     'FIGMA DIZAYN',
             }
             tz_settings_local = self._get_settings()
-            visible_local = tz_settings_local.visible_sections or []
+            visible_local = self._get_visible_sections_for_profile(output_profile)
             hidden = [v for k, v in _section_names_uz.items() if k not in visible_local]
             if hidden:
                 response_format_sections += (
                     "\n\n⛔ TAQIQLANGAN BO'LIMLAR (QO'SHMA, YOZMA): "
                     + ", ".join(hidden)
                     + "\nYuqoridagi taqiqlangan bo'limlarni hech qachon javobga qo'shma!"
+                )
+
+            if not figma_section.strip():
+                response_format_sections += (
+                    "\n\n⛔ FIGMA MA'LUMOTI MAVJUD EMAS:"
+                    "\n- Figma haqida hech qanday xulosa, taxmin, ehtimoliy moslik yoki dizayn bahosi yozma."
+                    "\n- `FIGMA DIZAYN MOSLIGI` bo'limini qoldir, lekin faqat access bo'lmagani va xulosa berib bo'lmasligini yoz."
+                    "\n- `Figma bo'lmasa ham kodga qarab mos deb aytish mumkin` kabi taxminiy gaplarni yozma."
+                    "\n- Aniq yoz: `Figma ma'lumotlari olinmadi, shu sabab Figma dizayni bo'yicha xulosa berib bo'lmaydi.`"
                 )
 
             # Build final prompt (tartib sozlamadan, scope qoidasi qo'shilgan)
@@ -1013,7 +1143,9 @@ class TZPRService(BaseService):
             # Call AI — barcha bo'limlar yoqilganda javob katta bo'ladi,
             # shuning uchun max_output_tokens settings'dan olinadi
             max_tokens = tz_settings.ai_max_output_tokens
+            model_name = getattr(self.gemini, "model_name", None)
             analysis = self.gemini.analyze(prompt, max_output_tokens=max_tokens)
+            analysis = self._sanitize_ai_analysis_for_missing_figma(analysis, figma_data)
 
             return {
                 'success': True,
@@ -1021,7 +1153,8 @@ class TZPRService(BaseService):
                 'retry_count': retry_attempt,
                 'files_analyzed': max_files or pr_info['files_changed'],
                 'prompt_size': prompt_size,
-                'warnings': []
+                'warnings': [],
+                'model_name': model_name,
             }
 
         except Exception as e:
@@ -1030,7 +1163,10 @@ class TZPRService(BaseService):
                 'success': False,
                 'error': f"AI xatolik (attempt {retry_attempt}): {error_msg}",
                 'retry_count': retry_attempt,
-                'warnings': [f"Retry {retry_attempt} failed: {error_msg}"]
+                'warnings': [f"Retry {retry_attempt} failed: {error_msg}"],
+                'files_analyzed': max_files or pr_info.get('files_changed', 0),
+                'prompt_size': prompt_size if 'prompt_size' in locals() else 0,
+                'model_name': getattr(getattr(self, "_gemini_helper", None), "model_name", None),
             }
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1113,6 +1249,209 @@ class TZPRService(BaseService):
 
         return "\n".join(lines)
 
+    @staticmethod
+    def _clean_analysis_line(value: str) -> str:
+        return (
+            (value or "")
+            .replace("\r", "")
+            .replace("**", "")
+            .replace("`", "")
+            .strip()
+        )
+
+    def _classify_analysis_section_key(self, title: str) -> str:
+        normalized = self._clean_analysis_line(title).lower()
+        for marker, key in _ANALYSIS_TITLE_TO_KEY.items():
+            if marker in normalized:
+                return key
+        return "other"
+
+    def _split_analysis_sections(self, analysis: str) -> List[TZPRAnalysisSection]:
+        sections: List[TZPRAnalysisSection] = []
+        current_title = "Tahlil"
+        current_lines: List[str] = []
+
+        def flush_section() -> None:
+            nonlocal current_title, current_lines
+            cleaned_lines = [self._clean_analysis_line(line) for line in current_lines]
+            cleaned_lines = [line for line in cleaned_lines if line]
+            key = self._classify_analysis_section_key(current_title)
+            items = self._group_analysis_items(cleaned_lines)
+            sections.append(
+                TZPRAnalysisSection(
+                    key=key,
+                    title=self._clean_analysis_line(current_title) or "Tahlil",
+                    lines=cleaned_lines,
+                    items=items,
+                    item_count=len(items),
+                    empty=len(cleaned_lines) == 0,
+                )
+            )
+            current_title = "Tahlil"
+            current_lines = []
+
+        for raw_line in (analysis or "").replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+            heading_match = re.match(r"^#{2,3}\s*(.+)$", raw_line)
+            if heading_match:
+                if current_lines or current_title != "Tahlil":
+                    flush_section()
+                current_title = heading_match.group(1) or "Tahlil"
+                continue
+            current_lines.append(raw_line)
+
+        if current_lines or current_title != "Tahlil":
+            flush_section()
+
+        return [section for section in sections if section.title or section.lines]
+
+    def _group_analysis_items(self, cleaned_lines: List[str]) -> List[str]:
+        items: List[str] = []
+        current: List[str] = []
+
+        def flush_item() -> None:
+            nonlocal current
+            item = "\n".join(part for part in current if part).strip()
+            if item:
+                items.append(item)
+            current = []
+
+        for line in cleaned_lines:
+            if not line:
+                flush_item()
+                continue
+
+            normalized = line.lstrip()
+            starts_new = bool(
+                re.match(r"^[-*•]\s+", normalized)
+                or re.match(r"^\d+\.\s+", normalized)
+                or normalized.startswith("✅")
+                or normalized.startswith("⚠️")
+                or normalized.startswith("❌")
+                or normalized.startswith("🐛")
+                or normalized.startswith("📌")
+            )
+            if starts_new and current:
+                flush_item()
+            current.append(normalized)
+
+        flush_item()
+        return items
+
+    def _build_structured_analysis(
+            self,
+            analysis: str,
+            compliance_score: Optional[int],
+            output_profile: str,
+            figma_data: Optional[Dict],
+    ) -> tuple[List[TZPRAnalysisSection], TZPRAnalysisOverview]:
+        parsed_sections = self._split_analysis_sections(analysis)
+        sections_by_key: Dict[str, TZPRAnalysisSection] = {}
+        for section in parsed_sections:
+            if section.key == "score":
+                continue
+            if section.key in sections_by_key:
+                merged = sections_by_key[section.key]
+                merged.lines.extend(section.lines)
+                merged.items.extend(section.items)
+                merged.item_count = len(merged.items)
+                merged.empty = merged.empty and section.empty
+            else:
+                sections_by_key[section.key] = section
+
+        requested_sections = self._get_visible_sections_for_profile(output_profile)
+        ordered_sections: List[TZPRAnalysisSection] = []
+        for key in requested_sections:
+            if key == "summary":
+                continue
+            existing = sections_by_key.get(key)
+            if existing:
+                ordered_sections.append(existing)
+            else:
+                title = _SECTION_PROMPT_BLOCKS.get(key, "").splitlines()[0].replace("## ", "").strip() if key in _SECTION_PROMPT_BLOCKS else "Tahlil"
+                if key == "figma":
+                    title = "🎨 FIGMA DIZAYN MOSLIGI"
+                ordered_sections.append(
+                    TZPRAnalysisSection(
+                        key=key,
+                        title=title,
+                        lines=[],
+                        items=[],
+                        item_count=0,
+                        empty=True,
+                    )
+                )
+
+        summary_section = sections_by_key.get("summary")
+        summary_lines = list(summary_section.lines) if summary_section and summary_section.lines else []
+        if not summary_lines:
+            summary_lines = self._build_summary_lines(ordered_sections, compliance_score, figma_data)
+        elif compliance_score is not None and not any("%" in line for line in summary_lines):
+            summary_lines = [f"Compliance score: {compliance_score}%", *summary_lines]
+
+        section_counts = {
+            section.key: section.item_count or len(section.lines)
+            for section in ordered_sections
+        }
+        verdict, verdict_label, verdict_reason = self._derive_verdict(
+            ordered_sections,
+            compliance_score,
+        )
+        overview = TZPRAnalysisOverview(
+            verdict=verdict,
+            verdict_label=verdict_label,
+            verdict_reason=verdict_reason,
+            summary_lines=summary_lines,
+            section_counts=section_counts,
+            missing_figma_access=not self._has_usable_figma_data(figma_data),
+            requested_sections=requested_sections,
+        )
+        return ordered_sections, overview
+
+    def _build_summary_lines(
+            self,
+            ordered_sections: List[TZPRAnalysisSection],
+            compliance_score: Optional[int],
+            figma_data: Optional[Dict],
+    ) -> List[str]:
+        counts = {section.key: (section.item_count or len(section.lines)) for section in ordered_sections}
+        lines = []
+        if compliance_score is not None:
+            lines.append(f"Compliance score: {compliance_score}%")
+        if counts.get("failed"):
+            lines.append(f"{counts['failed']} ta bajarilmagan talab yoki gap topildi.")
+        elif counts.get("partial"):
+            lines.append(f"{counts['partial']} ta qisman bajarilgan talab topildi.")
+        elif counts.get("completed"):
+            lines.append("Asosiy talablar bajarilgan deb baholandi.")
+        else:
+            lines.append("AI natijasida aniq talab ro'yxati qaytmadi, lekin umumiy verdict chiqarildi.")
+
+        if counts.get("issues"):
+            lines.append(f"{counts['issues']} ta risk yoki potensial muammo qayd etildi.")
+
+        if not self._has_usable_figma_data(figma_data):
+            lines.append("Figma access bo'lmagani uchun dizayn verdicti cheklangan.")
+
+        return lines
+
+    def _derive_verdict(
+            self,
+            ordered_sections: List[TZPRAnalysisSection],
+            compliance_score: Optional[int],
+    ) -> tuple[str, str, str]:
+        counts = {section.key: (section.item_count or len(section.lines)) for section in ordered_sections}
+        if counts.get("failed"):
+            return ("fail", "Need Work", f"{counts['failed']} ta bajarilmagan talab bor")
+        if counts.get("partial") or counts.get("issues"):
+            total_partial = counts.get("partial", 0) + counts.get("issues", 0)
+            return ("partial", "Partial", f"{total_partial} ta ochiq nuqta yoki risk bor")
+        if compliance_score is not None:
+            if compliance_score >= 80:
+                return ("pass", "Ready", "Asosiy talablar mos deb topildi")
+            if compliance_score >= 60:
+                return ("partial", "Review", "Moslik o'rtacha, qo'shimcha tekshiruv kerak")
+        return ("pass", "Ready", "Kritik nomoslik topilmadi")
+
     def _extract_compliance_score(self, analysis: str) -> Optional[int]:
         """
         AI javob matnidan moslik balini ajratib olish — 4 bosqichli regex strategiyasi.
@@ -1188,7 +1527,11 @@ class TZPRService(BaseService):
             task_summary: str = "",
             pr_info: Optional[Dict] = None,
             warnings: Optional[List[str]] = None,
-            figma_data: Optional[Dict] = None
+            figma_data: Optional[Dict] = None,
+            status_banner: Optional[Dict] = None,
+            ai_retry_count: int = 0,
+            files_analyzed: int = 0,
+            total_prompt_size: int = 0,
     ) -> TZPRAnalysisResult:
         """Create error result"""
         return TZPRAnalysisResult(
@@ -1201,5 +1544,9 @@ class TZPRService(BaseService):
             success=False,
             error_message=error_message,
             warnings=warnings or [],
-            figma_data=figma_data
+            figma_data=figma_data,
+            status_banner=status_banner,
+            ai_retry_count=ai_retry_count,
+            files_analyzed=files_analyzed,
+            total_prompt_size=total_prompt_size,
         )

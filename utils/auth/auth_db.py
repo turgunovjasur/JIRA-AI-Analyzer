@@ -26,11 +26,102 @@ import json
 import os
 import re
 import secrets
-import shutil
-import time
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List, Tuple
-from pathlib import Path
+from core.logger import get_logger
+from utils.database.runtime import (
+    ensure_data_dir,
+    get_auth_db_path,
+    connect_auth_sqlite,
+    connect_auth_db,
+    is_sqlite_backend,
+)
+from utils.auth.company_repository import (
+    fetch_company_by_id,
+    fetch_company_by_code,
+    fetch_all_companies,
+    create_company_record,
+    insert_company_module_settings,
+    create_default_company_subscription,
+    update_company_active_flag,
+    update_company_seat_limit_value,
+    delete_company_by_id,
+    fetch_company_subscription,
+    upsert_company_subscription,
+    fetch_company_settings,
+    fetch_company_modules,
+    upsert_company_modules,
+    upsert_company_settings,
+    fetch_company_by_project_key,
+    find_project_key_conflicts,
+)
+from utils.auth.user_repository import (
+    count_users_in_company as repo_count_users_in_company,
+    insert_user,
+    fetch_user_by_id,
+    fetch_user_by_id_and_company,
+    fetch_user_by_full_username,
+    fetch_users_by_company,
+    update_user_password_hash,
+    update_user_status_value,
+    update_user_role_value,
+    delete_user_by_id,
+    fetch_user_credentials,
+    upsert_user_credentials,
+    fetch_user_module_settings,
+    upsert_user_module_settings,
+)
+from utils.auth.platform_repository import (
+    fetch_global_setting,
+    upsert_global_setting,
+    fetch_login_attempt_state,
+    delete_login_attempt,
+    upsert_login_attempt,
+    fetch_platform_admin_by_username,
+    upsert_platform_admin,
+    insert_login_audit_log,
+    fetch_login_audit_logs,
+    insert_password_reset_token,
+    fetch_password_reset_token,
+    mark_password_reset_token_used,
+    insert_web_session,
+    fetch_web_session,
+    touch_web_session,
+    revoke_web_session,
+)
+from utils.auth.auth_schema import (
+    migrate_user_credentials as schema_migrate_user_credentials,
+    migrate_figma_tokens as schema_migrate_figma_tokens,
+    migrate_global_settings as schema_migrate_global_settings,
+    migrate_platform_admins as schema_migrate_platform_admins,
+    migrate_gemini_model as schema_migrate_gemini_model,
+    migrate_login_attempts as schema_migrate_login_attempts,
+    migrate_login_audit_logs as schema_migrate_login_audit_logs,
+    migrate_user_password_reset_tokens as schema_migrate_user_password_reset_tokens,
+    migrate_user_roles as schema_migrate_user_roles,
+    migrate_company_subscriptions as schema_migrate_company_subscriptions,
+)
+from utils.auth.auth_bootstrap import (
+    maybe_backup_legacy_auth_db,
+    run_auth_schema_bootstrap,
+)
+from utils.auth.auth_config_helpers import (
+    build_company_gemini_keys,
+    build_company_credentials,
+    build_company_webhook_credentials,
+    build_user_credentials_for_service,
+    build_company_webhook_config,
+    validate_company_webhook_config_shape,
+    parse_webhook_module_settings,
+)
+from utils.auth.auth_subscription_helpers import (
+    normalize_iso_date,
+    validate_company_subscription_data as helper_validate_company_subscription_data,
+    is_company_subscription_active as helper_is_company_subscription_active,
+    get_effective_company_modules as helper_get_effective_company_modules,
+)
+
+log = get_logger("auth.db")
 
 # Barcha mavjud modullar ro'yxati (super admin shu ro'yxatdan tanlaydi)
 ALL_MODULES = {
@@ -43,42 +134,71 @@ ALL_MODULES = {
     'webhook':            'JIRA Webhook',
 }
 
+SALES_READY_MODULES = {
+    'tz_pr_checker',
+    'testcase_generator',
+    'monitoring',
+    'webhook',
+}
+
+DEFERRED_MODULES = set(ALL_MODULES) - SALES_READY_MODULES
+
 # Webhook sozlamalari uchun majburiy maydonlar
 WEBHOOK_REQUIRED_FIELDS = ['webhook_project_keys', 'webhook_trigger_status']
 
 DEFAULT_MODULES = {k: False for k in ALL_MODULES}
 
-# Default seat limit — admin qo'lda oshiradi
+# Default seat limit — legacy helperlar uchun 1, UI create flow esa explicit 0 yuboradi
 DEFAULT_SEAT_LIMIT = 1
+USER_ROLES = {'company_admin', 'user'}
+SUBSCRIPTION_STATUSES = {'trial', 'active', 'past_due', 'suspended', 'cancelled'}
+DEFAULT_SUBSCRIPTION_STATUS = 'trial'
+DEFAULT_BILLING_MODE = 'manual'
+DEFAULT_PLAN_NAME = 'base'
+DEFAULT_TRIAL_DAYS = 14
+SUBSCRIPTION_ACCESS_STATUSES = {'trial', 'active', 'past_due'}
+ALLOWED_BILLING_MODES = {'manual'}
+PLAN_INCLUDED_MODULES = {
+    'base': {'tz_pr_checker', 'testcase_generator'},
+}
 
 # Login bloklash sozlamalari
 MAX_LOGIN_ATTEMPTS = 5
 LOCKOUT_SECONDS    = 5 * 60  # 5 daqiqa
+PASSWORD_RESET_TOKEN_TTL_MINUTES = max(5, int(os.getenv("APP_PASSWORD_RESET_TOKEN_TTL_MINUTES", "60") or "60"))
+WEB_SESSION_TTL_MINUTES = max(
+    15,
+    int(
+        os.getenv("APP_WEB_SESSION_TTL_MINUTES")
+        or os.getenv("APP_SESSION_TIMEOUT_MINUTES")
+        or "120"
+    ),
+)
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-AUTH_DB_FILE = os.path.join(PROJECT_ROOT, 'data', 'auth.db')
+AUTH_DB_FILE = get_auth_db_path()
 
 # Username formati: "name@company_code"
 # name qismi: lotin harflar, raqam, nuqta, tire, underscore
 # company_code qismi: lotin harflar va raqam
 _USERNAME_RE = re.compile(r'^[a-z0-9._-]+@[a-z0-9]+$')
+_PLAN_NAME_RE = re.compile(r'^[a-z0-9][a-z0-9_-]{1,31}$')
 
 
 def _ensure_dir():
-    Path(os.path.dirname(AUTH_DB_FILE)).mkdir(parents=True, exist_ok=True)
+    ensure_data_dir()
 
 
 def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(AUTH_DB_FILE, timeout=30)
-    conn.row_factory = sqlite3.Row
-    # PRAGMA journal_mode=WAL cursor'ini to'liq iste'mol qilish kerak,
-    # aks holda read-lock ushlanadi va "database is locked" xatosi chiqadi.
-    cur = conn.execute("PRAGMA journal_mode=WAL")
-    cur.fetchone()
-    cur.close()
-    conn.execute("PRAGMA busy_timeout=30000")
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA synchronous=NORMAL")
+    conn = connect_auth_db(timeout=30)
+    if is_sqlite_backend():
+        # PRAGMA journal_mode=WAL cursor'ini to'liq iste'mol qilish kerak,
+        # aks holda read-lock ushlanadi va "database is locked" xatosi chiqadi.
+        cur = conn.execute("PRAGMA journal_mode=WAL")
+        cur.fetchone()
+        cur.close()
+        conn.execute("PRAGMA busy_timeout=30000")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA synchronous=NORMAL")
     return conn
 
 
@@ -109,38 +229,40 @@ def build_full_username(name: str, company_code: str) -> str:
     return f"{name.strip().lower()}@{company_code.strip().lower()}"
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# SCHEMA DETECTION (Eski schemadan yangi schemaga o'tish)
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-def _is_old_schema(conn: sqlite3.Connection) -> bool:
-    """
-    Eski schema (v3): companies.password_hash bor, users jadvali yo'q.
-    Yangi schema (v4): users jadvali bor.
-    """
-    c = conn.cursor()
-    c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
-    has_users = c.fetchone() is not None
-    if has_users:
-        return False
-    c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='companies'")
-    has_companies = c.fetchone() is not None
-    return has_companies  # companies bor, users yo'q → eski schema
+def _normalize_project_keys(raw_keys: str) -> List[str]:
+    """Webhook project keylarni normalize qilish."""
+    return [k.strip().upper() for k in (raw_keys or '').split(',') if k.strip()]
 
 
-def _backup_old_db() -> Optional[str]:
-    """Eski DB ni backup qilib nomlash. Yangi DB fayl ochiladi."""
-    if not os.path.exists(AUTH_DB_FILE):
+def _find_project_key_conflicts(conn: sqlite3.Connection, company_id: int, project_keys: List[str]) -> List[str]:
+    """Boshqa kompaniyalar bilan project key to'qnashuvlarini topish."""
+    return find_project_key_conflicts(conn, company_id, project_keys, _normalize_project_keys)
+
+
+def _hash_web_session_token(raw_token: str) -> str:
+    return hashlib.sha256((raw_token or "").encode("utf-8")).hexdigest()
+
+
+def _coerce_datetime_value(value: Any) -> Optional[datetime]:
+    if not value:
         return None
-    ts = time.strftime('%Y%m%d_%H%M%S')
-    backup_path = f"{AUTH_DB_FILE}.old-{ts}"
-    shutil.move(AUTH_DB_FILE, backup_path)
-    # WAL fayllarini ham ko'chirish
-    for suffix in ('-wal', '-shm'):
-        wal = AUTH_DB_FILE + suffix
-        if os.path.exists(wal):
-            shutil.move(wal, backup_path + suffix)
-    return backup_path
+    if isinstance(value, datetime):
+        return value
+    if hasattr(value, "isoformat") and not isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.isoformat())
+        except Exception:
+            return None
+    try:
+        return datetime.fromisoformat(str(value))
+    except Exception:
+        return None
+
+
+def _now_matching(value: Optional[datetime]) -> datetime:
+    if value is not None and value.tzinfo is not None:
+        return datetime.now(tz=value.tzinfo)
+    return datetime.now()
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -151,142 +273,23 @@ def init_auth_db():
     """Auth DB jadvallarini yaratish (idempotent). Eski schema aniqlansa backup + fresh."""
     _ensure_dir()
 
-    # Eski schema aniqlash va backup
-    if os.path.exists(AUTH_DB_FILE):
-        try:
-            conn = _get_conn()
-            old = _is_old_schema(conn)
-            conn.close()
-            if old:
-                backup = _backup_old_db()
-                print(f"[auth_db] Eski schema aniqlandi. Backup: {backup}")
-        except Exception:
-            pass
+    backup = maybe_backup_legacy_auth_db(_get_conn, AUTH_DB_FILE)
+    if backup:
+        print(f"[auth_db] Eski schema aniqlandi. Backup: {backup}")
 
     conn = _get_conn()
-    c = conn.cursor()
-
-    # companies — password yo'q (user layer ga ko'chgan)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS companies (
-            id           INTEGER PRIMARY KEY AUTOINCREMENT,
-            company_code TEXT    UNIQUE NOT NULL,
-            company_name TEXT    NOT NULL,
-            seat_limit   INTEGER DEFAULT 1,
-            is_active    INTEGER DEFAULT 1,
-            created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    # users — QA login, kompaniyaga bog'langan
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            company_id    INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-            username      TEXT    UNIQUE NOT NULL,
-            password_hash TEXT    NOT NULL,
-            is_active     INTEGER DEFAULT 1,
-            created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    c.execute("CREATE INDEX IF NOT EXISTS idx_users_company ON users(company_id)")
-
-    # company_settings — API kalitlar, webhook, ruxsat modullar (shared)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS company_settings (
-            company_id       INTEGER PRIMARY KEY REFERENCES companies(id) ON DELETE CASCADE,
-            jira_server      TEXT DEFAULT '',
-            jira_email       TEXT DEFAULT '',
-            jira_token       TEXT DEFAULT '',
-            github_token     TEXT DEFAULT '',
-            github_org       TEXT DEFAULT '',
-            figma_token      TEXT DEFAULT '',
-            gemini_api_key_1 TEXT DEFAULT '',
-            gemini_api_key_2 TEXT DEFAULT '',
-            enabled_modules  TEXT DEFAULT '{}',
-            webhook_project_keys        TEXT DEFAULT '',
-            webhook_trigger_status      TEXT DEFAULT '',
-            webhook_trigger_aliases     TEXT DEFAULT '',
-            webhook_return_status       TEXT DEFAULT '',
-            webhook_allowed_issue_types TEXT DEFAULT '',
-            webhook_excluded_assignees  TEXT DEFAULT '',
-            webhook_auto_return_enabled INTEGER DEFAULT 0,
-            webhook_return_threshold    INTEGER DEFAULT 60,
-            webhook_module_settings     TEXT DEFAULT '{}',
-            updated_at       DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    # user_module_settings — har user o'z standalone modul sozlamalari
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS user_module_settings (
-            user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            module_key    TEXT    NOT NULL,
-            settings_json TEXT    NOT NULL DEFAULT '{}',
-            updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (user_id, module_key)
-        )
-    """)
-
-    # user_credentials — har user o'z UI modul API kalitlari (JIRA, GitHub, Gemini)
-    # Webhook uchun emas — webhook company_settings dan foydalanadi
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS user_credentials (
-            user_id          INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-            jira_server      TEXT DEFAULT '',
-            jira_email       TEXT DEFAULT '',
-            jira_token       TEXT DEFAULT '',
-            github_token     TEXT DEFAULT '',
-            github_org       TEXT DEFAULT '',
-            figma_token      TEXT DEFAULT '',
-            gemini_api_key_1 TEXT DEFAULT '',
-            gemini_api_key_2 TEXT DEFAULT '',
-            updated_at       DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    conn.commit()
-
-    # Mavjud DB uchun migration: user_credentials jadvali yo'q bo'lsa qo'shish
-    _migrate_user_credentials(conn)
-    _migrate_figma_tokens(conn)
-    _migrate_gemini_model(conn)
-    _migrate_login_attempts(conn)
-    _migrate_global_settings(conn)
-
+    run_auth_schema_bootstrap(
+        conn,
+        default_plan_name=DEFAULT_PLAN_NAME,
+        default_billing_mode=DEFAULT_BILLING_MODE,
+    )
     conn.close()
+    seed_default_platform_admin()
 
 
 def _migrate_user_credentials(conn: sqlite3.Connection):
     """user_credentials jadvali mavjud emasligini tekshirib yaratish (migration)."""
-    c = conn.cursor()
-    c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='user_credentials'")
-    if c.fetchone() is None:
-        c.execute("""
-            CREATE TABLE user_credentials (
-                user_id            INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-                jira_server        TEXT DEFAULT '',
-                jira_email         TEXT DEFAULT '',
-                jira_token         TEXT DEFAULT '',
-                jira_project_keys  TEXT DEFAULT '',
-                github_token       TEXT DEFAULT '',
-                github_org         TEXT DEFAULT '',
-                figma_token        TEXT DEFAULT '',
-                gemini_api_key_1   TEXT DEFAULT '',
-                gemini_api_key_2   TEXT DEFAULT '',
-                updated_at         DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        conn.commit()
-    else:
-        # Mavjud jadvalga yangi ustunlarni qo'shish (migration)
-        c.execute("PRAGMA table_info(user_credentials)")
-        cols = {row[1] for row in c.fetchall()}
-        if 'jira_project_keys' not in cols:
-            c.execute("ALTER TABLE user_credentials ADD COLUMN jira_project_keys TEXT DEFAULT ''")
-        if 'figma_tokens' not in cols:
-            c.execute("ALTER TABLE user_credentials ADD COLUMN figma_tokens TEXT DEFAULT '[]'")
-        conn.commit()
+    schema_migrate_user_credentials(conn)
 
 
 def _parse_figma_tokens(raw) -> list:
@@ -304,54 +307,47 @@ def _parse_figma_tokens(raw) -> list:
 
 def _migrate_figma_tokens(conn: sqlite3.Connection):
     """company_settings va user_credentials ga figma_tokens ustunini qo'shish."""
-    c = conn.cursor()
-    for table in ('company_settings', 'user_credentials'):
-        c.execute(f"PRAGMA table_info({table})")
-        cols = {row[1] for row in c.fetchall()}
-        if 'figma_tokens' not in cols:
-            c.execute(f"ALTER TABLE {table} ADD COLUMN figma_tokens TEXT DEFAULT '[]'")
-    conn.commit()
+    schema_migrate_figma_tokens(conn)
 
 
 def _migrate_global_settings(conn: sqlite3.Connection):
     """global_settings jadvali yo'q bo'lsa yaratish."""
-    c = conn.cursor()
-    c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='global_settings'")
-    if c.fetchone() is None:
-        c.execute("""
-            CREATE TABLE global_settings (
-                key   TEXT PRIMARY KEY,
-                value TEXT DEFAULT ''
-            )
-        """)
-        conn.commit()
+    schema_migrate_global_settings(conn)
+
+
+def _migrate_platform_admins(conn: sqlite3.Connection):
+    """platform_admins jadvali yo'q bo'lsa yaratish."""
+    schema_migrate_platform_admins(conn)
 
 
 def _migrate_gemini_model(conn: sqlite3.Connection):
     """user_credentials va company_settings ga gemini_model ustunini qo'shish."""
-    c = conn.cursor()
-    for table in ('user_credentials', 'company_settings'):
-        c.execute(f"PRAGMA table_info({table})")
-        cols = {row[1] for row in c.fetchall()}
-        if 'gemini_model' not in cols:
-            c.execute(f"ALTER TABLE {table} ADD COLUMN gemini_model TEXT DEFAULT ''")
-    conn.commit()
+    schema_migrate_gemini_model(conn)
 
 
 def _migrate_login_attempts(conn: sqlite3.Connection):
     """login_attempts jadvali yo'q bo'lsa yaratish (migration)."""
-    c = conn.cursor()
-    c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='login_attempts'")
-    if c.fetchone() is None:
-        c.execute("""
-            CREATE TABLE login_attempts (
-                identifier   TEXT PRIMARY KEY,
-                failed_count INTEGER DEFAULT 0,
-                locked_until TEXT    DEFAULT NULL,
-                updated_at   TEXT    DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        conn.commit()
+    schema_migrate_login_attempts(conn)
+
+
+def _migrate_login_audit_logs(conn: sqlite3.Connection):
+    """login_audit_logs jadvali yo'q bo'lsa yaratish (migration)."""
+    schema_migrate_login_audit_logs(conn)
+
+
+def _migrate_user_password_reset_tokens(conn: sqlite3.Connection):
+    """user_password_reset_tokens jadvali yo'q bo'lsa yaratish (migration)."""
+    schema_migrate_user_password_reset_tokens(conn)
+
+
+def _migrate_user_roles(conn: sqlite3.Connection):
+    """users jadvaliga role ustunini qo'shish."""
+    schema_migrate_user_roles(conn)
+
+
+def _migrate_company_subscriptions(conn: sqlite3.Connection):
+    """company_subscriptions jadvalini yaratish va eski companylarni backfill qilish."""
+    schema_migrate_company_subscriptions(conn, DEFAULT_PLAN_NAME, DEFAULT_BILLING_MODE)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -364,25 +360,21 @@ def get_login_attempt_state(identifier: str) -> dict:
     Returns: {failed_count, is_locked, seconds_remaining}
     """
     try:
-        conn = _get_conn()
-        c = conn.cursor()
-        c.execute("SELECT * FROM login_attempts WHERE identifier = ?", (identifier,))
-        row = c.fetchone()
+        row = fetch_login_attempt_state(_get_conn, identifier)
         if not row:
-            conn.close()
             return {'failed_count': 0, 'is_locked': False, 'seconds_remaining': 0}
-        row = dict(row)
         locked_until = row.get('locked_until')
         if locked_until:
-            locked_dt = datetime.fromisoformat(locked_until)
-            if datetime.now() < locked_dt:
-                conn.close()
-                remaining = int((locked_dt - datetime.now()).total_seconds())
+            locked_dt = _coerce_datetime_value(locked_until)
+            if locked_dt is None:
+                delete_login_attempt(_get_conn, identifier)
+                return {'failed_count': 0, 'is_locked': False, 'seconds_remaining': 0}
+            now = _now_matching(locked_dt)
+            if now < locked_dt:
+                remaining = int((locked_dt - now).total_seconds())
                 return {'failed_count': row['failed_count'], 'is_locked': True, 'seconds_remaining': remaining}
             # Blok muddati o'tgan — tozalash
-            c.execute("DELETE FROM login_attempts WHERE identifier = ?", (identifier,))
-            conn.commit()
-        conn.close()
+            delete_login_attempt(_get_conn, identifier)
         return {'failed_count': row['failed_count'], 'is_locked': False, 'seconds_remaining': 0}
     except Exception:
         return {'failed_count': 0, 'is_locked': False, 'seconds_remaining': 0}
@@ -395,24 +387,12 @@ def record_failed_login(identifier: str) -> dict:
     Returns: {failed_count, is_locked, seconds_remaining}
     """
     try:
-        conn = _get_conn()
-        c = conn.cursor()
-        c.execute("SELECT failed_count FROM login_attempts WHERE identifier = ?", (identifier,))
-        row = c.fetchone()
+        row = fetch_login_attempt_state(_get_conn, identifier)
         new_count = (row['failed_count'] + 1) if row else 1
         locked_until = None
         if new_count >= MAX_LOGIN_ATTEMPTS:
             locked_until = (datetime.now() + timedelta(seconds=LOCKOUT_SECONDS)).isoformat()
-        c.execute("""
-            INSERT INTO login_attempts (identifier, failed_count, locked_until, updated_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(identifier) DO UPDATE SET
-                failed_count = excluded.failed_count,
-                locked_until = excluded.locked_until,
-                updated_at   = excluded.updated_at
-        """, (identifier, new_count, locked_until, datetime.now().isoformat()))
-        conn.commit()
-        conn.close()
+        upsert_login_attempt(_get_conn, identifier, new_count, locked_until)
         is_locked = locked_until is not None
         return {
             'failed_count':      new_count,
@@ -425,13 +405,41 @@ def record_failed_login(identifier: str) -> dict:
 
 def reset_login_attempts(identifier: str):
     """Muvaffaqiyatli logindan keyin urinishlar hisobini tiklash."""
-    try:
-        conn = _get_conn()
-        conn.execute("DELETE FROM login_attempts WHERE identifier = ?", (identifier,))
-        conn.commit()
-        conn.close()
-    except Exception:
-        pass
+    delete_login_attempt(_get_conn, identifier)
+
+
+def log_login_attempt(
+    identifier: str,
+    *,
+    success: bool,
+    reason: str = "",
+    user_id: int | None = None,
+    company_id: int | None = None,
+    role: str = "",
+) -> bool:
+    return insert_login_audit_log(
+        _get_conn,
+        identifier=identifier,
+        success=success,
+        reason=reason,
+        user_id=user_id,
+        company_id=company_id,
+        role=role,
+    )
+
+
+def get_recent_login_audit_logs(
+    limit: int = 50,
+    *,
+    success: bool | None = None,
+    identifier_contains: str = "",
+) -> List[Dict]:
+    return fetch_login_audit_logs(
+        _get_conn,
+        limit=limit,
+        success=success,
+        identifier_contains=identifier_contains,
+    )
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -455,37 +463,55 @@ def verify_password(password: str, stored_hash: str) -> bool:
         return False
 
 
+def _hash_password_reset_token(raw_token: str) -> str:
+    return hashlib.sha256((raw_token or "").encode("utf-8")).hexdigest()
+
+
+def get_platform_admin_by_username(username: str) -> Optional[Dict]:
+    """DB ichidagi platform super adminni olish."""
+    if not username:
+        return None
+    return fetch_platform_admin_by_username(_get_conn, username)
+
+
+def save_platform_admin(username: str, password: str, is_active: bool = True) -> bool:
+    """Platform super adminni DB'ga saqlash."""
+    clean_username = (username or "").strip().lower()
+    if not clean_username or not password:
+        return False
+    return upsert_platform_admin(_get_conn, clean_username, hash_password(password), is_active)
+
+
+def seed_default_platform_admin() -> bool:
+    """
+    Legacy `.env` super adminni DB platform_admins jadvaliga seed qilish.
+
+    Bu transition qadam sifatida env-based loginni DB-based modelga yaqinlashtiradi.
+    """
+    username = (os.getenv("SUPER_ADMIN_USERNAME") or "").strip().lower()
+    password = os.getenv("SUPER_ADMIN_PASSWORD") or ""
+    if not username or not password:
+        return False
+
+    existing = get_platform_admin_by_username(username)
+    if existing:
+        return True
+
+    return save_platform_admin(username, password, is_active=True)
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # GLOBAL SETTINGS (super admin tomonidan belgilanadi)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def get_global_setting(key: str, default: str = '') -> str:
     """Global sozlamadan qiymat olish."""
-    try:
-        conn = _get_conn()
-        c = conn.cursor()
-        c.execute("SELECT value FROM global_settings WHERE key = ?", (key,))
-        row = c.fetchone()
-        conn.close()
-        return (row['value'] or '').strip() if row else default
-    except Exception:
-        return default
+    return fetch_global_setting(_get_conn, key, default)
 
 
 def set_global_setting(key: str, value: str) -> bool:
     """Global sozlamani saqlash (upsert)."""
-    try:
-        conn = _get_conn()
-        conn.execute(
-            "INSERT INTO global_settings (key, value) VALUES (?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            (key, (value or '').strip())
-        )
-        conn.commit()
-        conn.close()
-        return True
-    except Exception:
-        return False
+    return upsert_global_setting(_get_conn, key, value)
 
 
 def get_global_gemini_defaults() -> dict:
@@ -513,21 +539,20 @@ def create_company(
     Args:
         company_code:    Unikal kod (smartup). Lowercase'ga aylantiriladi.
         company_name:    To'liq nom (Smartup LLC)
-        seat_limit:      Userlar chegarasi (default 1)
+        seat_limit:      Qo'shimcha userlar chegarasi (company admin bundan tashqari)
         enabled_modules: Ruxsat berilgan modullar {module_key: bool}
 
     Returns: yaratilgan kompaniya dict yoki None (code allaqachon mavjud).
     """
     try:
-        conn = _get_conn()
-        c = conn.cursor()
-
         code_lower = company_code.strip().lower()
-        c.execute(
-            "INSERT INTO companies (company_code, company_name, seat_limit) VALUES (?,?,?)",
-            (code_lower, company_name.strip(), max(1, int(seat_limit)))
-        )
-        company_id = c.lastrowid
+        company_id = create_company_record(_get_conn, code_lower, company_name.strip(), seat_limit)
+        if not company_id:
+            log.warning(
+                f"create_company failed at create_company_record | code={code_lower} | "
+                f"name={company_name.strip()} | seat_limit={seat_limit}"
+            )
+            return None
 
         mods = {**DEFAULT_MODULES}
         if enabled_modules:
@@ -535,102 +560,115 @@ def create_company(
                 if k in mods:
                     mods[k] = bool(v)
 
-        c.execute(
-            "INSERT INTO company_settings (company_id, enabled_modules) VALUES (?,?)",
-            (company_id, json.dumps(mods))
-        )
+        if not insert_company_module_settings(_get_conn, company_id, json.dumps(mods)):
+            log.error(
+                f"create_company failed at insert_company_module_settings | "
+                f"company_id={company_id} | code={code_lower}"
+            )
+            delete_company_by_id(_get_conn, company_id)
+            return None
 
-        conn.commit()
-        conn.close()
+        if not create_default_company_subscription(
+            _get_conn,
+            company_id,
+            DEFAULT_PLAN_NAME,
+            DEFAULT_SUBSCRIPTION_STATUS,
+            DEFAULT_BILLING_MODE,
+            DEFAULT_TRIAL_DAYS,
+        ):
+            log.error(
+                f"create_company failed at create_default_company_subscription | "
+                f"company_id={company_id} | code={code_lower}"
+            )
+            delete_company_by_id(_get_conn, company_id)
+            return None
+        log.info(
+            f"create_company success | company_id={company_id} | code={code_lower} | "
+            f"seat_limit={max(0, int(seat_limit))} | webhook={bool(mods.get('webhook'))}"
+        )
         return get_company_by_code(code_lower)
-    except sqlite3.IntegrityError:
+    except sqlite3.IntegrityError as exc:
+        log.warning(
+            f"create_company integrity error | code={company_code.strip().lower()} | err={exc}"
+        )
         return None
-    except Exception:
+    except Exception as exc:
+        log.error(
+            f"create_company unexpected error | code={company_code.strip().lower()} | "
+            f"name={company_name.strip()} | seat_limit={seat_limit} | err={exc}",
+            exc_info=True,
+        )
         return None
 
 
 def get_company_by_code(company_code: str) -> Optional[Dict]:
     """Company code bo'yicha kompaniya topish (case-insensitive)"""
-    try:
-        conn = _get_conn()
-        c = conn.cursor()
-        c.execute(
-            "SELECT * FROM companies WHERE company_code = ?",
-            (company_code.strip().lower(),)
-        )
-        row = c.fetchone()
-        conn.close()
-        return dict(row) if row else None
-    except Exception:
-        return None
+    return fetch_company_by_code(_get_conn, company_code)
 
 
 def get_company_by_id(company_id: int) -> Optional[Dict]:
     """ID bo'yicha kompaniya topish"""
-    try:
-        conn = _get_conn()
-        c = conn.cursor()
-        c.execute("SELECT * FROM companies WHERE id = ?", (company_id,))
-        row = c.fetchone()
-        conn.close()
-        return dict(row) if row else None
-    except Exception:
-        return None
+    return fetch_company_by_id(_get_conn, company_id)
 
 
 def get_all_companies() -> List[Dict]:
     """Barcha kompaniyalar ro'yxati"""
-    try:
-        conn = _get_conn()
-        c = conn.cursor()
-        c.execute("SELECT * FROM companies ORDER BY created_at DESC")
-        rows = c.fetchall()
-        conn.close()
-        return [dict(r) for r in rows]
-    except Exception:
-        return []
+    return fetch_all_companies(_get_conn)
+
+
+def get_company_subscription(company_id: int) -> Dict:
+    """Kompaniya subscription ma'lumotlarini olish."""
+    return fetch_company_subscription(_get_conn, company_id)
+
+
+def _normalize_iso_date(value: Any) -> tuple[str, Optional[datetime.date], str]:
+    """YYYY-MM-DD sanani normalize qilish."""
+    return normalize_iso_date(value)
+
+
+def validate_company_subscription_data(data: Dict) -> tuple[bool, str, Dict]:
+    """Subscription payloadni normalize va validate qilish."""
+    return helper_validate_company_subscription_data(
+        data,
+        _PLAN_NAME_RE,
+        SUBSCRIPTION_STATUSES,
+        ALLOWED_BILLING_MODES,
+        DEFAULT_BILLING_MODE,
+    )
+
+
+def save_company_subscription(company_id: int, data: Dict) -> bool:
+    """Kompaniya subscription ma'lumotlarini saqlash."""
+    allowed_keys = {
+        'plan_name', 'subscription_status', 'billing_mode',
+        'billing_start_date', 'billing_end_date', 'next_payment_date',
+        'last_payment_date', 'last_payment_note',
+    }
+    filtered = {k: (v or '') for k, v in data.items() if k in allowed_keys}
+    is_valid, _, normalized = validate_company_subscription_data(filtered)
+    if not is_valid:
+        return False
+    return upsert_company_subscription(_get_conn, company_id, normalized)
+
+
+def is_company_subscription_active(company_id: int) -> tuple[bool, str]:
+    """Subscription holati bo'yicha login ruxsatini tekshirish."""
+    return helper_is_company_subscription_active(get_company_subscription(company_id))
 
 
 def update_company_status(company_id: int, is_active: bool) -> bool:
     """Kompaniyani faollashtirish/o'chirish"""
-    try:
-        conn = _get_conn()
-        conn.execute(
-            "UPDATE companies SET is_active = ? WHERE id = ?",
-            (1 if is_active else 0, company_id)
-        )
-        conn.commit()
-        conn.close()
-        return True
-    except Exception:
-        return False
+    return update_company_active_flag(_get_conn, company_id, is_active)
 
 
 def update_company_seat_limit(company_id: int, seat_limit: int) -> bool:
-    """Kompaniyaning userlar chegarasini yangilash. Min 1."""
-    try:
-        conn = _get_conn()
-        conn.execute(
-            "UPDATE companies SET seat_limit = ? WHERE id = ?",
-            (max(1, int(seat_limit)), company_id)
-        )
-        conn.commit()
-        conn.close()
-        return True
-    except Exception:
-        return False
+    """Kompaniyaning qo'shimcha userlar chegarasini yangilash. Min 0."""
+    return update_company_seat_limit_value(_get_conn, company_id, seat_limit)
 
 
 def delete_company(company_id: int) -> bool:
     """Kompaniyani o'chirish (cascade: users, settings, module_settings ham o'chadi)"""
-    try:
-        conn = _get_conn()
-        conn.execute("DELETE FROM companies WHERE id = ?", (company_id,))
-        conn.commit()
-        conn.close()
-        return True
-    except Exception:
-        return False
+    return delete_company_by_id(_get_conn, company_id)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -638,22 +676,15 @@ def delete_company(company_id: int) -> bool:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def count_users_in_company(company_id: int) -> int:
-    """Kompaniyadagi faol+nofaol userlar soni (seat limit tekshiruvi uchun)"""
-    try:
-        conn = _get_conn()
-        c = conn.cursor()
-        c.execute("SELECT COUNT(*) FROM users WHERE company_id = ?", (company_id,))
-        n = c.fetchone()[0]
-        conn.close()
-        return int(n)
-    except Exception:
-        return 0
+    """Kompaniyadagi qo'shimcha `user`lar soni (company admin hisobga olinmaydi)."""
+    return repo_count_users_in_company(_get_conn, company_id)
 
 
 def create_user(
     company_id: int,
     name: str,
     password: str,
+    role: str = 'user',
 ) -> Tuple[Optional[Dict], Optional[str]]:
     """
     Kompaniyaga yangi user qo'shish.
@@ -662,6 +693,7 @@ def create_user(
         company_id: Kompaniya ID si
         name:       User nomi (@ belgidan oldingi qism, masalan 'olim')
         password:   Dastlabki parol
+        role:       company_admin yoki user
 
     Returns:
         (user_dict, None) — muvaffaqiyatli
@@ -671,10 +703,15 @@ def create_user(
     if not company:
         return None, "Kompaniya topilmadi"
 
+    clean_role = (role or 'user').strip().lower()
+    if clean_role not in USER_ROLES:
+        return None, f"Noto'g'ri role: '{role}'"
+
     # Seat limit tekshiruvi
     current_count = count_users_in_company(company_id)
-    seat_limit = int(company.get('seat_limit') or DEFAULT_SEAT_LIMIT)
-    if current_count >= seat_limit:
+    raw_seat_limit = company.get('seat_limit')
+    seat_limit = max(0, int(DEFAULT_SEAT_LIMIT if raw_seat_limit is None else raw_seat_limit))
+    if clean_role == 'user' and current_count >= seat_limit:
         return None, (
             f"Seat limit to'lgan ({current_count}/{seat_limit}). "
             f"Super admin seat limitni oshirishi kerak."
@@ -687,110 +724,243 @@ def create_user(
             "Faqat lotin harflar, raqam, '.' '_' '-' ruxsat etilgan."
         )
 
-    try:
-        conn = _get_conn()
-        c = conn.cursor()
-        c.execute(
-            "INSERT INTO users (company_id, username, password_hash) VALUES (?,?,?)",
-            (company_id, full_username, hash_password(password))
-        )
-        user_id = c.lastrowid
-        conn.commit()
-        conn.close()
-        return get_user_by_id(user_id), None
-    except sqlite3.IntegrityError:
-        return None, f"Bu username allaqachon mavjud: '{full_username}'"
-    except Exception as e:
-        return None, f"Xato yuz berdi: {e}"
+    user_id, error = insert_user(
+        _get_conn,
+        company_id,
+        full_username,
+        hash_password(password),
+        clean_role,
+    )
+    if not user_id:
+        return None, error
+    return get_user_by_id(user_id), None
 
 
 def get_user_by_id(user_id: int) -> Optional[Dict]:
     """ID bo'yicha user"""
-    try:
-        conn = _get_conn()
-        c = conn.cursor()
-        c.execute("SELECT * FROM users WHERE id = ?", (user_id,))
-        row = c.fetchone()
-        conn.close()
-        return dict(row) if row else None
-    except Exception:
-        return None
+    return fetch_user_by_id(_get_conn, user_id)
+
+
+def get_user_by_id_and_company(user_id: int, company_id: int) -> Optional[Dict]:
+    """User aynan shu kompaniyaga tegishli ekanini tekshirib qaytarish."""
+    return fetch_user_by_id_and_company(_get_conn, user_id, company_id)
 
 
 def get_user_by_full_username(full_username: str) -> Optional[Dict]:
     """'olim@smartup' bo'yicha user topish (case-insensitive)"""
     if not validate_username_format(full_username):
         return None
-    try:
-        conn = _get_conn()
-        c = conn.cursor()
-        c.execute(
-            "SELECT * FROM users WHERE username = ?",
-            (full_username.strip().lower(),)
-        )
-        row = c.fetchone()
-        conn.close()
-        return dict(row) if row else None
-    except Exception:
-        return None
+    return fetch_user_by_full_username(_get_conn, full_username)
 
 
 def get_users_by_company(company_id: int) -> List[Dict]:
     """Kompaniyadagi barcha userlar ro'yxati"""
-    try:
-        conn = _get_conn()
-        c = conn.cursor()
-        c.execute(
-            "SELECT * FROM users WHERE company_id = ? ORDER BY created_at ASC",
-            (company_id,)
-        )
-        rows = c.fetchall()
-        conn.close()
-        return [dict(r) for r in rows]
-    except Exception:
-        return []
+    return fetch_users_by_company(_get_conn, company_id)
 
 
 def update_user_password(user_id: int, new_password: str) -> bool:
     """Userning parolini yangilash"""
-    try:
-        conn = _get_conn()
-        conn.execute(
-            "UPDATE users SET password_hash = ? WHERE id = ?",
-            (hash_password(new_password), user_id)
-        )
-        conn.commit()
-        conn.close()
-        return True
-    except Exception:
+    return update_user_password_hash(_get_conn, user_id, hash_password(new_password))
+
+
+def update_user_password_for_company(user_id: int, company_id: int, new_password: str) -> bool:
+    """Faqat ko'rsatilgan kompaniyaga tegishli user parolini yangilash."""
+    target_user = get_user_by_id_and_company(user_id, company_id)
+    if not target_user:
         return False
+    return update_user_password(user_id, new_password)
+
+
+def create_password_reset_token(user_id: int, *, ttl_minutes: int | None = None) -> Optional[Dict]:
+    """User uchun bir martalik password reset token yaratish."""
+    user = get_user_by_id(user_id)
+    if not user or not user.get("is_active", 0):
+        return None
+
+    clean_ttl = max(5, int(ttl_minutes or PASSWORD_RESET_TOKEN_TTL_MINUTES))
+    raw_token = secrets.token_urlsafe(32)
+    expires_at = (datetime.now() + timedelta(minutes=clean_ttl)).isoformat()
+    token_hash = _hash_password_reset_token(raw_token)
+
+    if not insert_password_reset_token(
+        _get_conn,
+        user_id=user_id,
+        token_hash=token_hash,
+        expires_at=expires_at,
+    ):
+        return None
+
+    return {
+        "token": raw_token,
+        "expires_at": expires_at,
+        "user_id": user_id,
+    }
+
+
+def create_password_reset_token_for_username(full_username: str, *, ttl_minutes: int | None = None) -> Optional[Dict]:
+    """Username orqali password reset token yaratish."""
+    user = get_user_by_full_username(full_username)
+    if not user:
+        return None
+    return create_password_reset_token(user["id"], ttl_minutes=ttl_minutes)
+
+
+def consume_password_reset_token(raw_token: str, new_password: str) -> bool:
+    """Password reset token orqali user parolini yangilash."""
+    if not raw_token or not new_password:
+        return False
+
+    token_hash = _hash_password_reset_token(raw_token)
+    row = fetch_password_reset_token(_get_conn, token_hash)
+    if not row or row.get("used_at"):
+        return False
+
+    expires_at_raw = row.get("expires_at") or ""
+    expires_at = _coerce_datetime_value(expires_at_raw)
+    if expires_at is None:
+        return False
+    if expires_at <= _now_matching(expires_at):
+        return False
+
+    user = get_user_by_id(int(row["user_id"]))
+    if not user or not user.get("is_active", 0):
+        return False
+
+    if not update_user_password(int(row["user_id"]), new_password):
+        return False
+    return mark_password_reset_token_used(_get_conn, token_hash)
+
+
+def create_web_session(
+    auth_payload: Dict,
+    company_modules: Dict[str, bool] | None = None,
+    *,
+    ttl_minutes: int | None = None,
+) -> Optional[Dict]:
+    """Backend-managed web sessiya yaratish."""
+    if not auth_payload or not auth_payload.get("logged_in"):
+        return None
+
+    now = _now_matching(None)
+    expires_at = now + timedelta(minutes=max(15, int(ttl_minutes or WEB_SESSION_TTL_MINUTES)))
+    normalized_auth = dict(auth_payload)
+    normalized_auth["last_activity_at"] = now.isoformat()
+    normalized_auth["expires_at"] = expires_at.isoformat()
+    company_modules = company_modules or {}
+
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = _hash_web_session_token(raw_token)
+    ok = insert_web_session(
+        _get_conn,
+        session_token_hash=token_hash,
+        auth_payload=json.dumps(normalized_auth),
+        company_modules=json.dumps(company_modules),
+        expires_at=expires_at.isoformat(),
+        role=(normalized_auth.get("role") or ""),
+        user_id=normalized_auth.get("user_id"),
+        company_id=normalized_auth.get("company_id"),
+    )
+    if not ok:
+        return None
+
+    return {
+        "session_token": raw_token,
+        "expires_at": expires_at.isoformat(),
+        "auth": normalized_auth,
+        "company_modules": company_modules,
+    }
+
+
+def get_web_session(raw_token: str, *, touch: bool = True) -> Optional[Dict]:
+    """Sessiyani token orqali topish va ixtiyoriy ravishda expiry'ni yangilash."""
+    if not raw_token:
+        return None
+
+    row = fetch_web_session(_get_conn, _hash_web_session_token(raw_token))
+    if not row or row.get("revoked_at"):
+        return None
+
+    expires_at_raw = row.get("expires_at") or ""
+    expires_at = _coerce_datetime_value(expires_at_raw)
+    if expires_at is None:
+        return None
+    now = _now_matching(expires_at)
+    if expires_at <= now:
+        revoke_web_session_token(raw_token)
+        return None
+
+    try:
+        auth_payload = json.loads(row.get("auth_payload") or "{}")
+    except Exception:
+        auth_payload = {}
+    try:
+        company_modules = json.loads(row.get("company_modules") or "{}")
+    except Exception:
+        company_modules = {}
+
+    if touch:
+        now = _now_matching(expires_at)
+        refreshed_expires_at = now + timedelta(minutes=WEB_SESSION_TTL_MINUTES)
+        auth_payload["last_activity_at"] = now.isoformat()
+        auth_payload["expires_at"] = refreshed_expires_at.isoformat()
+        touch_web_session(
+            _get_conn,
+            _hash_web_session_token(raw_token),
+            auth_payload=json.dumps(auth_payload),
+            expires_at=refreshed_expires_at.isoformat(),
+            last_seen_at=now.isoformat(),
+        )
+        expires_at = refreshed_expires_at
+
+    return {
+        "auth": auth_payload,
+        "company_modules": company_modules,
+        "expires_at": expires_at.isoformat(),
+        "user_id": row.get("user_id"),
+        "company_id": row.get("company_id"),
+        "role": row.get("role"),
+    }
+
+
+def revoke_web_session_token(raw_token: str) -> bool:
+    """Sessiyani revoke qilish."""
+    if not raw_token:
+        return False
+    return revoke_web_session(_get_conn, _hash_web_session_token(raw_token))
 
 
 def update_user_status(user_id: int, is_active: bool) -> bool:
     """Userni faollashtirish/o'chirish"""
-    try:
-        conn = _get_conn()
-        conn.execute(
-            "UPDATE users SET is_active = ? WHERE id = ?",
-            (1 if is_active else 0, user_id)
-        )
-        conn.commit()
-        conn.close()
-        return True
-    except Exception:
+    return update_user_status_value(_get_conn, user_id, is_active)
+
+
+def update_user_status_for_company(user_id: int, company_id: int, is_active: bool) -> bool:
+    """Faqat ko'rsatilgan kompaniyaga tegishli user statusini o'zgartirish."""
+    target_user = get_user_by_id_and_company(user_id, company_id)
+    if not target_user or target_user.get('role') == 'company_admin':
         return False
+    return update_user_status(user_id, is_active)
+
+
+def update_user_role(user_id: int, role: str) -> bool:
+    """User rolini yangilash."""
+    clean_role = (role or '').strip().lower()
+    if clean_role not in USER_ROLES:
+        return False
+    return update_user_role_value(_get_conn, user_id, clean_role)
 
 
 def delete_user(user_id: int) -> bool:
     """Userni o'chirish (cascade: user_module_settings ham o'chadi)"""
-    try:
-        conn = _get_conn()
-        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
-        conn.commit()
-        conn.close()
-        return True
-    except Exception:
+    return delete_user_by_id(_get_conn, user_id)
+
+
+def delete_user_for_company(user_id: int, company_id: int) -> bool:
+    """Faqat ko'rsatilgan kompaniyaga tegishli oddiy userni o'chirish."""
+    target_user = get_user_by_id_and_company(user_id, company_id)
+    if not target_user or target_user.get('role') == 'company_admin':
         return False
+    return delete_user(user_id)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -799,15 +969,7 @@ def delete_user(user_id: int) -> bool:
 
 def get_company_settings(company_id: int) -> Dict:
     """Kompaniya sozlamalarini olish (API keys + webhook + enabled_modules)"""
-    try:
-        conn = _get_conn()
-        c = conn.cursor()
-        c.execute("SELECT * FROM company_settings WHERE company_id = ?", (company_id,))
-        row = c.fetchone()
-        conn.close()
-        return dict(row) if row else {}
-    except Exception:
-        return {}
+    return fetch_company_settings(_get_conn, company_id)
 
 
 def get_company_settings_by_code(company_code: str) -> Dict:
@@ -820,44 +982,29 @@ def get_company_settings_by_code(company_code: str) -> Dict:
 
 def get_company_modules(company_id: int) -> Dict[str, bool]:
     """Kompaniyaga ruxsat berilgan modullar: {'tz_pr_checker': True, ...}"""
-    cs = get_company_settings(company_id)
-    raw = cs.get('enabled_modules', '{}')
-    try:
-        mods = json.loads(raw) if raw else {}
-    except (json.JSONDecodeError, TypeError):
-        mods = {}
-    result = {**DEFAULT_MODULES}
-    for k, v in mods.items():
-        if k in result:
-            result[k] = bool(v)
-    return result
+    return fetch_company_modules(_get_conn, company_id, DEFAULT_MODULES)
+
+
+def get_effective_company_modules(company_id: int) -> Dict[str, bool]:
+    """
+    Kompaniyaning amaldagi modul ruxsatlari.
+
+    `enabled_modules` ichidagi pullik modullar saqlanadi, lekin plan ichidagi
+    bazaviy modullar subscription holatiga qarab avtomatik qo'shiladi.
+    """
+    return helper_get_effective_company_modules(
+        get_company_modules(company_id),
+        get_company_subscription(company_id),
+        SUBSCRIPTION_ACCESS_STATUSES,
+        DEFAULT_PLAN_NAME,
+        PLAN_INCLUDED_MODULES,
+    )
 
 
 def save_company_modules(company_id: int, modules: Dict[str, bool]) -> bool:
     """Kompaniyaning ruxsat berilgan modullarini yangilash"""
     clean = {k: bool(v) for k, v in modules.items() if k in ALL_MODULES}
-    full = {**DEFAULT_MODULES, **clean}
-    try:
-        conn = _get_conn()
-        c = conn.cursor()
-        c.execute("SELECT company_id FROM company_settings WHERE company_id = ?", (company_id,))
-        exists = c.fetchone()
-        now = datetime.now().isoformat()
-        if exists:
-            c.execute(
-                "UPDATE company_settings SET enabled_modules = ?, updated_at = ? WHERE company_id = ?",
-                (json.dumps(full), now, company_id)
-            )
-        else:
-            c.execute(
-                "INSERT INTO company_settings (company_id, enabled_modules) VALUES (?,?)",
-                (company_id, json.dumps(full))
-            )
-        conn.commit()
-        conn.close()
-        return True
-    except Exception:
-        return False
+    return upsert_company_modules(_get_conn, company_id, clean, DEFAULT_MODULES)
 
 
 def save_company_settings(company_id: int, settings: Dict) -> bool:
@@ -866,67 +1013,90 @@ def save_company_settings(company_id: int, settings: Dict) -> bool:
     Ruxsat etilgan kalitlar: API keys, webhook_*, webhook_module_settings.
     """
     allowed_keys = {
-        'jira_server', 'jira_email', 'jira_token',
+        'jira_server', 'jira_email', 'jira_token', 'jira_project_keys',
         'github_token', 'github_org', 'figma_token', 'figma_tokens',
         'gemini_api_key_1', 'gemini_api_key_2', 'gemini_model',
+        'webhook_jira_server', 'webhook_jira_email', 'webhook_jira_token',
+        'webhook_github_token', 'webhook_github_org',
+        'webhook_figma_token', 'webhook_figma_tokens',
+        'webhook_gemini_api_key_1', 'webhook_gemini_api_key_2', 'webhook_gemini_model',
         'webhook_project_keys', 'webhook_trigger_status', 'webhook_trigger_aliases',
         'webhook_return_status', 'webhook_allowed_issue_types', 'webhook_excluded_assignees',
         'webhook_auto_return_enabled', 'webhook_return_threshold',
         'webhook_module_settings',
     }
     filtered = {k: v for k, v in settings.items() if k in allowed_keys}
+    return upsert_company_settings(
+        _get_conn,
+        company_id,
+        filtered,
+        _find_project_key_conflicts,
+        _normalize_project_keys,
+    )
+
+
+def debug_company_settings_save(company_id: int, settings: Dict) -> List[str]:
+    """
+    Company settings save yiqilganda ehtimoliy sabablarni qaytaradi.
+    UI debug uchun ishlatiladi.
+    """
+    allowed_keys = {
+        'jira_server', 'jira_email', 'jira_token', 'jira_project_keys',
+        'github_token', 'github_org', 'figma_token', 'figma_tokens',
+        'gemini_api_key_1', 'gemini_api_key_2', 'gemini_model',
+        'webhook_jira_server', 'webhook_jira_email', 'webhook_jira_token',
+        'webhook_github_token', 'webhook_github_org',
+        'webhook_figma_token', 'webhook_figma_tokens',
+        'webhook_gemini_api_key_1', 'webhook_gemini_api_key_2', 'webhook_gemini_model',
+        'webhook_project_keys', 'webhook_trigger_status', 'webhook_trigger_aliases',
+        'webhook_return_status', 'webhook_allowed_issue_types', 'webhook_excluded_assignees',
+        'webhook_auto_return_enabled', 'webhook_return_threshold',
+        'webhook_module_settings',
+    }
+    filtered = {k: v for k, v in settings.items() if k in allowed_keys}
+    reasons: List[str] = []
+
     if not filtered:
-        return False
-    filtered['updated_at'] = datetime.now().isoformat()
+        reasons.append("Saqlash uchun ruxsat etilgan maydon topilmadi.")
+        return reasons
 
     try:
-        conn = _get_conn()
-        c = conn.cursor()
-        c.execute("SELECT company_id FROM company_settings WHERE company_id = ?", (company_id,))
-        exists = c.fetchone()
+        from utils.auth.credential_crypto import can_encrypt_credentials, payload_requires_encryption
 
-        if exists:
-            set_clause = ", ".join(f"{k} = ?" for k in filtered)
-            values = list(filtered.values()) + [company_id]
-            c.execute(f"UPDATE company_settings SET {set_clause} WHERE company_id = ?", values)
-        else:
-            filtered['company_id'] = company_id
-            cols = ", ".join(filtered.keys())
-            placeholders = ", ".join("?" for _ in filtered)
-            c.execute(
-                f"INSERT INTO company_settings ({cols}) VALUES ({placeholders})",
-                list(filtered.values())
-            )
+        if payload_requires_encryption(filtered) and not can_encrypt_credentials():
+            reasons.append("Credential encryption tayyor emas yoki master key sozlanmagan.")
 
-        conn.commit()
-        conn.close()
-        return True
-    except Exception:
-        return False
+    except Exception as exc:
+        reasons.append(f"Debug tekshiruv ham xato berdi: {exc}")
+
+    if not reasons:
+        reasons.append("Repository qatlamida noma'lum xato qaytdi. DB log yoki repository exception kerak.")
+    return reasons
 
 
 def has_api_keys_configured(company_id: int) -> bool:
     """Kompaniya majburiy API kalitlari sozlanganligini tekshirish"""
     cs = get_company_settings(company_id)
+    global_defaults = get_global_gemini_defaults() or {}
+    has_company_or_global_gemini = bool(
+        cs.get('gemini_api_key_1')
+        or cs.get('gemini_api_key_2')
+        or global_defaults.get('api_key_1')
+        or global_defaults.get('api_key_2')
+    )
     return bool(
+        cs.get('jira_server') and
         cs.get('jira_email') and
         cs.get('jira_token') and
         cs.get('github_token') and
-        cs.get('gemini_api_key_1')
+        cs.get('github_org') and
+        has_company_or_global_gemini
     )
 
 
 def get_company_gemini_keys(company_id: int) -> list:
     """Kompaniyaning Gemini API kalitlari ro'yxati"""
-    cs = get_company_settings(company_id)
-    keys = []
-    k1 = (cs.get('gemini_api_key_1') or '').strip()
-    k2 = (cs.get('gemini_api_key_2') or '').strip()
-    if k1:
-        keys.append(k1)
-    if k2:
-        keys.append(k2)
-    return keys
+    return build_company_gemini_keys(get_company_settings(company_id))
 
 
 def get_company_credentials(company_id: int) -> dict:
@@ -934,53 +1104,29 @@ def get_company_credentials(company_id: int) -> dict:
     Kompaniyaning barcha API kredensiallarini yuklash va validatsiya qilish.
 
     Agar majburiy kalit(lar) kiritilmagan bo'lsa → RuntimeError.
-    Hech qachon global .env kalitlariga murojaat qilmaydi.
+    Gemini kaliti bo'lmasa company -> global default tartibi ishlatiladi.
     """
-    cs = get_company_settings(company_id)
-    missing = []
+    return build_company_credentials(
+        company_id,
+        get_company_settings(company_id),
+        _parse_figma_tokens,
+        get_global_gemini_defaults,
+    )
 
-    jira_server = (cs.get('jira_server') or '').strip()
-    jira_email  = (cs.get('jira_email')  or '').strip()
-    jira_token  = (cs.get('jira_token')  or '').strip()
-    github_token = (cs.get('github_token') or '').strip()
-    github_org   = (cs.get('github_org')   or '').strip()
-    figma_token  = (cs.get('figma_token')  or '').strip()
-    figma_tokens = _parse_figma_tokens(cs.get('figma_tokens'))
-    # Backward compat: eski yagona figma_token ni ro'yxatga qo'shish
-    if not figma_tokens and figma_token:
-        figma_tokens = [{'name': '', 'token': figma_token}]
-    gemini_k1    = (cs.get('gemini_api_key_1') or '').strip()
-    gemini_k2    = (cs.get('gemini_api_key_2') or '').strip()
-    gemini_model = (cs.get('gemini_model')     or '').strip()
 
-    if not jira_email:
-        missing.append("JIRA Email")
-    if not jira_token:
-        missing.append("JIRA API Token")
-    if not github_token:
-        missing.append("GitHub Token")
-    if not gemini_k1:
-        missing.append("Gemini API Key")
+def get_company_webhook_credentials(company_id: int) -> dict:
+    """
+    Webhook servislari uchun kompaniyaning alohida API kredensiallari.
 
-    if missing:
-        raise RuntimeError(
-            f"Kompaniya (id={company_id}) API kalitlari to'liq emas: "
-            f"{', '.join(missing)}. Sozlamalar → API Kalitlar bo'limini to'ldiring."
-        )
-
-    gemini_keys = [k for k in [gemini_k1, gemini_k2] if k]
-
-    return {
-        'jira_server':   jira_server or 'https://yourcompany.atlassian.net',
-        'jira_email':    jira_email,
-        'jira_token':    jira_token,
-        'github_token':  github_token,
-        'github_org':    github_org,
-        'figma_token':   figma_token,
-        'figma_tokens':  figma_tokens,
-        'gemini_keys':   gemini_keys,
-        'gemini_model':  gemini_model or None,
-    }
+    Yangi `webhook_*` maydonlari birinchi o'rinda ishlatiladi, kerak bo'lsa
+    eski shared company credentiallarga fallback qilinadi.
+    """
+    return build_company_webhook_credentials(
+        company_id,
+        get_company_settings(company_id),
+        _parse_figma_tokens,
+        get_global_gemini_defaults,
+    )
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -996,128 +1142,55 @@ _USER_CRED_FIELDS = {
 
 def get_user_credentials(user_id: int) -> Dict:
     """User o'z UI modul API kalitlarini olish."""
-    try:
-        conn = _get_conn()
-        c = conn.cursor()
-        c.execute("SELECT * FROM user_credentials WHERE user_id = ?", (user_id,))
-        row = c.fetchone()
-        conn.close()
-        return dict(row) if row else {}
-    except Exception:
-        return {}
+    return fetch_user_credentials(_get_conn, user_id)
 
 
 def save_user_credentials(user_id: int, data: Dict) -> bool:
     """User API kalitlarini saqlash (INSERT OR REPLACE)."""
     filtered = {k: v for k, v in data.items() if k in _USER_CRED_FIELDS}
-    if not filtered:
-        return False
-    filtered['updated_at'] = datetime.now().isoformat()
-    try:
-        conn = _get_conn()
-        c = conn.cursor()
-        c.execute("SELECT user_id FROM user_credentials WHERE user_id = ?", (user_id,))
-        exists = c.fetchone()
-        if exists:
-            set_clause = ", ".join(f"{k} = ?" for k in filtered)
-            values = list(filtered.values()) + [user_id]
-            c.execute(f"UPDATE user_credentials SET {set_clause} WHERE user_id = ?", values)
-        else:
-            filtered['user_id'] = user_id
-            cols = ", ".join(filtered.keys())
-            placeholders = ", ".join("?" for _ in filtered)
-            c.execute(
-                f"INSERT INTO user_credentials ({cols}) VALUES ({placeholders})",
-                list(filtered.values())
-            )
-        conn.commit()
-        conn.close()
-        return True
-    except Exception:
-        return False
+    return upsert_user_credentials(_get_conn, user_id, filtered)
 
 
 def get_user_credentials_for_service(user_id: int) -> dict:
     """
     User API kalitlarini service uchun validatsiya bilan qaytarish.
-    Majburiy: jira_email, jira_token, github_token.
-    Gemini: user kaliti bo'lmasa → GEMINI_DEFAULT_API_KEY env dan olinadi.
+    Majburiy (company/admin): jira_server, jira_email, jira_token, github_token, github_org.
+    Gemini: user kaliti bo'lmasa → company admin shared kaliti → super admin global default.
     Yetishmasa → RuntimeError.
     """
-    uc = get_user_credentials(user_id)
-
-    jira_server  = (uc.get('jira_server')  or '').strip()
-    jira_email   = (uc.get('jira_email')   or '').strip()
-    jira_token   = (uc.get('jira_token')   or '').strip()
-    github_token = (uc.get('github_token') or '').strip()
-    github_org   = (uc.get('github_org')   or '').strip()
-    figma_token  = (uc.get('figma_token')  or '').strip()
-    figma_tokens = _parse_figma_tokens(uc.get('figma_tokens'))
-    if not figma_tokens and figma_token:
-        figma_tokens = [{'name': '', 'token': figma_token}]
-    gemini_k1    = (uc.get('gemini_api_key_1') or '').strip()
-    gemini_k2    = (uc.get('gemini_api_key_2') or '').strip()
-    gemini_model = (uc.get('gemini_model') or '').strip()
-
-    # Gemini kalit: user → env → global default (super admin) → kompaniya webhook kaliti
-    if not gemini_k1:
-        gemini_k1 = os.getenv('GEMINI_DEFAULT_API_KEY', '').strip()
-    if not gemini_k1:
-        glb = get_global_gemini_defaults()
-        gemini_k1 = glb['api_key_1']
-        if not gemini_k2:
-            gemini_k2 = glb['api_key_2']
-        if not gemini_model:
-            gemini_model = glb['model']
-    if not gemini_k1:
-        user_row = get_user_by_id(user_id)
-        if user_row:
-            cs = get_company_settings(user_row['company_id'])
-            gemini_k1 = (cs.get('gemini_api_key_1') or '').strip()
-            if not gemini_k2:
-                gemini_k2 = (cs.get('gemini_api_key_2') or '').strip()
-            if not gemini_model:
-                gemini_model = (cs.get('gemini_model') or '').strip()
-
-    missing = []
-    if not jira_email:   missing.append("JIRA Email")
-    if not jira_token:   missing.append("JIRA API Token")
-    if not github_token: missing.append("GitHub Token")
-
-    if missing:
-        raise RuntimeError(
-            f"API kalitlar to'liq emas: {', '.join(missing)}. "
-            f"Sozlamalar → API Kalitlar bo'limini to'ldiring."
-        )
-
-    if not gemini_k1:
-        raise RuntimeError(
-            "Gemini API Key topilmadi. Sozlamalar → Webhook API Kalitlar bo'limida "
-            "kompaniya Gemini kalitini kiriting."
-        )
-
-    return {
-        'jira_server':   jira_server or 'https://yourcompany.atlassian.net',
-        'jira_email':    jira_email,
-        'jira_token':    jira_token,
-        'github_token':  github_token,
-        'github_org':    github_org,
-        'figma_token':   figma_token,
-        'figma_tokens':  figma_tokens,
-        'gemini_keys':   [k for k in [gemini_k1, gemini_k2] if k],
-        'gemini_model':  gemini_model or None,
-    }
+    return build_user_credentials_for_service(
+        user_id,
+        get_user_credentials(user_id),
+        _parse_figma_tokens,
+        get_global_gemini_defaults,
+        get_user_by_id,
+        get_company_settings,
+    )
 
 
 def has_user_credentials_configured(user_id: int) -> bool:
-    """User majburiy API kalitlarini kiritganligini tekshirish.
-    Gemini majburiy emas — tizim default kalit ishlatadi."""
+    """User modullardan foydalanishi uchun company (admin) credentiallar tayyormi."""
+    user_row = get_user_by_id(user_id)
+    if not user_row:
+        return False
+    cs = get_company_settings(user_row['company_id'])
     uc = get_user_credentials(user_id)
+    global_defaults = get_global_gemini_defaults() or {}
+    has_gemini = bool(
+        (uc.get('gemini_api_key_1') or '').strip()
+        or (uc.get('gemini_api_key_2') or '').strip()
+        or (cs.get('gemini_api_key_1') or '').strip()
+        or (cs.get('gemini_api_key_2') or '').strip()
+        or (global_defaults.get('api_key_1') or '').strip()
+        or (global_defaults.get('api_key_2') or '').strip()
+    )
     return bool(
-        uc.get('jira_email') and
-        uc.get('jira_token') and
-        uc.get('jira_project_keys') and
-        uc.get('github_token')
+        cs.get('jira_server') and
+        cs.get('jira_email') and
+        cs.get('jira_token') and
+        cs.get('github_token') and
+        cs.get('github_org') and
+        has_gemini
     )
 
 
@@ -1127,28 +1200,12 @@ def has_user_credentials_configured(user_id: int) -> bool:
 
 def get_company_webhook_config(company_id: int) -> Dict:
     """Kompaniyaning webhook routing sozlamalari"""
-    cs = get_company_settings(company_id)
-    return {
-        'webhook_project_keys':        cs.get('webhook_project_keys', ''),
-        'webhook_trigger_status':      cs.get('webhook_trigger_status', ''),
-        'webhook_trigger_aliases':     cs.get('webhook_trigger_aliases', ''),
-        'webhook_return_status':       cs.get('webhook_return_status', ''),
-        'webhook_allowed_issue_types': cs.get('webhook_allowed_issue_types', ''),
-        'webhook_excluded_assignees':  cs.get('webhook_excluded_assignees', ''),
-        'webhook_auto_return_enabled': bool(cs.get('webhook_auto_return_enabled', 0)),
-        'webhook_return_threshold':    int(cs.get('webhook_return_threshold') or 60),
-    }
+    return build_company_webhook_config(get_company_settings(company_id))
 
 
 def validate_company_webhook_config(company_id: int) -> List[str]:
     """Webhook sozlamalarining to'liqligini tekshirish. Bo'sh ro'yxat = OK."""
-    cfg = get_company_webhook_config(company_id)
-    errors = []
-    if not cfg.get('webhook_project_keys', '').strip():
-        errors.append("JIRA Project Key(lar) kiritilishi shart (masalan: DEV, QA)")
-    if not cfg.get('webhook_trigger_status', '').strip():
-        errors.append("Trigger Status kiritilishi shart (masalan: Ready to Test)")
-    return errors
+    return validate_company_webhook_config_shape(get_company_webhook_config(company_id))
 
 
 def get_company_webhook_module_settings(company_id: int, module_key: str = None) -> Dict:
@@ -1162,24 +1219,13 @@ def get_company_webhook_module_settings(company_id: int, module_key: str = None)
     kompaniya darajasida (shared), user darajasida emas.
     """
     cs = get_company_settings(company_id)
-    raw = cs.get('webhook_module_settings', '{}')
-    try:
-        all_settings = json.loads(raw) if raw else {}
-    except (json.JSONDecodeError, TypeError):
-        all_settings = {}
-    if module_key:
-        return all_settings.get(module_key, {})
-    return all_settings
+    return parse_webhook_module_settings(cs.get('webhook_module_settings', '{}'), module_key)
 
 
 def save_company_webhook_module_settings(company_id: int, module_key: str, data: dict) -> bool:
     """Kompaniyaning bitta webhook modul sozlamasini saqlash"""
     cs = get_company_settings(company_id)
-    raw = cs.get('webhook_module_settings', '{}')
-    try:
-        all_settings = json.loads(raw) if raw else {}
-    except (json.JSONDecodeError, TypeError):
-        all_settings = {}
+    all_settings = parse_webhook_module_settings(cs.get('webhook_module_settings', '{}'))
     all_settings[module_key] = data
     return save_company_settings(
         company_id,
@@ -1189,25 +1235,7 @@ def save_company_webhook_module_settings(company_id: int, module_key: str, data:
 
 def get_company_by_project_key(project_key: str) -> Optional[Dict]:
     """JIRA project key bo'yicha kompaniyani topish (webhook routing)"""
-    try:
-        conn = _get_conn()
-        c = conn.cursor()
-        c.execute("""
-            SELECT c.*, cs.webhook_project_keys FROM companies c
-            JOIN company_settings cs ON cs.company_id = c.id
-            WHERE c.is_active = 1
-              AND cs.webhook_project_keys != ''
-        """)
-        rows = c.fetchall()
-        conn.close()
-        key_upper = project_key.strip().upper()
-        for row in rows:
-            keys = [k.strip().upper() for k in (row['webhook_project_keys'] or '').split(',') if k.strip()]
-            if key_upper in keys:
-                return dict(row)
-        return None
-    except Exception:
-        return None
+    return fetch_company_by_project_key(_get_conn, project_key, _normalize_project_keys)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1221,60 +1249,12 @@ def get_user_module_settings(user_id: int, module_key: str = None) -> Dict:
     module_key='tz_pr_checker' yoki 'testcase_generator' yoki 'bug_analyzer' yoki 'statistics'.
     None bo'lsa barcha modul sozlamalar {module_key: {...}, ...} shaklida qaytariladi.
     """
-    try:
-        conn = _get_conn()
-        c = conn.cursor()
-        if module_key:
-            c.execute(
-                "SELECT settings_json FROM user_module_settings WHERE user_id = ? AND module_key = ?",
-                (user_id, module_key)
-            )
-            row = c.fetchone()
-            conn.close()
-            if not row:
-                return {}
-            try:
-                return json.loads(row['settings_json']) or {}
-            except (json.JSONDecodeError, TypeError):
-                return {}
-        else:
-            c.execute(
-                "SELECT module_key, settings_json FROM user_module_settings WHERE user_id = ?",
-                (user_id,)
-            )
-            rows = c.fetchall()
-            conn.close()
-            result = {}
-            for r in rows:
-                try:
-                    result[r['module_key']] = json.loads(r['settings_json']) or {}
-                except (json.JSONDecodeError, TypeError):
-                    result[r['module_key']] = {}
-            return result
-    except Exception:
-        return {}
+    return fetch_user_module_settings(_get_conn, user_id, module_key)
 
 
 def save_user_module_settings(user_id: int, module_key: str, data: dict) -> bool:
     """Userning bitta modul sozlamasini saqlash (upsert)"""
-    try:
-        conn = _get_conn()
-        c = conn.cursor()
-        c.execute(
-            """
-            INSERT INTO user_module_settings (user_id, module_key, settings_json, updated_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(user_id, module_key) DO UPDATE SET
-              settings_json = excluded.settings_json,
-              updated_at    = excluded.updated_at
-            """,
-            (user_id, module_key, json.dumps(data or {}), datetime.now().isoformat())
-        )
-        conn.commit()
-        conn.close()
-        return True
-    except Exception:
-        return False
+    return upsert_user_module_settings(_get_conn, user_id, module_key, data)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

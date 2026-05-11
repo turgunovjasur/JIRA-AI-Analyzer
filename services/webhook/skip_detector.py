@@ -21,7 +21,8 @@ log = get_logger("webhook.skip_detector")
 async def _check_skip_code(
         task_key: str,
         skip_code: str,
-        comment_writer: "JiraCommentWriter"
+        comment_writer: "JiraCommentWriter",
+        max_comments: int | None = None,
 ) -> bool:
     """
     JIRA task comment'larida skip_code borligini tekshirish.
@@ -55,13 +56,12 @@ async def _check_skip_code(
         issue = comment_writer.jira.issue(task_key)
         comments = sorted(issue.fields.comment.comments, key=lambda c: c.created, reverse=True)
 
-        # Settings'dan nechta comment tekshirish kerakligini olish
-        from config.app_settings import get_app_settings
-        app_settings = get_app_settings(force_reload=False)
-        max_comments = app_settings.tz_pr_checker.max_skip_check_comments
+        # Webhook checker scope'dan berilgan qiymat ustuvor.
+        # Fallback sifatida default 5 ishlatiladi.
+        comments_to_check = max_comments if isinstance(max_comments, int) and max_comments > 0 else 5
 
         # Faqat so'nggi N ta comment tekshiriladi (performance uchun)
-        for comment in comments[:max_comments]:
+        for comment in comments[:comments_to_check]:
             comment_body = comment.body if comment.body else ""
             if skip_code.upper() in comment_body.upper():
                 log.info(

@@ -9,13 +9,9 @@ Author: JASUR TURGUNOV
 Version: 2.0 - ADF Support
 """
 from jira import JIRA
-import os
 import requests
 from typing import Dict, Optional
-from dotenv import load_dotenv
 from core.logger import get_logger
-
-load_dotenv()
 
 log = get_logger("jira.comment")
 
@@ -25,9 +21,19 @@ class JiraCommentWriter:
 
     def __init__(self, server: str = None, email: str = None, token: str = None):
         """JIRA client yaratish"""
-        self.server    = server or os.getenv('JIRA_SERVER', 'https://smartupx.atlassian.net')
-        self.email     = email  or os.getenv('JIRA_EMAIL')
-        self.api_token = token  or os.getenv('JIRA_API_TOKEN')
+        self.server    = (server or "").strip()
+        self.email     = (email or "").strip()
+        self.api_token = (token or "").strip()
+
+        missing = []
+        if not self.server:
+            missing.append("JIRA Server")
+        if not self.email:
+            missing.append("JIRA Email")
+        if not self.api_token:
+            missing.append("JIRA API Token")
+        if missing:
+            raise ValueError(f"JIRA comment credentials to'liq emas: {', '.join(missing)}")
 
         # python-jira client (oddiy format uchun)
         try:

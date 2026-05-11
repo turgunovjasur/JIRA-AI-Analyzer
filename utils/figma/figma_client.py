@@ -4,7 +4,6 @@ Figma API Client - Production Version
 Figma REST API bilan ishlash va file ma'lumotlarini olish
 """
 import requests
-import os
 from typing import Dict, List, Optional
 import re
 from dataclasses import dataclass
@@ -30,13 +29,20 @@ class FigmaClient:
 
     def __init__(self, access_token: Optional[str] = None):
         """Initialize Figma client"""
-        self.access_token = access_token or os.getenv('FIGMA_ACCESS_TOKEN')
+        self.access_token = (access_token or "").strip()
         self.base_url = 'https://api.figma.com/v1'
 
         if not self.access_token:
-            raise ValueError("FIGMA_ACCESS_TOKEN not found in .env!")
+            raise ValueError("Figma Access Token kiritilmagan.")
 
         self.headers = {'X-Figma-Token': self.access_token}
+
+    @staticmethod
+    def _normalize_node_id(node_id: Optional[str]) -> Optional[str]:
+        """node-id formatini Figma API uchun normallashtirish."""
+        if not node_id:
+            return None
+        return str(node_id).replace('-', ':').strip()
 
     def get_file_metadata(self, file_key: str) -> Optional[Dict]:
         """Get file metadata (depth=1 — sahifa tuzilmasi, to'liq fayl yuklanmaydi)."""
@@ -171,9 +177,147 @@ class FigmaClient:
             else:
                 lines.append("⚠️  Frame'lar topilmadi")
 
+            text_snippets = self.get_text_snippets(file_key, node_id=node_id, max_items=20)
+            if text_snippets:
+                lines.append("")
+                lines.append(f"📝 FIGMA MATNLARI ({len(text_snippets)} ta):")
+                lines.append("─" * 60)
+                for i, item in enumerate(text_snippets, 1):
+                    lines.append(f"{i}. [{item['node_type']}] {item['node_name']}: {item['text']}")
+            else:
+                lines.append("")
+                lines.append("📝 FIGMA MATNLARI: topilmadi")
+
+            figma_comments = self.get_file_comments(file_key, node_id=node_id, max_items=10)
+            if figma_comments:
+                lines.append("")
+                lines.append(f"💬 FIGMA COMMENT'LAR ({len(figma_comments)} ta):")
+                lines.append("─" * 60)
+                for i, c in enumerate(figma_comments, 1):
+                    author = c.get('author') or "Unknown"
+                    lines.append(f"{i}. {author}: {c.get('message', '')}")
+            else:
+                lines.append("")
+                lines.append("💬 FIGMA COMMENT'LAR: topilmadi")
+
             return "\n".join(lines)
         except Exception as e:
             return f"Figma summary error: {str(e)}"
+
+    def _collect_text_nodes(self, node: Dict, out: List[Dict], max_items: int = 20):
+        """Node daraxtidan TEXT qatlamlarini yig'ish."""
+        if not node or len(out) >= max_items:
+            return
+
+        node_type = node.get('type', '')
+        if node_type == 'TEXT':
+            raw = (node.get('characters') or '').strip()
+            if raw:
+                cleaned = re.sub(r'\s+', ' ', raw).strip()
+                if cleaned:
+                    out.append({
+                        'node_id': node.get('id', ''),
+                        'node_name': node.get('name', 'Text'),
+                        'node_type': node_type,
+                        'text': cleaned[:500]
+                    })
+                    if len(out) >= max_items:
+                        return
+
+        for child in (node.get('children') or []):
+            self._collect_text_nodes(child, out, max_items=max_items)
+            if len(out) >= max_items:
+                return
+
+    def get_text_snippets(self, file_key: str, node_id: str = None, max_items: int = 20) -> List[Dict]:
+        """
+        Figma'dan o'qiladigan text layer'larni qaytaradi.
+        node_id berilsa aynan shu node subtree o'qiladi.
+        """
+        normalized = self._normalize_node_id(node_id)
+        try:
+            collected: List[Dict] = []
+            if normalized:
+                url = f"{self.base_url}/files/{file_key}/nodes"
+                response = requests.get(
+                    url,
+                    headers=self.headers,
+                    timeout=20,
+                    params={'ids': normalized, 'depth': 12}
+                )
+                if response.status_code != 200:
+                    return []
+                payload = response.json()
+                node_info = (payload.get('nodes') or {}).get(normalized) or {}
+                document = node_info.get('document') or {}
+                self._collect_text_nodes(document, collected, max_items=max_items)
+            else:
+                # node-id bo'lmasa, faylning o'rtacha chuqurlikdagi daraxtidan text yig'amiz
+                url = f"{self.base_url}/files/{file_key}"
+                response = requests.get(
+                    url,
+                    headers=self.headers,
+                    timeout=25,
+                    params={'depth': 5}
+                )
+                if response.status_code != 200:
+                    return []
+                payload = response.json()
+                document = payload.get('document') or {}
+                self._collect_text_nodes(document, collected, max_items=max_items)
+
+            # Dublikatsiyalarni qisqartirish
+            unique = []
+            seen = set()
+            for item in collected:
+                key = item.get('text', '')
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                unique.append(item)
+                if len(unique) >= max_items:
+                    break
+            return unique
+        except Exception:
+            return []
+
+    def get_file_comments(self, file_key: str, node_id: str = None, max_items: int = 10) -> List[Dict]:
+        """
+        Figma file comment'larini qaytaradi.
+        node_id berilsa, shu node bilan bog'liq comment'lar ustuvor olinadi.
+        """
+        normalized = self._normalize_node_id(node_id)
+        try:
+            url = f"{self.base_url}/files/{file_key}/comments"
+            response = requests.get(url, headers=self.headers, timeout=15)
+            if response.status_code != 200:
+                return []
+
+            payload = response.json()
+            comments = payload.get('comments') or []
+            parsed = []
+            for c in comments:
+                message = re.sub(r'\s+', ' ', str(c.get('message') or '')).strip()
+                if not message:
+                    continue
+                client_meta = c.get('client_meta') or {}
+                cid = str(client_meta.get('node_id') or '').replace('-', ':')
+                parsed.append({
+                    'id': c.get('id'),
+                    'author': (c.get('user') or {}).get('handle') or (c.get('user') or {}).get('name') or 'Unknown',
+                    'created_at': c.get('created_at'),
+                    'node_id': cid,
+                    'message': message[:500],
+                })
+
+            if normalized:
+                node_related = [c for c in parsed if c.get('node_id') == normalized]
+                if node_related:
+                    return node_related[:max_items]
+
+            return parsed[:max_items]
+        except Exception:
+            return []
 
     @staticmethod
     def find_working_token(tokens: list, file_key: str) -> Optional[str]:

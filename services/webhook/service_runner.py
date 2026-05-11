@@ -93,9 +93,8 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str, company_id: in
         )
         from services.checkers.tz_pr_checker import TZPRService
         from utils.jira.jira_comment_writer import JiraCommentWriter
-        from utils.auth.auth_db import get_company_credentials
-
-        creds = get_company_credentials(company_id)  # kalit yo'q bo'lsa RuntimeError
+        from utils.auth.auth_db import get_company_webhook_credentials
+        creds = get_company_webhook_credentials(company_id)  # kalit yo'q bo'lsa RuntimeError
         tz_pr_service = TZPRService(company_id=company_id)
         comment_writer = JiraCommentWriter(
             server=creds['jira_server'],
@@ -202,8 +201,8 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str, company_id: in
             settings = app_settings.webhook_tz_pr
             from services.webhook.jira_webhook_handler import get_adf_formatter
             from utils.jira.jira_comment_writer import JiraCommentWriter
-            from utils.auth.auth_db import get_company_credentials
-            _creds = get_company_credentials(company_id)
+            from utils.auth.auth_db import get_company_webhook_credentials
+            _creds = get_company_webhook_credentials(company_id)
             _cw = JiraCommentWriter(server=_creds['jira_server'], email=_creds['jira_email'], token=_creds['jira_token'])
             await _write_critical_error(
                 task_key, error_msg, new_status,
@@ -342,14 +341,13 @@ async def _run_testcase_generation(task_key: str, new_status: str, company_id: i
 
 
 def _get_status_manager(company_id):
-    """JiraStatusManager yaratish — company_id bo'lsa multi-tenant, aks holda global."""
+    """JiraStatusManager yaratish — faqat company scoped credential bilan."""
     from utils.jira.jira_status_manager import JiraStatusManager
     if company_id is not None:
-        from utils.auth.auth_db import get_company_credentials
-        _creds = get_company_credentials(company_id)
+        from utils.auth.auth_db import get_company_webhook_credentials
+        _creds = get_company_webhook_credentials(company_id)
         return JiraStatusManager(server=_creds['jira_server'], email=_creds['jira_email'], token=_creds['jira_token'])
-    from utils.jira.jira_status_manager import get_status_manager
-    return get_status_manager()
+    raise RuntimeError("Webhook status update uchun company_id talab qilinadi.")
 
 
 async def _handle_auto_return(
@@ -405,8 +403,8 @@ async def _handle_auto_return(
                     from services.webhook.jira_webhook_handler import get_adf_formatter
                     from services.webhook.error_handler import _build_warning_adf, format_warning_simple
                     from utils.jira.jira_comment_writer import JiraCommentWriter
-                    from utils.auth.auth_db import get_company_credentials
-                    _creds = get_company_credentials(company_id)
+                    from utils.auth.auth_db import get_company_webhook_credentials
+                    _creds = get_company_webhook_credentials(company_id)
                     comment_writer = JiraCommentWriter(server=_creds['jira_server'], email=_creds['jira_email'], token=_creds['jira_token'])
                     adf_formatter = get_adf_formatter()
                     reason = (
