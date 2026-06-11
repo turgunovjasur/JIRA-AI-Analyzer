@@ -87,18 +87,9 @@ def generate_test_tasks(count: int = 20):
 
 def clear_all_tasks():
     """Barcha tasklarni o'chirish"""
-    import sqlite3
-    import os
+    from utils.database.runtime import connect_processing_db
 
-    # Project root/data papkasi
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    db_path = os.path.join(project_root, 'data', 'processing.db')
-
-    if not os.path.exists(db_path):
-        print("❌ DB fayl topilmadi")
-        return
-
-    conn = sqlite3.connect(db_path)
+    conn = connect_processing_db()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM task_processing")
     conn.commit()

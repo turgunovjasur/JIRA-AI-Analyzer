@@ -16,9 +16,10 @@ export async function GET() {
   const role = session.auth.role;
   const companyId = session.auth.company_id || null;
   const userId = session.auth.user_id || null;
-  if (role !== "company_admin" || !companyId || !userId) {
+  const hasRoleAccess = role === "company_admin" || role === "user";
+  if (!hasRoleAccess || !companyId || !userId) {
     return NextResponse.json(
-      { success: false, error: "Module settings faqat company admin uchun." },
+      { success: false, error: "Module settings uchun ruxsat yo'q." },
       { status: 403 },
     );
   }
@@ -51,9 +52,10 @@ export async function POST(request: Request) {
   const role = session.auth.role;
   const companyId = session.auth.company_id || null;
   const userId = session.auth.user_id || null;
-  if (role !== "company_admin" || !companyId || !userId) {
+  const hasRoleAccess = role === "company_admin" || role === "user";
+  if (!hasRoleAccess || !companyId || !userId) {
     return NextResponse.json(
-      { success: false, error: "Module settings faqat company admin uchun." },
+      { success: false, error: "Module settings uchun ruxsat yo'q." },
       { status: 403 },
     );
   }

@@ -1,8 +1,6 @@
 "use client";
 
 import {
-  useEffect,
-  useId,
   useState,
   type DragEvent,
   type FocusEventHandler,
@@ -11,6 +9,7 @@ import {
 } from "react";
 
 import { Button } from "@/components/ui/button";
+import { BaseCard } from "@/components/ui/card";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
@@ -88,17 +87,24 @@ export type SettingsBaseCardProps = {
   selectClassName?: string;
   showCustomizer?: boolean;
   customizerId?: string;
+  collapsible?: boolean;
+  defaultCollapsed?: boolean;
+  collapsed?: boolean;
+  onCollapsedChange?: (next: boolean) => void;
 };
 
-type CardTone = "neutral" | "blue" | "amber" | "rose";
-type CardLayout = "vertical" | "horizontal";
-
-function isCardTone(value: unknown): value is CardTone {
-  return value === "neutral" || value === "blue" || value === "amber" || value === "rose";
-}
-
-function isCardLayout(value: unknown): value is CardLayout {
-  return value === "vertical" || value === "horizontal";
+function sanitizeBaseCardClassName(className?: string) {
+  return className
+    ?.split(/\s+/)
+    .filter((item) => {
+      if (!item || item === "card") return false;
+      if (item.startsWith("rounded")) return false;
+      if (item === "border" || item.startsWith("border-")) return false;
+      if (item.startsWith("bg-")) return false;
+      if (item.startsWith("shadow")) return false;
+      return true;
+    })
+    .join(" ");
 }
 
 export function SettingsBaseCard({
@@ -116,130 +122,47 @@ export function SettingsBaseCard({
   saveDisabled,
   saveLabel,
   saving,
-  selectClassName = "settings-form-select",
   showCustomizer = true,
   customizerId,
+  collapsible = true,
+  defaultCollapsed = false,
+  collapsed,
+  onCollapsedChange,
 }: SettingsBaseCardProps) {
-  const autoCustomizerId = useId().replace(/:/g, "");
-  const resolvedCustomizerId = customizerId || autoCustomizerId;
-  const storageKey = `settings-card-customizer:${resolvedCustomizerId}`;
-  const [customizeOpen, setCustomizeOpen] = useState(false);
-  const [tone, setTone] = useState<CardTone>("neutral");
-  const [layout, setLayout] = useState<CardLayout>("vertical");
-
-  useEffect(() => {
-    if (!showCustomizer) return;
-    try {
-      const raw = window.localStorage.getItem(storageKey);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as { layout?: unknown; tone?: unknown } | null;
-      if (parsed && isCardTone(parsed.tone)) {
-        setTone(parsed.tone);
-      }
-      if (parsed && isCardLayout(parsed.layout)) {
-        setLayout(parsed.layout);
-      }
-    } catch {
-      // ignore broken localStorage payload
-    }
-  }, [showCustomizer, storageKey]);
-
-  useEffect(() => {
-    if (!showCustomizer) return;
-    try {
-      window.localStorage.setItem(storageKey, JSON.stringify({ tone, layout }));
-    } catch {
-      // localStorage may be unavailable in some environments
-    }
-  }, [layout, showCustomizer, storageKey, tone]);
-
-  const toneClass =
-    tone === "blue"
-      ? "settings-base-card--blue"
-      : tone === "amber"
-        ? "settings-base-card--amber"
-        : tone === "rose"
-          ? "settings-base-card--rose"
-          : "settings-base-card--neutral";
-  const layoutClass = layout === "horizontal" ? "settings-base-card--horizontal" : "settings-base-card--vertical";
+  const sanitizedClassName = sanitizeBaseCardClassName(className);
 
   return (
-    <div className={`${className || "card"} settings-base-card ${toneClass} ${layoutClass}`}>
-      <div className="settings-base-card__top">
-        <div className="settings-base-card__header">
-          {header ? (
-            header
-          ) : (
-            <div className="scard-hd">
-              {icon ? icon : null}
-              <div>
-                {title ? <div className="scard-title">{title}</div> : null}
-                {description ? <div className="scard-desc">{description}</div> : null}
-              </div>
-            </div>
-          )}
+    <BaseCard
+      bodyClassName="settings-base-card__body"
+      className={`settings-base-card ${sanitizedClassName || ""}`}
+      collapsed={collapsed}
+      collapsible={collapsible}
+      defaultCollapsed={defaultCollapsed}
+      description={description}
+      footer={onSave ? (
+        <div className="bc-body-save">
+          <BaseActionRow
+            dirty={dirty}
+            dirtyText={dirtyText}
+            error={error}
+            onSave={onSave}
+            saveDisabled={saveDisabled}
+            saveLabel={saveLabel}
+            saving={saving}
+            success={success}
+          />
         </div>
-        {showCustomizer ? (
-          <div className="settings-base-card__custom">
-            <button
-              aria-label="Karta sozlamalari"
-              className="settings-card-gear"
-              onClick={() => setCustomizeOpen((current) => !current)}
-              type="button"
-            >
-              <svg fill="none" height="16" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" width="16">
-                <circle cx="12" cy="12" r="3" />
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-              </svg>
-            </button>
-            {customizeOpen ? (
-              <div className="settings-card-popover">
-                <div className="settings-card-popover__title">Karta sozlamalari</div>
-                <div className="settings-card-popover__row">
-                  <span>Rang</span>
-                  <select
-                    className={`select ${selectClassName}`}
-                    onChange={(event) => setTone(event.target.value as "neutral" | "blue" | "amber" | "rose")}
-                    value={tone}
-                  >
-                    <option value="neutral">Neytral</option>
-                    <option value="blue">Ko'k</option>
-                    <option value="amber">Sariq</option>
-                    <option value="rose">Qizil</option>
-                  </select>
-                </div>
-                <div className="settings-card-popover__row">
-                  <span>Layout</span>
-                  <select
-                    className={`select ${selectClassName}`}
-                    onChange={(event) => setLayout(event.target.value as "vertical" | "horizontal")}
-                    value={layout}
-                  >
-                    <option value="vertical">Vertical</option>
-                    <option value="horizontal">Horizontal</option>
-                  </select>
-                </div>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
-      <div className="settings-base-card__body">
-        {children}
-      </div>
-      {onSave ? (
-        <BaseActionRow
-          dirty={dirty}
-          dirtyText={dirtyText}
-          error={error}
-          onSave={onSave}
-          saveDisabled={saveDisabled}
-          saveLabel={saveLabel}
-          saving={saving}
-          success={success}
-        />
       ) : null}
-    </div>
+      header={header}
+      icon={icon}
+      onCollapsedChange={onCollapsedChange}
+      padding="none"
+      settingsId={customizerId}
+      showSettings={showCustomizer}
+      title={title}
+    >
+      {children}
+    </BaseCard>
   );
 }
 
@@ -255,27 +178,47 @@ export function SettingsCardSection({
   className?: string;
 }) {
   return (
-    <div className={className || "ssec mt-0 border-none pt-0"}>
-      {label ? (
-        <div className="ssec-label">
-          {icon ? icon : null}
-          {label}
-        </div>
-      ) : null}
+    <SettingsInnerCard>
+      <div className={className || "ssec mt-0 border-none pt-0"}>
+        {label ? (
+          <div className="ssec-label">
+            {icon ? icon : null}
+            {label}
+          </div>
+        ) : null}
+        {children}
+      </div>
+    </SettingsInnerCard>
+  );
+}
+
+export function SettingsCardItem({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <div className={sanitizeBaseCardClassName(className) || "settings-row webhook-family-item"}>
       {children}
     </div>
   );
 }
 
-export function SettingsCardItem({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={className || "rounded-lg border border-border/50 bg-layer/20 p-3 webhook-family-item"}>{children}</div>;
-}
-
-export function SettingsInnerCard({ children }: { children: ReactNode }) {
+export function SettingsInnerCard({
+  children,
+  collapsible = true,
+  defaultCollapsed = false,
+}: {
+  children: ReactNode;
+  collapsible?: boolean;
+  defaultCollapsed?: boolean;
+}) {
   return (
-    <SettingsBaseCard className="card webhook-family-card" showCustomizer={false}>
+    <BaseCard
+      as="div"
+      className="settings-subsection webhook-family-card"
+      collapsible={collapsible}
+      defaultCollapsed={defaultCollapsed}
+      tone="soft"
+    >
       {children}
-    </SettingsBaseCard>
+    </BaseCard>
   );
 }
 
@@ -580,13 +523,20 @@ export function BaseCheckGroup({
 }
 
 export function BaseOrderPills({
+  available = ["tz", "comments", "figma", "custom_context", "code"],
   onChange,
+  required = [],
   value,
 }: {
   value?: string[];
   onChange: (next: string[]) => void;
+  available?: string[];
+  required?: string[];
 }) {
-  const ordered = Array.isArray(value) ? value : [];
+  const ordered = Array.isArray(value) ? Array.from(new Set(value)) : [];
+  const availableItems = Array.from(new Set(available));
+  const inactiveItems = availableItems.filter((item) => !ordered.includes(item));
+  const requiredItems = new Set(required);
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
 
@@ -604,6 +554,16 @@ export function BaseOrderPills({
     onChange(next);
     setDraggingIndex(null);
     setOverIndex(null);
+  }
+
+  function removeItem(item: string) {
+    if (requiredItems.has(item)) return;
+    onChange(ordered.filter((current) => current !== item));
+  }
+
+  function addItem(item: string) {
+    if (ordered.includes(item)) return;
+    onChange([...ordered, item]);
   }
 
   return (
@@ -626,10 +586,42 @@ export function BaseOrderPills({
             }}
           >
             <span className="order-pill-num">{index + 1}</span>
-            {item}
+            <span className="order-pill-label">{item}</span>
+            {!requiredItems.has(item) ? (
+              <button
+                aria-label={`${item} ni olib tashlash`}
+                className="order-pill-remove"
+                draggable={false}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  removeItem(item);
+                }}
+                onDragStart={(event) => event.preventDefault()}
+                onMouseDown={(event) => event.stopPropagation()}
+                type="button"
+              >
+                x
+              </button>
+            ) : null}
           </div>
         ))}
       </div>
+      {inactiveItems.length > 0 ? (
+        <div className="order-add-wrap">
+          <span className="order-add-label">Qo'shish:</span>
+          {inactiveItems.map((item) => (
+            <button
+              className="order-add-pill"
+              key={item}
+              onClick={() => addItem(item)}
+              type="button"
+            >
+              + {item}
+            </button>
+          ))}
+        </div>
+      ) : null}
       <p className="order-hint">
         <svg fill="none" height="12" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" width="12">
           <circle cx="9" cy="5" r="1" />

@@ -1,163 +1,861 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import {
+  Activity,
   AlertTriangle,
-  ClipboardList,
+  Check,
+  ChevronLeft,
+  Clock3,
+  Copy,
+  Database,
   FileCode2,
+  Frame,
   GitPullRequest,
-  Radar,
-  ScanSearch,
+  Layers3,
+  Play,
+  RefreshCw,
+  ShieldCheck,
+  Sparkles,
+  XCircle,
 } from "lucide-react";
 
-import { ComplianceRing } from "@/components/ui/compliance-ring";
+import { AnalysisStatusBannerView } from "@/components/analysis-status-banner";
 import { PRDetailsStack } from "@/components/pr-details-stack";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { MetricCard } from "@/components/ui/metric-card";
+import { BaseCard, Card } from "@/components/ui/card";
+import { ComplianceRing } from "@/components/ui/compliance-ring";
+import { Field } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
-import { SectionHeader } from "@/components/ui/section-header";
-import { StatusPill } from "@/components/ui/status-pill";
-import { AnalysisStatusBannerView } from "@/components/analysis-status-banner";
-import { BaseInputField, SettingsBaseCard } from "@/components/settings/base-card-system";
+import {
+  buildTZPRResultCacheKey,
+  readTZPRResultHistory,
+  upsertTZPRResultHistory,
+  writeTZPRResultHistory,
+  type TZPRCachedResultEntry,
+  type TZPRResultCacheScope,
+} from "@/lib/tzpr-result-cache";
+import { cn } from "@/lib/cn";
 import type {
-  TZPRAnalysisOverview,
+  TZPRAgentRunSnapshot,
   TZPRAnalysisResult,
-  TZPRAnalysisSection,
+  TZPRExecutionMode,
+  TZPRExtraCodeChange,
+  TZPRRequirementMatrixItem,
+  TZPRRunEvent,
+  TZPRRunSnapshot,
 } from "@/lib/types";
 
-const SETTINGS_INPUT_CLASS = "settings-form-input";
-const CHECKER_TABS = [
-  { key: "overview", label: "Overview" },
-  { key: "requirements", label: "Requirement Map" },
-  { key: "evidence", label: "Evidence" },
-  { key: "raw", label: "Raw AI" },
-] as const;
+type TZPRCheckerProps = {
+  cacheScope: TZPRResultCacheScope;
+};
 
-type CheckerTabKey = (typeof CHECKER_TABS)[number]["key"];
+type PipelineState = "pending" | "running" | "completed" | "failed";
+type RequirementFilter = "all" | "completed" | "failed" | "extra";
 
-function formatCompactNumber(value?: number | null) {
-  if (value == null) return "0";
-  if (value >= 1000) {
-    return `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)}k`;
+const DEFAULT_EXECUTION_MODE: TZPRExecutionMode = "multi_agent";
+const RUN_POLL_INTERVAL_MS = 2000;
+
+const FALLBACK_AGENTS: TZPRAgentRunSnapshot[] = [
+  {
+    agent_key: "agent1_scope_builder",
+    agent_label: "Scope Builder",
+    agent_order: 1,
+    primary_model: "gemini",
+    state: "pending",
+  },
+  {
+    agent_key: "agent2_verifier",
+    agent_label: "Verifier",
+    agent_order: 2,
+    primary_model: "gemini",
+    state: "pending",
+  },
+  {
+    agent_key: "agent3_arbiter",
+    agent_label: "Arbiter",
+    agent_order: 3,
+    primary_model: "gemini",
+    state: "pending",
+  },
+];
+
+function getBrowserStorage() {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
   }
-  return String(value);
 }
 
-function verdictTone(verdict?: string | null): "good" | "warn" | "bad" | "muted" {
-  switch ((verdict || "").toLowerCase()) {
-    case "pass":
-      return "good";
-    case "partial":
-      return "warn";
-    case "fail":
-    case "blocked":
-      return "bad";
-    default:
-      return "muted";
-  }
+function isTerminalRunState(value?: string | null) {
+  return ["completed", "manual_review", "blocked", "failed"].includes((value || "").toLowerCase());
 }
 
-function sectionTone(sectionKey: string): "good" | "warn" | "bad" | "info" | "muted" {
-  if (sectionKey === "completed") return "good";
-  if (sectionKey === "partial" || sectionKey === "issues") return "warn";
-  if (sectionKey === "failed") return "bad";
-  if (sectionKey === "figma") return "info";
-  return "muted";
+function isResolvedRunSnapshot(run?: TZPRRunSnapshot | null) {
+  return Boolean(run && (isTerminalRunState(run.run_state) || run.finished_at || run.final_result));
 }
 
-function sectionIcon(sectionKey: string) {
-  if (sectionKey === "completed") return "Completed";
-  if (sectionKey === "partial") return "Partial";
-  if (sectionKey === "failed") return "Missing";
-  if (sectionKey === "issues") return "Risks";
-  if (sectionKey === "figma") return "Figma";
-  return "Section";
+function coerceExecutionMode(_value?: string | null): TZPRExecutionMode {
+  return DEFAULT_EXECUTION_MODE;
 }
 
-function cleanItems(section: TZPRAnalysisSection) {
-  if (section.items?.length) return section.items;
-  return (section.lines || []).filter((line) => line.trim().length > 0);
+function deriveResultError(result: TZPRAnalysisResult) {
+  if (result.success) return null;
+  if (result.status_banner) return null;
+  return result.error_message || "TZ-PR tahlili muvaffaqiyatsiz tugadi.";
 }
 
-function fallbackOverview(result: TZPRAnalysisResult): TZPRAnalysisOverview {
-  const score = result.compliance_score ?? null;
-  const verdict = score == null ? "unknown" : score >= 80 ? "pass" : score >= 60 ? "partial" : "fail";
-  const label = verdict === "pass" ? "Ready" : verdict === "partial" ? "Review" : verdict === "fail" ? "Need Work" : "Unknown";
+function formatDateTime(value?: string | null) {
+  if (!value) return "Noma'lum";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Noma'lum";
+  return new Intl.DateTimeFormat("uz-UZ", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(date);
+}
+
+function formatCheckedAt(value: string) {
+  return formatDateTime(value);
+}
+
+function formatAgentDuration(agent?: TZPRAgentRunSnapshot | null) {
+  const started = agent?.started_at ? new Date(agent.started_at).getTime() : null;
+  const finished = agent?.finished_at ? new Date(agent.finished_at).getTime() : null;
+  if (!started) return "Boshlanmagan";
+  const end = finished && finished >= started ? finished : Date.now();
+  return `${Math.max(0, Math.round((end - started) / 1000))}s`;
+}
+
+function getRunTone(value?: string | null): "soft" | "success" | "warning" | "danger" {
+  const normalized = (value || "").toLowerCase();
+  if (normalized === "completed") return "success";
+  if (normalized === "manual_review" || normalized === "running" || normalized === "queued") return "warning";
+  if (normalized === "blocked" || normalized === "failed") return "danger";
+  return "soft";
+}
+
+function getAgentTone(value?: string | null): "soft" | "success" | "warning" | "danger" {
+  const normalized = (value || "").toLowerCase();
+  if (normalized === "completed") return "success";
+  if (normalized === "running" || normalized === "pending") return "warning";
+  if (normalized === "failed" || normalized === "blocked") return "danger";
+  return "soft";
+}
+
+function normalizePipelineState(value?: string | null): PipelineState {
+  const normalized = (value || "").toLowerCase();
+  if (normalized === "completed" || normalized === "skipped") return "completed";
+  if (normalized === "running") return "running";
+  if (normalized === "failed" || normalized === "blocked") return "failed";
+  return "pending";
+}
+
+function getVerdictLabel(result?: TZPRAnalysisResult | null) {
+  return (
+    result?.analysis_overview?.verdict_label
+    || result?.qa_recommendation?.label
+    || (result?.success ? "Natija tayyor" : "Xato")
+  );
+}
+
+function getVerdictTone(result?: TZPRAnalysisResult | null): "success" | "warning" | "danger" | "soft" {
+  if (!result?.success) return "danger";
+  const verdict = (result.analysis_overview?.verdict || result.qa_recommendation?.action || "").toLowerCase();
+  if (verdict === "pass") return "success";
+  if (verdict === "fail" || verdict === "return" || verdict === "blocked") return "danger";
+  if (verdict === "manual_review") return "warning";
+  const score = result.compliance_score;
+  if (score == null) return "soft";
+  if (score >= 80) return "success";
+  if (score >= 60) return "warning";
+  return "danger";
+}
+
+function getRecentResultTone(entry: TZPRCachedResultEntry) {
+  return getVerdictTone(entry.result);
+}
+
+function getRecentResultLabel(entry: TZPRCachedResultEntry) {
+  return getVerdictLabel(entry.result);
+}
+
+function getRequirementCounts(result?: TZPRAnalysisResult | null) {
+  const matrix = result?.requirement_matrix || [];
+  const extra = getExtraItems(result);
   return {
-    verdict,
-    verdict_label: label,
-    verdict_reason: result.error_message || "AI tahlili uchun fallback overview.",
-    summary_lines: score == null ? ["Compliance score qaytmadi."] : [`Compliance score: ${score}%`],
-    section_counts: {},
-    missing_figma_access: !(result.figma_data?.summaries || []).length,
-    requested_sections: [],
+    completed: matrix.filter((row) => (row.status || "").toLowerCase() === "completed").length,
+    failed: matrix.filter((row) => (row.status || "").toLowerCase() === "failed").length,
+    extra: extra.length,
+    total: matrix.length,
   };
 }
 
-function coverageCount(overview: TZPRAnalysisOverview | null | undefined, key: string) {
-  return overview?.section_counts?.[key] ?? 0;
+function parseRiskFromText(value: string) {
+  const match = value.match(/\[risk:\s*([^\]]+)\]/i);
+  return match?.[1]?.trim() || "";
 }
 
-function renderSectionCard(section: TZPRAnalysisSection) {
-  const items = cleanItems(section);
-  const tone = sectionTone(section.key);
+function cleanExtraText(value: string) {
+  return value
+    .replace(/^[-\s]*Extra code change:\s*/i, "")
+    .replace(/\s*\[risk:\s*[^\]]+\]\s*$/i, "")
+    .trim();
+}
+
+function getExtraItems(result?: TZPRAnalysisResult | null): TZPRExtraCodeChange[] {
+  const direct = (result?.arbiter_summary?.extra || []).filter((item) => item?.text?.trim());
+  if (direct.length) return direct;
+
+  const issues = (result?.analysis_sections || []).find((section) => section.key === "issues");
+  const issueItems = (issues?.items?.length ? issues.items : issues?.lines) || [];
+  return issueItems
+    .filter((item) => /extra code change/i.test(item))
+    .map((item) => ({
+      text: cleanExtraText(item),
+      risk: parseRiskFromText(item),
+    }))
+    .filter((item) => item.text);
+}
+
+function getExtraRiskTone(risk?: string | null): "soft" | "success" | "warning" | "danger" {
+  const normalized = (risk || "").toLowerCase();
+  if (normalized === "high") return "danger";
+  if (normalized === "medium") return "warning";
+  if (normalized === "low") return "soft";
+  return "soft";
+}
+
+function getRequirementEvidence(row: TZPRRequirementMatrixItem) {
+  const preferredSources = ["analysis", "code", "pr", "comment", "figma"];
+  for (const source of preferredSources) {
+    const match = (row.evidence || []).find(
+      (item) => item.source === source && item.detail?.trim(),
+    );
+    if (match?.detail?.trim()) return match.detail.trim();
+  }
+  return row.notes?.trim() || "Dalil qaytmadi.";
+}
+
+function getCodeReferenceUrl(ref: { url?: string; lineStart?: number | null; lineEnd?: number | null }) {
+  if (!ref.url) return "";
+  if (!ref.lineStart) return ref.url;
+  const end = ref.lineEnd && ref.lineEnd > ref.lineStart ? `-L${ref.lineEnd}` : "";
+  return `${ref.url}#L${ref.lineStart}${end}`;
+}
+
+function getCodeReferenceLabel(ref: { filename: string; lineStart?: number | null; lineEnd?: number | null }) {
+  if (!ref.lineStart) return ref.filename;
+  const end = ref.lineEnd && ref.lineEnd > ref.lineStart ? `-L${ref.lineEnd}` : "";
+  return `${ref.filename}:L${ref.lineStart}${end}`;
+}
+
+function getRequirementFiles(row: TZPRRequirementMatrixItem) {
+  const refs = (row.code_refs || [])
+    .map((ref) => ({
+      filename: ref.filename?.trim() || "",
+      lineEnd: ref.line_end || null,
+      lineStart: ref.line_start || null,
+      url: ref.blob_url?.trim() || "",
+    }))
+    .filter((ref) => ref.filename);
+  if (refs.length) {
+    return refs.filter(
+      (ref, index, array) => array.findIndex((candidate) => candidate.filename === ref.filename) === index,
+    );
+  }
+
+  return (row.code_files || [])
+    .map((filename) => ({ filename: filename.trim(), lineEnd: null, lineStart: null, url: "" }))
+    .filter((ref) => ref.filename);
+}
+
+function getRequirementFigmaSources(row: TZPRRequirementMatrixItem) {
+  return (row.figma_sources || [])
+    .map((source) => ({
+      label: source.name?.trim() || source.file_key?.trim() || source.node_id?.trim() || "Figma",
+      url: source.url?.trim() || "",
+    }))
+    .filter((source) => source.label);
+}
+
+function getRequirementSourceFallback(row: TZPRRequirementMatrixItem) {
+  const relation = row.figma_relation?.trim() || "";
+  if (!relation) return "Manba qaytmadi.";
+  if (/^figma bo'yicha ishonchli xulosa yo'q\.?$/i.test(relation)) return "Manba qaytmadi.";
+  if (/^figma summary mavjud/i.test(relation)) return "Manba qaytmadi.";
+  return relation;
+}
+
+function normalizeRequirementText(value?: string | null) {
+  return (value || "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function getRequirementOrigin(row: TZPRRequirementMatrixItem, result: TZPRAnalysisResult) {
+  const direct = row.requirement_source?.trim();
+  const matched = (result.requirement_inventory || []).find(
+    (item) => normalizeRequirementText(item.text) === normalizeRequirementText(row.requirement),
+  );
+  const source = (direct || matched?.source || "").trim().toLowerCase();
+  if (source === "tz") return "TZ";
+  if (source === "comment") return "Comment";
+  if (source === "figma") return "Figma";
+  if (source === "mixed") return "Mixed";
+  return source || "";
+}
+
+function getRequirementMergedFrom(row: TZPRRequirementMatrixItem, result: TZPRAnalysisResult) {
+  const matched = (result.requirement_inventory || []).find(
+    (item) => normalizeRequirementText(item.text) === normalizeRequirementText(row.requirement),
+  );
+  return (matched?.merged_from || []).map((text) => (text || "").trim()).filter(Boolean);
+}
+
+function getSummaryLines(result?: TZPRAnalysisResult | null) {
+  const lines = result?.analysis_overview?.summary_lines || [];
+  return lines.filter((line) => !/^compliance score:/i.test(line.trim()));
+}
+
+function getRunProgress(run?: TZPRRunSnapshot | null, result?: TZPRAnalysisResult | null) {
+  if (result?.success || run?.final_result || run?.finished_at || run?.run_state === "completed") return 100;
+  const agents = run?.agent_runs || [];
+  if (!agents.length) return run?.run_state === "running" ? 18 : 0;
+  const completed = agents.filter((agent) => normalizePipelineState(agent.state) === "completed").length;
+  const running = agents.some((agent) => normalizePipelineState(agent.state) === "running");
+  return Math.min(96, Math.round((completed / Math.max(agents.length, 1)) * 100) + (running ? 12 : 0));
+}
+
+function getPipelineAgents(run?: TZPRRunSnapshot | null, result?: TZPRAnalysisResult | null) {
+  const actual = run?.agent_runs?.length ? run.agent_runs : result?.agent_runs || [];
+  const agents = actual.length ? actual : FALLBACK_AGENTS;
+  return [...agents].sort((left, right) => (left.agent_order || 99) - (right.agent_order || 99));
+}
+
+function getAgentShortLabel(agent: TZPRAgentRunSnapshot, index: number) {
+  const label = agent.agent_label || agent.agent_key || `Agent ${index + 1}`;
+  return label
+    .replace(/^Agent\s*\d+\s*[·:-]\s*/i, "")
+    .replace(/^agent\d+[_-]?/i, "")
+    .replace(/_/g, " ");
+}
+
+function getAgentSubLabel(index: number) {
+  if (index === 0) return "TZ, comment va Figma'dan talablar";
+  if (index === 1) return "Talablarni PR kodida tekshirish";
+  if (index === 2) return "Yakuniy qaror va moslik bali";
+  return "Multi-agent bosqichi";
+}
+
+function StatusDot({ state }: { state: PipelineState }) {
+  return (
+    <span
+      className={cn(
+        "h-2 w-2 shrink-0 rounded-full",
+        state === "pending" && "bg-zinc-400",
+        state === "running" && "animate-pulse bg-primary shadow-[0_0_0_4px_var(--accent-soft)]",
+        state === "completed" && "bg-[color:var(--success)]",
+        state === "failed" && "bg-[color:var(--error)]",
+      )}
+    />
+  );
+}
+
+function AgentIcon({ state, index }: { state: PipelineState; index: number }) {
+  if (state === "running") {
+    return <span className="h-4 w-4 animate-spin rounded-full border-2 border-primary/20 border-t-primary" />;
+  }
+  if (state === "completed") return <Check size={15} strokeWidth={2.5} />;
+  if (state === "failed") return <XCircle size={15} strokeWidth={2.5} />;
+  if (index === 0) return <Layers3 size={15} />;
+  if (index === 1) return <Activity size={15} />;
+  return <Sparkles size={15} />;
+}
+
+function AgentPipeline({
+  result,
+  run,
+}: {
+  result: TZPRAnalysisResult | null;
+  run: TZPRRunSnapshot | null;
+}) {
+  const agents = getPipelineAgents(run, result).slice(0, 3);
 
   return (
-    <Card key={section.key} className="flex h-full flex-col gap-4 p-5" tone="soft">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">
-            {sectionIcon(section.key)}
-          </p>
-          <h3 className="mt-2 text-base font-semibold text-foreground">{section.title}</h3>
+    <BaseCard as="div" className="grid gap-3 p-4 lg:grid-cols-[minmax(0,1fr)_32px_minmax(0,1fr)_32px_minmax(0,1fr)] lg:items-stretch" padding="none">
+      {agents.map((agent, index) => {
+        const state = normalizePipelineState(agent.state);
+        const nextState = normalizePipelineState(agents[index + 1]?.state);
+        const connectorDone = state === "completed";
+        const connectorActive = state === "completed" && nextState === "running";
+
+        return (
+          <div className="contents" key={agent.agent_key || index}>
+            <BaseCard
+              as="div"
+              className={cn(
+                "px-4 py-4 transition-colors",
+                state === "pending" && "opacity-70",
+              )}
+              padding="none"
+              tone={state === "completed" ? "success" : state === "failed" ? "danger" : state === "running" ? "warning" : "soft"}
+            >
+              <div className="flex min-w-0 items-start gap-3">
+                <div
+                  className={cn(
+                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] border bg-card text-muted-foreground",
+                    state === "running" && "border-primary bg-primary text-white",
+                    state === "completed" && "border-[color:var(--success)] bg-[color:var(--success)] text-white",
+                    state === "failed" && "border-[color:var(--error)] bg-[color:var(--error)] text-white",
+                  )}
+                >
+                  <AgentIcon index={index} state={state} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold text-foreground">
+                    Agent {index + 1} · {getAgentShortLabel(agent, index)}
+                  </p>
+                  <p className="mt-1 truncate text-xs text-muted-foreground">
+                    {agent.output_summary || agent.input_summary || getAgentSubLabel(index)}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <Badge tone={getAgentTone(agent.state)}>{agent.state || "pending"}</Badge>
+                <Badge tone="soft">{agent.actual_model || agent.primary_model || "model"}</Badge>
+                <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                  <Clock3 size={12} />
+                  {formatAgentDuration(agent)}
+                </span>
+              </div>
+
+              {agent.error_text ? (
+                <BaseCard as="div" className="mt-3 px-3 py-2 text-xs leading-5 text-[color:var(--error)]" padding="none" tone="danger">
+                  {agent.error_text}
+                </BaseCard>
+              ) : null}
+            </BaseCard>
+
+            {index < agents.length - 1 ? (
+              <div
+                className={cn(
+                  "hidden self-center rounded-full lg:block lg:h-1",
+                  connectorDone && "bg-[color:var(--success)]",
+                  connectorActive && "bg-primary",
+                  !connectorDone && "bg-border",
+                )}
+              />
+            ) : null}
+          </div>
+        );
+      })}
+    </BaseCard>
+  );
+}
+
+function EventLog({ events }: { events: TZPRRunEvent[] }) {
+  return (
+    <BaseCard as="div" className="max-h-64 overflow-y-auto font-mono text-xs" padding="none" tone="soft">
+      {events.length ? events.slice(-8).reverse().map((event, index) => (
+        <div
+          className="grid grid-cols-[92px_minmax(0,1fr)] gap-3 border-b border-border px-4 py-3 last:border-0"
+          key={`${event.id || index}-${event.created_at || ""}`}
+        >
+          <span className="text-muted-foreground">{formatDateTime(event.created_at)}</span>
+          <span className={cn("min-w-0 text-foreground", event.level === "error" && "text-[color:var(--error)]")}>
+            {event.agent_key ? <strong>{event.agent_key}: </strong> : null}
+            {event.message || event.event_type || "Event tafsiloti qaytmadi."}
+          </span>
         </div>
-        <div className="flex items-center gap-2">
-          <StatusPill tone={tone} value={section.key.toUpperCase()} />
-          <Badge tone="soft">{items.length} item</Badge>
+      )) : (
+        <div className="px-4 py-4 text-muted-foreground">Eventlar hali qaytmadi.</div>
+      )}
+    </BaseCard>
+  );
+}
+
+function RequirementMatrix({
+  filter,
+  onFilterChange,
+  result,
+}: {
+  filter: RequirementFilter;
+  onFilterChange: (filter: RequirementFilter) => void;
+  result: TZPRAnalysisResult;
+}) {
+  const counts = getRequirementCounts(result);
+  const extraItems = getExtraItems(result);
+  const rows = (result.requirement_matrix || []).filter((row) => {
+    if (filter === "extra") return false;
+    if (filter === "all") return true;
+    return (row.status || "").toLowerCase() === filter;
+  });
+
+  if (!counts.total && !counts.extra) return null;
+
+  return (
+    <Card padding="none" className="overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
+        <div>
+          <div className="inline-flex items-center gap-2 text-sm font-semibold text-foreground">
+            <Check size={15} />
+            Talablar matritsasi
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {counts.total} talab bo'yicha yakuniy qaror{counts.extra ? `, ${counts.extra} extra item` : ""}
+          </p>
+        </div>
+        <div className="inline-flex rounded-[12px] border border-border bg-[color:var(--bg-layer)] p-1">
+          {[
+            ["all", `Talablar (${counts.total})`],
+            ["completed", `Bajarilgan (${counts.completed})`],
+            ["failed", `Bajarilmagan (${counts.failed})`],
+            ["extra", `Extra item (${counts.extra})`],
+          ].map(([value, label]) => (
+            <button
+              className={cn(
+                "rounded-[9px] px-3 py-1.5 text-xs font-semibold text-muted-foreground transition-colors",
+                filter === value && "bg-card text-foreground shadow-sm",
+              )}
+              key={value}
+              onClick={() => onFilterChange(value as RequirementFilter)}
+              type="button"
+            >
+              {label}
+            </button>
+          ))}
         </div>
       </div>
 
-      {items.length ? (
-        <div className="grid gap-3">
-          {items.map((item, index) => (
-            <div
-              key={`${section.key}-${index}`}
-              className="rounded-[16px] border border-border bg-card px-4 py-3 text-sm leading-6 text-foreground"
-            >
-              {item}
-            </div>
-          ))}
-        </div>
-      ) : (
-        <p className="text-sm leading-6 text-muted-foreground">
-          Bu bo&apos;lim uchun AI aniq signal qaytarmadi.
-        </p>
-      )}
+      <div className="divide-y divide-border">
+        {filter === "extra" ? (
+          extraItems.length ? extraItems.map((item, index) => {
+            const risk = (item.risk || "").trim();
+            const files = (item.files || []).filter((file) => file.trim());
+            return (
+              <details className="group" key={`extra-${index}`}>
+                <summary className="grid cursor-pointer list-none grid-cols-[18px_minmax(0,1fr)_auto] items-center gap-3 px-5 py-4 transition-colors hover:bg-[color:var(--bg-layer)]">
+                  <StatusDot state={risk.toLowerCase() === "high" ? "failed" : "running"} />
+                  <span className="min-w-0 text-sm leading-6 text-foreground">
+                    {item.text || "Extra item matni qaytmadi."}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Badge tone={getExtraRiskTone(risk)}>{risk ? `Risk: ${risk}` : "Extra"}</Badge>
+                    <ChevronLeft className="rotate-180 text-muted-foreground transition-transform group-open:rotate-90" size={14} />
+                  </div>
+                </summary>
+                <div className="grid gap-3 border-t border-border bg-[color:var(--bg-layer)] px-5 py-4 lg:grid-cols-2">
+                  <BaseCard as="div" className="px-4 py-3" padding="none">
+                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Tavsif</div>
+                    <p className="mt-2 text-sm leading-6 text-foreground">{item.text || "Extra item matni qaytmadi."}</p>
+                  </BaseCard>
+                  <BaseCard as="div" className="px-4 py-3" padding="none">
+                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Manba</div>
+                    <div className="mt-2 flex flex-wrap gap-2 text-sm leading-6 text-foreground">
+                      {files.length ? files.map((file) => <span key={file}>{file}</span>) : (
+                        <span>Agent2 extra scan</span>
+                      )}
+                    </div>
+                  </BaseCard>
+                </div>
+              </details>
+            );
+          }) : (
+            <div className="px-5 py-4 text-sm text-muted-foreground">Extra item topilmadi.</div>
+          )
+        ) : rows.map((row, index) => {
+          const status = (row.status || "").toLowerCase();
+          const tone = status === "completed" ? "success" : "danger";
+          const files = getRequirementFiles(row);
+          const figmaSources = getRequirementFigmaSources(row);
+          const requirementOrigin = getRequirementOrigin(row, result);
+          const mergedFrom = getRequirementMergedFrom(row, result);
+
+          return (
+            <details className="group" key={row.id || index}>
+              <summary className="grid cursor-pointer list-none grid-cols-[18px_minmax(0,1fr)_auto] items-center gap-3 px-5 py-4 transition-colors hover:bg-[color:var(--bg-layer)]">
+                <StatusDot state={status === "completed" ? "completed" : "failed"} />
+                <span className="min-w-0 text-sm leading-6 text-foreground">
+                  {row.requirement || "Talab matni qaytmadi."}
+                </span>
+                <div className="flex items-center gap-2">
+                  <Badge tone={tone}>{row.status_label || (status === "completed" ? "Bajarilgan" : "Topilmadi")}</Badge>
+                  <ChevronLeft className="rotate-180 text-muted-foreground transition-transform group-open:rotate-90" size={14} />
+                </div>
+              </summary>
+              <div className="grid gap-3 border-t border-border bg-[color:var(--bg-layer)] px-5 py-4 lg:grid-cols-2">
+                <BaseCard as="div" className="px-4 py-3" padding="none">
+                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Agent dalili</div>
+                  <p className="mt-2 text-sm leading-6 text-foreground">{getRequirementEvidence(row)}</p>
+                </BaseCard>
+                <BaseCard as="div" className="px-4 py-3" padding="none">
+                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Manba</div>
+                  <div className="mt-2 space-y-2 text-sm leading-6 text-foreground">
+                    {requirementOrigin ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Talab</span>
+                        <Badge tone="soft">{requirementOrigin}</Badge>
+                      </div>
+                    ) : null}
+                    {files.length ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Kod dalili</span>
+                        {files.map((file) => {
+                          const href = getCodeReferenceUrl(file);
+                          const label = getCodeReferenceLabel(file);
+                          return href ? (
+                            <a className="font-medium text-primary hover:underline" href={href} key={`${file.filename}-${file.lineStart || ""}`} rel="noreferrer" target="_blank">
+                              {label}
+                            </a>
+                          ) : (
+                            <span key={file.filename}>{label}</span>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                    {figmaSources.length ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Figma</span>
+                        {figmaSources.map((source) => (
+                          source.url ? (
+                            <a className="font-medium text-primary hover:underline" href={source.url} key={`${source.label}-${source.url}`} rel="noreferrer" target="_blank">
+                              {source.label}
+                            </a>
+                          ) : (
+                            <span key={source.label}>{source.label}</span>
+                          )
+                        ))}
+                      </div>
+                    ) : null}
+                    {!requirementOrigin && !files.length && !figmaSources.length ? (
+                      <span>{getRequirementSourceFallback(row)}</span>
+                    ) : null}
+                    {mergedFrom.length ? (
+                      <div className="space-y-1">
+                        <span className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                          Birlashtirilgan talablar (debug)
+                        </span>
+                        <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
+                          {mergedFrom.map((text, mergeIndex) => (
+                            <li key={`${row.id || index}-merge-${mergeIndex}`}>{text}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+                  </div>
+                </BaseCard>
+              </div>
+            </details>
+          );
+        })}
+      </div>
     </Card>
   );
 }
 
-export function TZPRChecker() {
+function StatCard({
+  helper,
+  icon,
+  label,
+  value,
+}: {
+  helper?: ReactNode;
+  icon: ReactNode;
+  label: string;
+  value: ReactNode;
+}) {
+  return (
+    <Card className="px-5 py-4">
+      <div className="flex items-start justify-between gap-3">
+        <span className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">{label}</span>
+        <span className="text-primary">{icon}</span>
+      </div>
+      <div className="mt-3 text-3xl font-semibold tracking-tight text-foreground">{value}</div>
+      {helper ? <p className="mt-2 text-sm leading-6 text-muted-foreground">{helper}</p> : null}
+    </Card>
+  );
+}
+
+export function TZPRChecker({ cacheScope }: TZPRCheckerProps) {
+  const cacheKey = buildTZPRResultCacheKey(cacheScope);
   const [taskKey, setTaskKey] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<TZPRAnalysisResult | null>(null);
-  const [activeTab, setActiveTab] = useState<CheckerTabKey>("overview");
+  const [activeRun, setActiveRun] = useState<TZPRRunSnapshot | null>(null);
+  const [recentResults, setRecentResults] = useState<TZPRCachedResultEntry[]>([]);
+  const [requirementFilter, setRequirementFilter] = useState<RequirementFilter>("all");
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
+
+  const resultHasAgentRunData = Boolean(
+    result?.run_id
+    || (result?.agent_runs || []).length
+    || (result?.run_events || []).length,
+  );
+  const agentPanelRun: TZPRRunSnapshot | null = activeRun || (
+    result && resultHasAgentRunData
+      ? {
+        run_id: result.run_id || "",
+        task_key: result.task_key || taskKey.trim().toUpperCase(),
+        execution_mode: result.execution_mode || DEFAULT_EXECUTION_MODE,
+        run_state: result.run_state || undefined,
+        active_phase: result.run_state ? "finished" : null,
+        status_message: "Final resultdan olingan agent ma'lumotlari",
+        requested_output_profile: "ui",
+        final_result: result,
+        error_message: result.error_message || null,
+        created_at: null,
+        updated_at: null,
+        started_at: null,
+        finished_at: null,
+        agent_runs: result.agent_runs || [],
+        run_events: result.run_events || [],
+      }
+      : null
+  );
+  const runInProgress = Boolean(activeRun?.run_id) && !isResolvedRunSnapshot(activeRun);
+  const progress = getRunProgress(agentPanelRun, result);
+  const counts = getRequirementCounts(result);
+  const summaryLines = getSummaryLines(result);
+  const figmaSummaries = result?.figma_data?.summaries || [];
+  const showRunSignals = Boolean((result?.warnings || []).length || figmaSummaries.length);
+  const runEvents = agentPanelRun?.run_events || result?.run_events || [];
+  const debugJson = agentPanelRun ? JSON.stringify(agentPanelRun, null, 2) : "";
 
   useEffect(() => {
-    setActiveTab("overview");
-  }, [result?.task_key]);
+    const storage = getBrowserStorage();
+    if (!storage) {
+      setRecentResults([]);
+      return;
+    }
 
-  const overview = result?.analysis_overview ?? (result ? fallbackOverview(result) : null);
-  const requirementSections = useMemo(
-    () => (result?.analysis_sections || []).filter((section) => section.key !== "summary" && section.key !== "score"),
-    [result?.analysis_sections],
-  );
+    const entries = readTZPRResultHistory(storage, cacheKey);
+    setRecentResults(entries);
 
-  async function onSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+    if (!entries.length) {
+      setResult(null);
+      setError(null);
+      return;
+    }
+
+    const latestEntry = entries[0];
+    setTaskKey(latestEntry.taskKey);
+    setResult(latestEntry.result);
+    setError(deriveResultError(latestEntry.result));
+    setActiveRun(null);
+  }, [cacheKey]);
+
+  useEffect(() => {
+    const runId = activeRun?.run_id;
+    if (!runId || isResolvedRunSnapshot(activeRun)) return undefined;
+
+    let cancelled = false;
+    const intervalId = window.setInterval(async () => {
+      try {
+        const response = await fetch(`/api/tzpr/runs/${encodeURIComponent(runId)}`, {
+          cache: "no-store",
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | (TZPRRunSnapshot & { error?: string })
+          | null;
+
+        if (!response.ok) {
+          if (!cancelled) setError(payload?.error || "Checker run polling xatosi.");
+          return;
+        }
+        if (!payload || cancelled) return;
+
+        applyRunSnapshot(payload, {
+          persistFinal: isResolvedRunSnapshot(payload) || isTerminalRunState(payload.run_state),
+        });
+      } catch (pollError) {
+        if (!cancelled) {
+          setError(
+            pollError instanceof Error
+              ? pollError.message
+              : "Checker run polling vaqtida xato yuz berdi.",
+          );
+        }
+      }
+    }, RUN_POLL_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [activeRun?.run_id, activeRun?.run_state, activeRun?.finished_at, Boolean(activeRun?.final_result)]);
+
+  useEffect(() => {
+    setCopyState("idle");
+  }, [agentPanelRun?.run_id, agentPanelRun?.updated_at]);
+
+  function persistRecentResult(entry: TZPRCachedResultEntry) {
+    const storage = getBrowserStorage();
+    if (!storage) return;
+
+    setRecentResults((current) => {
+      const nextEntries = upsertTZPRResultHistory(current, entry);
+      try {
+        writeTZPRResultHistory(storage, cacheKey, nextEntries);
+      } catch {
+        // localStorage bloklangan bo'lsa ham asosiy UI ishlashda davom etadi.
+      }
+      return nextEntries;
+    });
+  }
+
+  function showCachedResult(entry: TZPRCachedResultEntry, options?: { promote?: boolean }) {
+    setTaskKey(entry.taskKey);
+    setResult(entry.result);
+    setError(deriveResultError(entry.result));
+    setActiveRun(null);
+    setRequirementFilter("all");
+    if (options?.promote) persistRecentResult(entry);
+  }
+
+  function applyRunSnapshot(snapshot: TZPRRunSnapshot, options?: { persistFinal?: boolean }) {
+    setActiveRun(snapshot);
+
+    const finalResult = snapshot.final_result || null;
+    if (finalResult) {
+      setResult(finalResult);
+      setError(deriveResultError(finalResult));
+
+      if (options?.persistFinal) {
+        persistRecentResult({
+          checkedAt: new Date().toISOString(),
+          executionMode: coerceExecutionMode(finalResult.execution_mode || snapshot.execution_mode),
+          result: finalResult,
+          taskKey: finalResult.task_key || taskKey.trim().toUpperCase(),
+        });
+      }
+      return;
+    }
+
+    if (snapshot.error_message?.trim()) {
+      setError(snapshot.error_message.trim());
+    }
+  }
+
+  async function copyDebugJson() {
+    if (!debugJson.trim()) {
+      setCopyState("error");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(debugJson);
+      setCopyState("copied");
+      window.setTimeout(() => setCopyState("idle"), 1600);
+    } catch {
+      setCopyState("error");
+    }
+  }
+
+  async function startRun() {
     const normalizedTaskKey = taskKey.trim().toUpperCase();
     if (!normalizedTaskKey) {
       setError("Task key kiriting.");
@@ -167,9 +865,11 @@ export function TZPRChecker() {
     setSubmitting(true);
     setError(null);
     setResult(null);
+    setActiveRun(null);
+    setRequirementFilter("all");
 
     try {
-      const response = await fetch("/api/tzpr/analyze", {
+      const response = await fetch("/api/tzpr/runs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -177,375 +877,367 @@ export function TZPRChecker() {
           max_files: null,
           output_profile: "ui",
           show_full_diff: true,
+          use_smart_patch: null,
         }),
       });
-
       const payload = (await response.json().catch(() => null)) as
-        | (TZPRAnalysisResult & { error?: string })
+        | (TZPRRunSnapshot & { error?: string })
         | null;
 
       if (!response.ok) {
-        setError(payload?.error || "TZ-PR analyze request xatosi.");
+        setError(payload?.error || "TZ-PR multi-agent run yaratib bo'lmadi.");
         return;
       }
       if (!payload) {
-        setError("Backend bo'sh javob qaytardi.");
+        setError("Backend multi-agent run uchun bo'sh javob qaytardi.");
         return;
       }
 
-      setResult(payload);
-      if (!payload.success) {
-        setError(
-          payload.status_banner
-            ? null
-            : (payload.error_message || "TZ-PR tahlili muvaffaqiyatsiz tugadi."),
-        );
-      }
+      applyRunSnapshot(payload, {
+        persistFinal: isResolvedRunSnapshot(payload) || isTerminalRunState(payload.run_state),
+      });
     } catch (submitError) {
-      const message =
+      setError(
         submitError instanceof Error
           ? submitError.message
-          : "Backend bilan ulanishda xato yuz berdi.";
-      setError(message);
+          : "Backend bilan ulanishda xato yuz berdi.",
+      );
     } finally {
       setSubmitting(false);
     }
   }
 
+  async function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await startRun();
+  }
+
+  const pageTitle = result?.task_key || agentPanelRun?.task_key || "Multi-agent Checker";
+  const pageSubtitle = runInProgress
+    ? `${progress}% · ${agentPanelRun?.status_message || "Agentlar ishlamoqda"}`
+    : result?.success
+      ? "3 agent yakuniy natijasi"
+      : "JIRA task va GitHub PR mosligini AI agentlar orqali tekshiring.";
+  const prSelection = result?.pr_selection || null;
+  const prFoundCount = prSelection?.found_count ?? result?.pr_details?.length ?? result?.pr_count ?? 0;
+  const prMergedCount = prSelection?.merged_count ?? result?.pr_count ?? result?.pr_details?.length ?? 0;
+  const prSkippedCount = prSelection?.skipped_count ?? 0;
+
   return (
-    <>
-      <SettingsBaseCard
-        header={(
-          <SectionHeader
-            action={<Badge tone="soft">Smart patch: setting bo&apos;yicha</Badge>}
-            eyebrow="Analyze"
-            title="Task yuborish"
-          />
-        )}
-        showCustomizer={false}
-      >
-        <form className="grid gap-5" onSubmit={onSubmit}>
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_180px] lg:items-end">
-            <BaseInputField
-              className={SETTINGS_INPUT_CLASS}
-              label="Task Key"
-              onChange={(value) => setTaskKey(value.toUpperCase())}
-              placeholder="DEV-1234"
-              value={taskKey}
-            />
-            <Button disabled={submitting} type="submit">
-              {submitting ? "Tekshirilmoqda..." : "Tekshirish"}
-            </Button>
+    <div className="grid gap-5">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-primary">
+            <ShieldCheck size={14} />
+            TZ-PR Checker
           </div>
-          <p className="text-sm leading-6 text-muted-foreground">
-            Interaktiv checker to&apos;liq verdict, requirement map va evidence bilan ishlaydi.
+          <h1 className="mt-2 flex flex-wrap items-center gap-3 text-2xl font-semibold tracking-tight text-foreground">
+            <span className="min-w-0 break-words">{pageTitle}</span>
+            {result ? <Badge tone={getVerdictTone(result)}>{getVerdictLabel(result)}</Badge> : null}
+            {runInProgress ? <Badge tone="warning"><StatusDot state="running" /> Jonli</Badge> : null}
+          </h1>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">{pageSubtitle}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {agentPanelRun ? (
+            <Button onClick={() => void copyDebugJson()} size="sm" type="button" variant="ghost">
+              <Copy size={14} />
+              {copyState === "copied" ? "Nusxalandi" : copyState === "error" ? "Copy xatosi" : "Run JSON"}
+            </Button>
+          ) : null}
+          {result ? (
+            <Button onClick={() => setResult(null)} size="sm" type="button" variant="ghost">
+              <ChevronLeft size={14} />
+              Yangi task
+            </Button>
+          ) : null}
+        </div>
+      </div>
+
+      <Card as="form" className="mx-auto grid w-full max-w-2xl gap-5 p-7" onSubmit={onSubmit}>
+        <div className="text-center">
+          <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-[13px] bg-primary text-white shadow-sm">
+            <Play size={18} fill="currentColor" />
+          </div>
+          <h2 className="mt-4 text-lg font-semibold text-foreground">Tahlilni boshlash</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Multi-agent run ochiladi va har bir bosqich holati jonli ko'rinadi.
           </p>
-        </form>
-      </SettingsBaseCard>
+        </div>
+
+        <Field label="JIRA Task Key">
+          <Input
+            autoFocus={!result && !agentPanelRun}
+            className="font-mono text-base"
+            onChange={(event) => setTaskKey(event.target.value.toUpperCase())}
+            placeholder="DEV-1234"
+            value={taskKey}
+          />
+        </Field>
+
+        <BaseCard as="details" className="px-4 py-3 text-sm" padding="none" tone="soft">
+          <summary className="cursor-pointer select-none font-medium text-muted-foreground">
+            Ixtiyoriy sozlamalar
+          </summary>
+          <div className="mt-3 grid gap-2 text-sm text-muted-foreground">
+            <label className="flex items-center gap-2">
+              <input checked readOnly type="checkbox" />
+              To'liq diff va UI output profile
+            </label>
+            <label className="flex items-center gap-2">
+              <input checked readOnly type="checkbox" />
+              Multi-agent checker
+            </label>
+          </div>
+        </BaseCard>
+
+        <Button disabled={submitting || runInProgress} fullWidth type="submit">
+          {submitting || runInProgress ? (
+            <>
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+              Tekshirilmoqda...
+            </>
+          ) : (
+            <>
+              <Play size={15} fill="currentColor" />
+              Tahlilni boshlash
+            </>
+          )}
+        </Button>
+      </Card>
+
+      {recentResults.length && !runInProgress ? (
+        <Card padding="none" className="overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-5 py-4">
+            <div className="inline-flex items-center gap-2 text-sm font-semibold text-foreground">
+              <Clock3 size={15} />
+              So'nggi tekshiruvlar
+            </div>
+            <Badge tone="soft">oxirgi {recentResults.length} ta</Badge>
+          </div>
+          <div className="divide-y divide-border">
+            {recentResults.map((entry) => {
+              const isActive = result?.task_key === entry.result.task_key;
+              return (
+                <button
+                  className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-5 py-4 text-left transition-colors hover:bg-[color:var(--bg-layer)] md:grid-cols-[180px_minmax(0,1fr)_auto_auto]"
+                  disabled={isActive}
+                  key={`${entry.taskKey}-${entry.checkedAt}`}
+                  onClick={() => showCachedResult(entry, { promote: true })}
+                  type="button"
+                >
+                  <span className="font-mono text-sm font-semibold text-foreground">{entry.taskKey}</span>
+                  <span className="hidden truncate text-sm text-muted-foreground md:block">
+                    {entry.result.task_summary || entry.result.task_info?.summary || "Task summary mavjud emas."}
+                  </span>
+                  <Badge tone={getRecentResultTone(entry)}>{getRecentResultLabel(entry)}</Badge>
+                  <span className="text-xs text-muted-foreground">{isActive ? "Ochiq" : formatCheckedAt(entry.checkedAt)}</span>
+                </button>
+              );
+            })}
+          </div>
+        </Card>
+      ) : null}
+
+      {agentPanelRun ? (
+        <div className="grid gap-4">
+          <AgentPipeline result={result} run={agentPanelRun} />
+
+          {runInProgress ? (
+            <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
+              <Card>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="inline-flex items-center gap-2 text-sm font-semibold text-foreground">
+                    <Activity size={15} />
+                    Umumiy progress
+                  </div>
+                  <span className="font-mono text-sm font-semibold text-foreground">{progress}%</span>
+                </div>
+                <div className="mt-4 h-2 overflow-hidden rounded-full bg-[color:var(--bg-strong)]">
+                  <div className="h-full rounded-full bg-primary transition-all duration-300" style={{ width: `${progress}%` }} />
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                  <BaseCard as="div" className="px-3 py-3" padding="none" tone="soft">
+                    <p className="text-xs text-muted-foreground">Run state</p>
+                    <p className="mt-1 font-semibold text-foreground">{agentPanelRun.run_state || "queued"}</p>
+                  </BaseCard>
+                  <BaseCard as="div" className="px-3 py-3" padding="none" tone="soft">
+                    <p className="text-xs text-muted-foreground">Bosqich</p>
+                    <p className="mt-1 font-semibold text-foreground">{agentPanelRun.active_phase || "queued"}</p>
+                  </BaseCard>
+                  <BaseCard as="div" className="px-3 py-3" padding="none" tone="soft">
+                    <p className="text-xs text-muted-foreground">Yangilandi</p>
+                    <p className="mt-1 font-semibold text-foreground">{formatDateTime(agentPanelRun.updated_at)}</p>
+                  </BaseCard>
+                </div>
+              </Card>
+              <Card>
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <div className="inline-flex items-center gap-2 text-sm font-semibold text-foreground">
+                    <Database size={15} />
+                    Jonli event log
+                  </div>
+                  <StatusDot state="running" />
+                </div>
+                <EventLog events={runEvents} />
+              </Card>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {error ? <Notice tone="error">{error}</Notice> : null}
       {result?.status_banner ? <AnalysisStatusBannerView banner={result.status_banner} /> : null}
 
       {result?.success ? (
-        <>
-          <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <MetricCard
-              helper="AI chiqarilgan moslik bali"
-              label="Compliance"
+        <div className="grid gap-5">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+            <StatCard
+              helper="Checker chiqargan umumiy moslik foizi"
+              icon={<ShieldCheck size={18} />}
+              label="Moslik"
               value={result.compliance_score != null ? `${result.compliance_score}%` : "N/A"}
             />
-            <MetricCard
-              helper="Checker verdict"
-              label="Verdict"
-              value={overview?.verdict_label || "Unknown"}
+            <StatCard
+              helper={`${figmaSummaries.length || result.figma_data?.count || 0} ta signal`}
+              icon={<Frame size={18} />}
+              label="Figma"
+              value={figmaSummaries.length || result.figma_data?.count ? "Bor" : "Yo'q"}
             />
-            <MetricCard
+            <StatCard
+              helper="Qo'shilgan / o'chirilgan qatorlar"
+              icon={<FileCode2 size={18} />}
+              label="Diff"
+              value={`+${result.total_additions || 0} / -${result.total_deletions || 0}`}
+            />
+            <StatCard
               helper="Ko'rilgan o'zgargan fayllar"
-              label="Files"
-              value={result.files_analyzed || result.files_changed || 0}
+              icon={<Database size={18} />}
+              label="Fayllar"
+              value={result.files_changed || result.files_analyzed || 0}
             />
-            <MetricCard
-              helper="Gemini prompt hajmi"
-              label="Prompt"
-              value={`${formatCompactNumber(result.total_prompt_size)} chars`}
+            <StatCard
+              helper={prSelection ? `${prSkippedCount} ta PR skip qilingan` : "Task bilan bog'langan PR soni"}
+              icon={<GitPullRequest size={18} />}
+              label="PR"
+              value={prSelection ? `${prMergedCount}/${prFoundCount}` : result.pr_count || result.pr_details?.length || 0}
             />
-          </section>
+          </div>
 
-          <section className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(300px,0.7fr)]">
-            <SettingsBaseCard
-              className="qa-compliance-card"
-              header={<SectionHeader eyebrow="Decision" title={result.task_key || "Task"} />}
-              showCustomizer={false}
-            >
-              {result.compliance_score != null ? <ComplianceRing score={result.compliance_score} /> : null}
+          <Card className="overflow-hidden">
+            <div className="flex flex-col gap-5 md:flex-row md:items-center">
+              <div className="relative h-[104px] w-[104px] shrink-0">
+                {result.compliance_score != null ? (
+                  <ComplianceRing score={result.compliance_score} size={104} />
+                ) : null}
+              </div>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <StatusPill tone={verdictTone(overview?.verdict)} value={overview?.verdict_label || "Unknown"} />
-                  <Badge tone="soft">
-                    <GitPullRequest size={11} className="mr-1" />
-                    {result.pr_count || 0} PR
-                  </Badge>
-                  <Badge tone="soft">
-                    <FileCode2 size={11} className="mr-1" />
-                    {result.files_analyzed || 0} fayl
-                  </Badge>
-                  {overview?.missing_figma_access ? <Badge tone="warning">Figma limited</Badge> : <Badge tone="soft">Figma ready</Badge>}
+                  <Badge tone={getVerdictTone(result)}>{getVerdictLabel(result)}</Badge>
+                  <Badge tone="soft">{counts.completed} bajarildi</Badge>
+                  {counts.failed ? <Badge tone="danger">{counts.failed} bajarilmadi</Badge> : null}
+                  {result.ai_retry_count ? <Badge tone="warning">{result.ai_retry_count} retry</Badge> : null}
                 </div>
-                <p className="mt-3 text-sm leading-6 text-muted-foreground">
-                  {result.task_summary || "Task summary mavjud emas."}
-                </p>
-                <p className="mt-3 text-sm font-medium leading-6 text-foreground">
-                  {overview?.verdict_reason || "Verdict reason mavjud emas."}
-                </p>
-                <div className="mt-4 grid gap-3">
-                  {(overview?.summary_lines || []).map((line, index) => (
-                    <div
-                      key={`summary-${index}`}
-                      className="rounded-[14px] border border-border bg-[color:var(--bg-layer)] px-4 py-3 text-sm leading-6 text-foreground"
-                    >
-                      {line}
-                    </div>
-                  ))}
+                <h2 className="mt-3 text-xl font-semibold leading-tight text-foreground">
+                  {result.task_summary || result.task_info?.summary || "Task summary mavjud emas."}
+                </h2>
+                <div className="mt-3 grid gap-2 text-sm leading-6 text-muted-foreground">
+                  {summaryLines.length ? summaryLines.slice(0, 3).map((line, index) => (
+                    <p key={`${result.task_key}-summary-${index}`}>{line}</p>
+                  )) : (
+                    <p>{result.analysis_overview?.verdict_reason || result.qa_recommendation?.reason || "Yakuniy AI xulosasi qaytmadi."}</p>
+                  )}
                 </div>
               </div>
-            </SettingsBaseCard>
+            </div>
+          </Card>
 
-            <Card className="grid gap-5 p-6" tone="accent">
-              <div>
-                <div className="inline-flex rounded-full bg-primary/10 p-2 text-primary">
-                  <Radar size={16} />
-                </div>
-                <h3 className="mt-4 text-base font-bold text-foreground">Coverage va diagnostika</h3>
-                <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                  Requirement sectionlari, prompt cleanliness va run signallari shu blokda jamlangan.
-                </p>
+          <RequirementMatrix filter={requirementFilter} onFilterChange={setRequirementFilter} result={result} />
+
+          {showRunSignals ? (
+            <Card>
+              <div className="inline-flex items-center gap-2 text-sm font-semibold text-foreground">
+                <AlertTriangle size={15} />
+                Run signallari
               </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-[16px] border border-border bg-card px-4 py-3">
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">Coverage</div>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <Badge tone="soft">Completed: {coverageCount(overview, "completed")}</Badge>
-                    <Badge tone="soft">Partial: {coverageCount(overview, "partial")}</Badge>
-                    <Badge tone="soft">Missing: {coverageCount(overview, "failed")}</Badge>
-                    <Badge tone="soft">Risks: {coverageCount(overview, "issues")}</Badge>
-                  </div>
-                </div>
-                <div className="rounded-[16px] border border-border bg-card px-4 py-3">
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">Comments</div>
-                  <div className="mt-2 grid gap-1 text-sm text-muted-foreground">
-                    <span>Human comments: {Number(result.comment_analysis?.total_comments || 0)}</span>
-                    <span>Filtered AI comments: {Number(result.comment_analysis?.filtered_out_ai_comments || 0)}</span>
-                    <span>Dev objections: {(result.dev_objections || []).length}</span>
-                  </div>
-                </div>
-                <div className="rounded-[16px] border border-border bg-card px-4 py-3">
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">Prompt</div>
-                  <div className="mt-2 grid gap-1 text-sm text-muted-foreground">
-                    <span>Chars: {result.total_prompt_size || 0}</span>
-                    <span>Retry: {result.ai_retry_count || 0}</span>
-                    <span>Sections: {(overview?.requested_sections || []).join(", ") || "N/A"}</span>
-                  </div>
-                </div>
-                <div className="rounded-[16px] border border-border bg-card px-4 py-3">
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">Warnings</div>
-                  <div className="mt-2 grid gap-1 text-sm text-muted-foreground">
-                    <span>Run warnings: {(result.warnings || []).length}</span>
-                    <span>Comment signal: {String(result.comment_analysis?.summary || "Yo'q")}</span>
-                  </div>
-                </div>
+              <div className="mt-4 grid gap-3">
+                {(result.warnings || []).map((warning, index) => (
+                  <div className="qa-warning-item" key={index}>⚠ {warning}</div>
+                ))}
+                {figmaSummaries.length ? figmaSummaries.map((item, index) => (
+                  <BaseCard
+                    as="div"
+                    className="px-4 py-3"
+                    key={`${item.file_key || item.name || "figma"}-${index}`}
+                    padding="none"
+                    tone="soft"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <strong className="text-sm font-semibold text-foreground">{item.name || item.file_key || "Figma file"}</strong>
+                      {item.url ? (
+                        <a className="text-xs font-medium text-primary hover:underline" href={item.url} rel="noreferrer" target="_blank">
+                          Ochish
+                        </a>
+                      ) : null}
+                    </div>
+                    <p className="mt-2 text-sm leading-6 text-muted-foreground">{item.summary || "Summary topilmadi."}</p>
+                  </BaseCard>
+                )) : null}
               </div>
             </Card>
-          </section>
-
-          {(result.warnings || []).length ? (
-            <SettingsBaseCard
-              header={<SectionHeader eyebrow="Warnings" title={`${result.warnings?.length || 0} ogohlantirish`} />}
-              showCustomizer={false}
-            >
-              <div className="mt-4 grid gap-2">
-                {(result.warnings || []).map((warning, index) => (
-                  <div key={index} className="qa-warning-item">⚠ {warning}</div>
-                ))}
-              </div>
-            </SettingsBaseCard>
           ) : null}
 
-          <SettingsBaseCard
-            header={<SectionHeader eyebrow="Analysis View" title="Checker cockpit" />}
-            showCustomizer={false}
-          >
-            <div className="tabs mt-4">
-              {CHECKER_TABS.map((tab) => (
-                <button
-                  key={tab.key}
-                  className={`tab-btn ${activeTab === tab.key ? "active" : ""}`}
-                  onClick={() => setActiveTab(tab.key)}
-                  type="button"
-                >
-                  {tab.label}
-                </button>
-              ))}
+          <Card>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+              <div className="inline-flex items-center gap-2 text-sm font-semibold text-foreground">
+                <GitPullRequest size={15} />
+                PR tafsilotlari
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Badge tone="soft">{prFoundCount} topildi</Badge>
+                <Badge tone="success">{prMergedCount} merged</Badge>
+                {prSkippedCount ? <Badge tone="warning">{prSkippedCount} skipped</Badge> : null}
+              </div>
             </div>
-
-            {activeTab === "overview" ? (
-              <div className="mt-5 grid gap-4 lg:grid-cols-2">
-                <Card className="grid gap-4 p-5" tone="soft">
-                  <div className="inline-flex rounded-full bg-primary/10 p-2 text-primary">
-                    <ClipboardList size={16} />
-                  </div>
-                  <div>
-                    <h3 className="text-base font-semibold text-foreground">Executive summary</h3>
-                    <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                      Task verdicti va eng muhim signal qisqacha ko&apos;rinishi.
-                    </p>
-                  </div>
-                  <div className="grid gap-3">
-                    {(overview?.summary_lines || []).map((line, index) => (
-                      <div key={`overview-line-${index}`} className="rounded-[16px] border border-border bg-card px-4 py-3 text-sm leading-6 text-foreground">
-                        {line}
-                      </div>
-                    ))}
-                  </div>
-                </Card>
-
-                <Card className="grid gap-4 p-5" tone="soft">
-                  <div className="inline-flex rounded-full bg-primary/10 p-2 text-primary">
-                    <AlertTriangle size={16} />
-                  </div>
-                  <div>
-                    <h3 className="text-base font-semibold text-foreground">Open signals</h3>
-                    <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                      Requirement va analysis qatlamida qolgan eng muhim ochiq nuqtalar.
-                    </p>
-                  </div>
-                  <div className="grid gap-3">
-                    <div className="rounded-[16px] border border-border bg-card px-4 py-3 text-sm leading-6 text-muted-foreground">
-                      Missing talablar: {coverageCount(overview, "failed")}
-                    </div>
-                    <div className="rounded-[16px] border border-border bg-card px-4 py-3 text-sm leading-6 text-muted-foreground">
-                      Partial talablar: {coverageCount(overview, "partial")}
-                    </div>
-                    <div className="rounded-[16px] border border-border bg-card px-4 py-3 text-sm leading-6 text-muted-foreground">
-                      Risklar: {coverageCount(overview, "issues")}
-                    </div>
-                    <div className="rounded-[16px] border border-border bg-card px-4 py-3 text-sm leading-6 text-muted-foreground">
-                      Figma access: {overview?.missing_figma_access ? "Cheklangan" : "Mavjud"}
-                    </div>
-                  </div>
-                </Card>
-              </div>
-            ) : null}
-
-            {activeTab === "requirements" ? (
-              <div className="mt-5 grid gap-4 xl:grid-cols-2">
-                {requirementSections.length ? requirementSections.map(renderSectionCard) : (
-                  <div className="rounded-[18px] border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
-                    Structured requirement sectionlar qaytmadi.
-                  </div>
-                )}
-              </div>
-            ) : null}
-
-            {activeTab === "evidence" ? (
-              <div className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-                <div className="grid gap-4">
-                  <Card className="grid gap-4 p-5" tone="soft">
-                    <div className="flex items-center gap-3">
-                      <ScanSearch size={16} className="text-primary" />
-                      <h3 className="text-base font-semibold text-foreground">TZ va comment evidence</h3>
-                    </div>
-                    <div className="grid gap-2 text-sm text-muted-foreground">
-                      <span>{String(result.comment_analysis?.summary || "Comment signal yo'q")}</span>
-                      <span>Filtered AI comments: {Number(result.comment_analysis?.filtered_out_ai_comments || 0)}</span>
-                    </div>
-                    <details className="rounded-[16px] border border-border bg-card px-4 py-4">
-                      <summary className="cursor-pointer list-none text-sm font-semibold text-foreground">TZ contentni ko&apos;rish</summary>
-                      <div className="qa-analysis-block mt-4">{result.tz_content || "TZ content topilmadi."}</div>
-                    </details>
-                  </Card>
-
-                  <Card className="grid gap-4 p-5" tone="soft">
-                    <div className="flex items-center gap-3">
-                      <Radar size={16} className="text-primary" />
-                      <h3 className="text-base font-semibold text-foreground">Figma evidence</h3>
-                    </div>
-                    {result.figma_data?.summaries?.length ? (
-                      <div className="grid gap-3">
-                        {result.figma_data.summaries.map((item, index) => (
-                          <div key={index} className="rounded-[16px] border border-border bg-card px-4 py-4">
-                            <div className="flex items-start justify-between gap-3">
-                              <div>
-                                <strong className="text-sm font-semibold text-foreground">{item.name || item.file_key || "Figma file"}</strong>
-                                <p className="mt-2 text-sm leading-6 text-muted-foreground">{item.summary || "Summary topilmadi."}</p>
-                              </div>
-                              {item.url ? (
-                                <a className="text-xs font-medium text-primary hover:underline" href={item.url} rel="noreferrer" target="_blank">
-                                  Ochish
-                                </a>
-                              ) : null}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-sm leading-6 text-muted-foreground">
-                        Figma evidence mavjud emas yoki access bo&apos;lmagan.
-                      </p>
-                    )}
-                  </Card>
-                </div>
-
-                <SettingsBaseCard
-                  header={(
-                    <SectionHeader
-                      action={<Badge tone="soft">{result.pr_details?.length || 0} PR</Badge>}
-                      eyebrow="GitHub"
-                      title="PR tafsilotlari"
-                    />
-                  )}
-                  showCustomizer={false}
-                >
-                  <PRDetailsStack prDetails={result.pr_details || []} />
-                </SettingsBaseCard>
-              </div>
-            ) : null}
-
-            {activeTab === "raw" ? (
-              <div className="mt-5 grid gap-4">
-                <Card className="grid gap-3 p-5" tone="soft">
-                  <h3 className="text-base font-semibold text-foreground">Raw AI analysis</h3>
-                  <p className="text-sm leading-6 text-muted-foreground">
-                    Debug va prompt tuning uchun Gemini qaytargan to&apos;liq matn.
-                  </p>
-                  <div className="qa-analysis-block">{result.ai_analysis || "AI analysis qaytmadi."}</div>
-                </Card>
-              </div>
-            ) : null}
-          </SettingsBaseCard>
-        </>
+            <PRDetailsStack prDetails={result.pr_details || []} prSelection={prSelection} />
+          </Card>
+        </div>
       ) : result ? (
-        <SettingsBaseCard
-          header={<SectionHeader eyebrow="Analyze Error" title="TZ-PR tahlili tugamadi" />}
-          showCustomizer={false}
-        >
-          <p className="mt-4 text-sm leading-6 text-muted-foreground">
-            {result.error_message || "Xatolik tafsiloti qaytmadi."}
-          </p>
-          {result.warnings?.length ? (
+        <Card>
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-[color:var(--error)] text-white">
+              <AlertTriangle size={18} />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-base font-semibold text-foreground">TZ-PR tahlili tugamadi</h2>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                {result.error_message || "Xatolik tafsiloti qaytmadi."}
+              </p>
+            </div>
+          </div>
+          {(result.warnings || []).length ? (
             <div className="mt-4 grid gap-2">
-              {result.warnings.map((warning, index) => (
-                <div key={index} className="qa-warning-item">⚠ {warning}</div>
+              {(result.warnings || []).map((warning, index) => (
+                <div className="qa-warning-item" key={index}>⚠ {warning}</div>
               ))}
             </div>
           ) : null}
           {result.tz_content ? (
-            <>
-              <h3 className="mt-6 text-base font-semibold">TZ content</h3>
-              <div className="qa-analysis-block mt-3">{result.tz_content}</div>
-            </>
+            <BaseCard as="details" className="mt-4 overflow-hidden" padding="none" tone="soft">
+              <summary className="cursor-pointer px-4 py-4 text-sm font-semibold text-foreground">TZ content</summary>
+              <div className="border-t border-border px-4 py-4">
+                <div className="qa-analysis-block">{result.tz_content}</div>
+              </div>
+            </BaseCard>
           ) : null}
-        </SettingsBaseCard>
+          <div className="mt-4">
+            <Button onClick={() => void startRun()} size="sm" type="button">
+              <RefreshCw size={14} />
+              Qayta urinish
+            </Button>
+          </div>
+        </Card>
       ) : null}
-    </>
+    </div>
   );
 }

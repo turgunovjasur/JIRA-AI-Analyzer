@@ -29,7 +29,6 @@ Date: 2026-02-20
 import sys
 import os
 import json
-import sqlite3
 import asyncio
 import time
 import logging
@@ -877,17 +876,31 @@ class TestDatabaseOperations:
     - Delete after webhook flow
     """
 
-    def test_db_file_exists(self):
-        from utils.database.task_db import DB_FILE
-        assert os.path.exists(DB_FILE), f"DB fayl topilmadi: {DB_FILE}"
+    def test_db_connection_available(self):
+        from utils.database.runtime import connect_processing_db
+
+        conn = connect_processing_db()
+        try:
+            row = conn.execute("SELECT 1").fetchone()
+            assert row[0] == 1
+        finally:
+            conn.close()
 
     def test_db_table_structure(self):
-        from utils.database.task_db import DB_FILE
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA table_info(task_processing)")
-        columns = {row[1] for row in cursor.fetchall()}
-        conn.close()
+        from utils.database.runtime import connect_processing_db
+
+        conn = connect_processing_db(row_factory=True)
+        try:
+            rows = conn.execute(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'task_processing'
+                """
+            ).fetchall()
+            columns = {row["column_name"] for row in rows}
+        finally:
+            conn.close()
         required_columns = {
             'task_id', 'task_status', 'task_update_time', 'return_count',
             'last_jira_status', 'last_processed_at', 'error_message', 'skip_detected',
@@ -1013,19 +1026,32 @@ class TestDatabaseOperations:
         assert task.get('updated_at') is not None
 
     def test_db_indexes_exist(self):
-        from utils.database.task_db import DB_FILE
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='task_processing'")
-        indexes = {row[0] for row in cursor.fetchall()}
-        conn.close()
-        expected_indexes = {'idx_task_status', 'idx_service1_status', 'idx_service2_status'}
+        from utils.database.runtime import connect_processing_db
+
+        conn = connect_processing_db()
+        try:
+            rows = conn.execute(
+                """
+                SELECT indexname
+                FROM pg_indexes
+                WHERE schemaname = 'public' AND tablename = 'task_processing'
+                """
+            ).fetchall()
+            indexes = {row[0] for row in rows}
+        finally:
+            conn.close()
+        expected_indexes = {
+            'idx_task_processing_company_status',
+            'idx_task_processing_company_service1',
+            'idx_task_processing_company_service2',
+        }
         assert expected_indexes.issubset(indexes), f"Yo'q indexlar: {expected_indexes - indexes}"
 
     # --- test_delete_task_flow tests ---
 
     def test_delete_task_then_get_returns_none(self):
-        from utils.database.task_db import get_task, delete_task, mark_progressing, DB_FILE
+        from utils.database.task_db import get_task, delete_task, mark_progressing
+        from utils.database.runtime import connect_processing_db
         task_key = "TEST-DELETE-001"
         mark_progressing(task_key, "Ready to Test", datetime.now())
         task = get_task(task_key)
@@ -1036,11 +1062,11 @@ class TestDatabaseOperations:
         task_after_delete = get_task(task_key)
         assert task_after_delete is None
         # DB direct verification
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute("SELECT task_id FROM task_processing WHERE task_id = ?", (task_key,))
-        row = cursor.fetchone()
-        conn.close()
+        conn = connect_processing_db()
+        try:
+            row = conn.execute("SELECT task_id FROM task_processing WHERE task_id = %s", [task_key]).fetchone()
+        finally:
+            conn.close()
         assert row is None
 
     def test_delete_then_recreate_as_new(self):
@@ -1887,30 +1913,54 @@ class TestBlockedRetry:
         assert result is False
 
     def test_db_v3_migration_blocked_at_column(self):
-        from utils.database.task_db import DB_FILE
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA table_info(task_processing)")
-        columns = [row[1] for row in cursor.fetchall()]
-        conn.close()
+        from utils.database.runtime import connect_processing_db
+
+        conn = connect_processing_db()
+        try:
+            rows = conn.execute(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'task_processing'
+                """
+            ).fetchall()
+            columns = [row[0] for row in rows]
+        finally:
+            conn.close()
         assert 'blocked_at' in columns
 
     def test_db_v3_migration_blocked_retry_at_column(self):
-        from utils.database.task_db import DB_FILE
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA table_info(task_processing)")
-        columns = [row[1] for row in cursor.fetchall()]
-        conn.close()
+        from utils.database.runtime import connect_processing_db
+
+        conn = connect_processing_db()
+        try:
+            rows = conn.execute(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'task_processing'
+                """
+            ).fetchall()
+            columns = [row[0] for row in rows]
+        finally:
+            conn.close()
         assert 'blocked_retry_at' in columns
 
     def test_db_v3_migration_block_reason_column(self):
-        from utils.database.task_db import DB_FILE
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA table_info(task_processing)")
-        columns = [row[1] for row in cursor.fetchall()]
-        conn.close()
+        from utils.database.runtime import connect_processing_db
+
+        conn = connect_processing_db()
+        try:
+            rows = conn.execute(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'task_processing'
+                """
+            ).fetchall()
+            columns = [row[0] for row in rows]
+        finally:
+            conn.close()
         assert 'block_reason' in columns
 
     # --- Resilience test_3: blocked tasks key1/key2 ---
@@ -1961,7 +2011,8 @@ class TestBlockedRetry:
         task = get_task(task_key)
         assert task.get('blocked_retry_at') is not None
         retry_at = datetime.fromisoformat(task['blocked_retry_at'])
-        assert retry_at > datetime.now()
+        now = datetime.now(retry_at.tzinfo) if retry_at.tzinfo else datetime.now()
+        assert retry_at > now
 
     def test_get_blocked_tasks_includes_past_retry(self):
         from utils.database.task_db import (
@@ -2357,7 +2408,7 @@ class TestCanRunService2:
     def test_s1_done_score_below_threshold_false(self):
         from services.webhook.queue_manager import _can_run_service2
         settings = self._settings()
-        low_score = settings.tz_pr_checker.return_threshold - 1
+        low_score = settings.webhook_tz_pr.return_threshold - 1
         task_db = {'service1_status': 'done', 'service2_status': 'pending',
                    'compliance_score': low_score, 'task_status': 'progressing'}
         assert _can_run_service2(task_db, settings) is False

@@ -25,11 +25,10 @@ class JiraFigmaHelper:
 
     @staticmethod
     def extract_figma_urls(task_details: Dict) -> List[FigmaLink]:
-        """Extract Figma URLs from task"""
+        """Extract Figma URLs from task description only."""
         figma_links = []
         seen_file_keys = set()
 
-        # 1. Description
         description = task_details.get('description', '')
         if description:
             matches = re.finditer(JiraFigmaHelper.FIGMA_PATTERN, description)
@@ -51,33 +50,6 @@ class JiraFigmaHelper:
                     file_key=file_key,
                     name=name,
                     source='description',
-                    node_id=node_id
-                ))
-
-        # 2. Comments
-        comments = task_details.get('comments', [])
-        for comment in comments:
-            comment_body = comment.get('body', '')
-            matches = re.finditer(JiraFigmaHelper.FIGMA_PATTERN, comment_body)
-
-            for match in matches:
-                url = match.group(0)
-                file_key = match.group(1)
-
-                if file_key in seen_file_keys:
-                    continue
-
-                seen_file_keys.add(file_key)
-                clean_url = JiraFigmaHelper._clean_url(url)
-                name = JiraFigmaHelper._extract_name_from_url(clean_url)
-                node_id = JiraFigmaHelper._extract_node_id(clean_url)
-
-                figma_links.append(FigmaLink(
-                    url=clean_url,
-                    file_key=file_key,
-                    name=name,
-                    source='comment',
-                    author=comment.get('author', 'Unknown'),
                     node_id=node_id
                 ))
 

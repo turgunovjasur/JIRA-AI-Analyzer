@@ -37,7 +37,6 @@ Natija:
 
 Compose ichida:
 
-- `APP_DB_BACKEND=postgres`
 - `APP_WEBHOOK_EXECUTION_MODE=queue`
 - `worker` alohida servis sifatida ko'tariladi
 - `postgres` healthcheck'dan keyin `backend` va `worker` ishga tushadi
@@ -47,7 +46,6 @@ Compose ichida:
 `.env.example` dan namuna oling:
 
 - umumiy:
-  - `APP_DB_BACKEND=postgres`
   - `APP_USE_BACKEND_API=true`
   - `APP_WEBHOOK_EXECUTION_MODE=inline`
   - `APP_WORKER_POLL_INTERVAL_SECONDS=3`

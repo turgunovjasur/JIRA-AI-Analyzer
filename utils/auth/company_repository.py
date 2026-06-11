@@ -10,7 +10,7 @@ import json
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional, List, Callable
 from core.logger import get_logger
-from utils.auth.repository_common import execute, row_to_dict, uses_postgres_params
+from utils.auth.repository_common import execute, row_to_dict
 from utils.auth.credential_crypto import (
     decrypt_sensitive_fields,
     encrypt_sensitive_fields,
@@ -26,8 +26,6 @@ def _ensure_companies_seat_limit_allows_zero(conn) -> None:
     Legacy PostgreSQL sxemalarda `companies_seat_limit_check` >=1 bo'lishi mumkin.
     Yangi product qoidasiga ko'ra seat_limit 0 ham ruxsat etiladi.
     """
-    if not uses_postgres_params(conn):
-        return
     try:
         execute(conn, "ALTER TABLE companies DROP CONSTRAINT IF EXISTS companies_seat_limit_check")
         execute(
@@ -41,20 +39,13 @@ def _ensure_companies_seat_limit_allows_zero(conn) -> None:
 
 def _table_exists(conn, table_name: str) -> bool:
     try:
-        if uses_postgres_params(conn):
-            row = execute(
-                conn,
-                """
-                SELECT 1
-                FROM information_schema.tables
-                WHERE table_schema = 'public' AND table_name = ?
-                """,
-                [table_name],
-            ).fetchone()
-            return row is not None
         row = execute(
             conn,
-            "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
+            """
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = ?
+            """,
             [table_name],
         ).fetchone()
         return row is not None
@@ -64,19 +55,16 @@ def _table_exists(conn, table_name: str) -> bool:
 
 def _column_names(conn, table_name: str) -> set[str]:
     try:
-        if uses_postgres_params(conn):
-            rows = execute(
-                conn,
-                """
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_schema = 'public' AND table_name = ?
-                """,
-                [table_name],
-            ).fetchall()
-            return {row[0] if not isinstance(row, dict) else row["column_name"] for row in rows}
-        rows = execute(conn, f"PRAGMA table_info({table_name})").fetchall()
-        return {row[1] for row in rows}
+        rows = execute(
+            conn,
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = ?
+            """,
+            [table_name],
+        ).fetchall()
+        return {row[0] if not isinstance(row, dict) else row["column_name"] for row in rows}
     except Exception:
         return set()
 
@@ -260,16 +248,12 @@ def create_company_record(get_conn: Callable, company_code: str, company_name: s
         conn = get_conn()
         _ensure_companies_seat_limit_allows_zero(conn)
         payload = [company_code.strip().lower(), company_name.strip(), max(0, int(seat_limit))]
-        if uses_postgres_params(conn):
-            row = execute(
-                conn,
-                "INSERT INTO companies (company_code, company_name, seat_limit) VALUES (?,?,?) RETURNING id",
-                payload,
-            ).fetchone()
-            company_id = row["id"] if isinstance(row, dict) else row[0]
-        else:
-            c = execute(conn, "INSERT INTO companies (company_code, company_name, seat_limit) VALUES (?,?,?)", payload)
-            company_id = c.lastrowid
+        row = execute(
+            conn,
+            "INSERT INTO companies (company_code, company_name, seat_limit) VALUES (?,?,?) RETURNING id",
+            payload,
+        ).fetchone()
+        company_id = row["id"] if isinstance(row, dict) else row[0]
         conn.commit()
         conn.close()
         return company_id
@@ -415,14 +399,13 @@ def upsert_company_subscription(get_conn: Callable, company_id: int, normalized:
         c = execute(conn, f"SELECT company_id FROM {table_name} WHERE company_id = ?", [company_id])
         exists = c.fetchone()
         if exists:
-            placeholder = "%s" if uses_postgres_params(conn) else "?"
-            set_clause = ", ".join(f"{k} = {placeholder}" for k in payload)
+            set_clause = ", ".join(f"{k} = %s" for k in payload)
             values = list(payload.values()) + [company_id]
             execute(conn, f"UPDATE {table_name} SET {set_clause} WHERE company_id = ?", values)
         else:
             payload['company_id'] = company_id
             cols = ", ".join(payload.keys())
-            placeholders = ", ".join("%s" if uses_postgres_params(conn) else "?" for _ in payload)
+            placeholders = ", ".join("%s" for _ in payload)
             execute(
                 conn,
                 f"INSERT INTO {table_name} ({cols}) VALUES ({placeholders})",
@@ -532,14 +515,13 @@ def upsert_company_settings(
             c = execute(conn, "SELECT company_id FROM company_settings WHERE company_id = ?", [company_id])
             exists = c.fetchone()
             if exists:
-                placeholder = "%s" if uses_postgres_params(conn) else "?"
-                set_clause = ", ".join(f"{k} = {placeholder}" for k in payload)
+                set_clause = ", ".join(f"{k} = %s" for k in payload)
                 values = list(payload.values()) + [company_id]
                 execute(conn, f"UPDATE company_settings SET {set_clause} WHERE company_id = ?", values)
             else:
                 payload['company_id'] = company_id
                 cols = ", ".join(payload.keys())
-                placeholders = ", ".join("%s" if uses_postgres_params(conn) else "?" for _ in payload)
+                placeholders = ", ".join("%s" for _ in payload)
                 execute(
                     conn,
                     f"INSERT INTO company_settings ({cols}) VALUES ({placeholders})",
@@ -730,7 +712,7 @@ def fetch_company_by_project_key(
             rows = execute(conn, """
                 SELECT c.*, cs.webhook_project_keys FROM companies c
                 JOIN company_settings cs ON cs.company_id = c.id
-                WHERE c.is_active = 1
+                WHERE c.is_active = TRUE
                   AND cs.webhook_project_keys != ''
             """).fetchall()
         else:
@@ -738,7 +720,7 @@ def fetch_company_by_project_key(
                 SELECT c.*, ws.project_keys AS webhook_project_keys
                 FROM companies c
                 JOIN company_webhook_settings ws ON ws.company_id = c.id
-                WHERE c.is_active = 1
+                WHERE c.is_active = TRUE
                   AND ws.project_keys != ''
             """).fetchall()
         conn.close()
@@ -773,7 +755,7 @@ def find_project_key_conflicts(
             FROM companies c
             JOIN company_settings cs ON cs.company_id = c.id
             WHERE c.id != ?
-              AND c.is_active = 1
+              AND c.is_active = TRUE
               AND cs.webhook_project_keys != ''
             """,
             [company_id],
@@ -786,7 +768,7 @@ def find_project_key_conflicts(
             FROM companies c
             JOIN company_webhook_settings ws ON ws.company_id = c.id
             WHERE c.id != ?
-              AND c.is_active = 1
+              AND c.is_active = TRUE
               AND ws.project_keys != ''
             """,
             [company_id],

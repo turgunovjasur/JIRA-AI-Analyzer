@@ -12,6 +12,1250 @@ Bu fayl loyihada amalda bajarilgan ishlarni, qolgan ishlarni va keyingi qadamlar
 
 ### Done
 
+#### 2026-05-19 - Multi-agent JSON contract hujjatlashtirildi
+
+- Roadmap bog'lanishi:
+  - Stage 2 - Target Architecture
+  - Stage 10 - Core Feature Stabilization
+  - Stage 13 - Testing va Release Quality
+- O'zgarish:
+  - [docs/MULTI_AGENT_JSON_CONTRACT.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/docs/MULTI_AGENT_JSON_CONTRACT.md)
+    - Checker, Agent1, Agent2 va Agent3 o'rtasidagi kelishilgan ixcham JSON input/output contract alohida hujjatga yozildi.
+    - Agent1 `requirements[].source`, Agent2 `evidence` semantikasi, Agent2 `extra[].risk` enumlari va Agent3 faqat `summary` qaytarishi aniq belgilandi.
+    - Verdict, score, completed/failed/missing/invalid listlar checker/backend tomonidan deterministic hisoblanishi qayd etildi.
+- Verification:
+  - Documentation update only.
+
+#### 2026-05-18 - Agent JSON uchun deterministic local repair mexanizmi qo'shildi
+
+- Roadmap bog'lanishi:
+  - Stage 10 - Core Feature Stabilization
+  - Stage 13 - Testing va Release Quality
+- O'zgarish:
+  - [utils/ai/json_repair.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/utils/ai/json_repair.py)
+    - AI chaqirmasdan ishlaydigan `repair_json_text()` helperi qo'shildi.
+    - Helper trailing comma, objectlar orasidagi comma tushib qolishi, fieldlar orasidagi comma tushib qolishi va oxiri yopilmagan JSON tail holatlarini deterministic tarzda tuzatishga urinadi.
+    - `parse_json_response_details()` strict parse va JSON block extractiondan keyin local repairni sinab ko'radigan bo'ldi.
+  - [services/checkers/tzpr_agents/agent1.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_agents/agent1.py)
+    - `recover_incomplete_response()` avval butun raw outputni local JSON repair orqali tiklashga urinadi.
+    - Butun JSON tiklanmasa, eski alohida requirement objectlarni qutqarish fallbacki saqlanadi.
+  - [services/checkers/tzpr_agent_runner.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_agent_runner.py)
+    - Agent1, Agent2 va Agent3 JSON parse oqimi umumiy `utils.ai.json_repair` parseridan foydalanadigan qilindi.
+  - [services/checkers/tzpr_agents/common.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_agents/common.py)
+    - Eski importlar sinmasligi uchun umumiy JSON repair helperlariga compatibility shim qilib qoldirildi.
+  - [tests/test_ai_json_repair.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_ai_json_repair.py), [tests/test_tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_multi_agent.py)
+    - Common parser va Agent1 recovery local repair orqali 2 ta requirementni saqlab qolishini tekshiruvchi regression testlar qo'shildi.
+- Verification:
+  - `./.venv/bin/python -m py_compile utils/ai/json_repair.py services/checkers/tzpr_agents/common.py services/checkers/tzpr_agents/agent1.py services/checkers/tzpr_agent_runner.py tests/test_ai_json_repair.py tests/test_tzpr_multi_agent.py` ✅
+  - `./.venv/bin/pytest -q tests/test_ai_json_repair.py tests/test_tzpr_multi_agent.py` (`10 passed`) ✅
+
+#### 2026-05-18 - Agent1 JSON parse fallbackidan AI repair olib tashlandi
+
+- Roadmap bog'lanishi:
+  - Stage 10 - Core Feature Stabilization
+  - Stage 13 - Testing va Release Quality
+- O'zgarish:
+  - [services/checkers/tzpr_agent_runner.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_agent_runner.py)
+    - Agent1 JSON parse xato berganda ikkinchi AI chaqiruv orqali malformed JSONni tuzatish oqimi olib tashlandi.
+    - `raw[:4000]` bilan kesilgan javobni AI repairga yuborish to'xtatildi; endi faqat local `recover_incomplete_response(raw)` ishlaydi.
+    - Local recovery ham requirement bermasa Agent1 failed yo'liga tushadi, shuning uchun buzilgan JSONdan 1 ta talab olib `100%` pass qilish xavfi kamaytirildi.
+  - [tests/test_tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_multi_agent.py)
+    - Agent1 runnerda AI JSON repair prompti, `raw[:4000]` va `ai_json_fix` parse mode qaytib kelmasligi uchun regression test qo'shildi.
+- Verification:
+  - `./.venv/bin/python -m py_compile services/checkers/tzpr_agent_runner.py tests/test_tzpr_multi_agent.py` ✅
+  - `./.venv/bin/pytest -q tests/test_tzpr_multi_agent.py` (`8 passed`) ✅
+  - `rg` bilan service kodida `ai_json_fix`, `raw[:4000]` va AI repair prompti qolmagani tekshirildi ✅
+
+#### 2026-05-18 - `tzpr_multi_agent.py` professional modullarga bo'lindi
+
+- Roadmap bog'lanishi:
+  - Stage 2 - Target Architecture
+  - Stage 10 - Core Feature Stabilization
+  - Stage 13 - Testing va Release Quality
+- O'zgarish:
+  - [services/checkers/tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_multi_agent.py)
+    - Public facade qilib qisqartirildi: run yaratish, execute, stalled check/recover va backward-compatible aliaslar qoldi.
+    - Fayl 2070 linedan 132 line atrofidagi yupqa entrypointga tushdi.
+  - [services/checkers/tzpr_orchestrator.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_orchestrator.py)
+    - Executorning asosiy `run`, context collection va model helperlari joylashdi.
+  - [services/checkers/tzpr_agent_runner.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_agent_runner.py)
+    - Agent1, Agent2, Agent3 run bosqichlari mixin sifatida ajratildi.
+  - [services/checkers/tzpr_result_builder.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_result_builder.py)
+    - Final result, Agent1-only result, analysis sections/overview va terminal error handling ajratildi.
+  - [services/checkers/tzpr_run_state.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_run_state.py)
+    - Run/agent state update, event yozish, finish/skip/block va stalled recovery metodlari ajratildi.
+  - [services/checkers/tzpr_preflight.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_preflight.py)
+    - Agent1 sanitized input, trusted comment policy va Figma filtered text tayyorlash egasi bo'ldi.
+  - [services/checkers/tzpr_presenters.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_presenters.py)
+    - Compliance score, final analysis text, decision/issue/Figma lines va warning yig'ish helperlari ajratildi.
+  - [services/checkers/tzpr_helpers.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_helpers.py), [services/checkers/tzpr_constants.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_constants.py), [services/checkers/tzpr_lifecycle.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_lifecycle.py)
+    - Umumiy helperlar, constants va stalled snapshot lifecycle logic alohida qatlamlarga chiqdi.
+- Verification:
+  - `./.venv/bin/python -m py_compile services/checkers/tzpr_multi_agent.py services/checkers/tzpr_orchestrator.py services/checkers/tzpr_agent_runner.py services/checkers/tzpr_result_builder.py services/checkers/tzpr_run_state.py services/checkers/tzpr_preflight.py services/checkers/tzpr_presenters.py services/checkers/tzpr_helpers.py services/checkers/tzpr_constants.py services/checkers/tzpr_lifecycle.py tests/test_tzpr_multi_agent.py scripts/debug_tzpr_input_context.py` ✅
+  - `./.venv/bin/pytest -q tests/test_tzpr_multi_agent.py` (`7 passed`) ✅
+  - Public facade import check (`create_multi_agent_run`, `execute_multi_agent_run`, `_TZPRMultiAgentExecutor`, sanitized input helperlar) ✅
+  - Eski `source_pack`, fallback requirement, coverage threshold va TZ/comment candidate parser izlari qolmagani `rg` bilan tekshirildi ✅
+
+#### 2026-05-18 - Multi-agent checker eski source-pack/candidate oqimi tozalandi
+
+- Roadmap bog'lanishi:
+  - Stage 2 - Target Architecture
+  - Stage 10 - Core Feature Stabilization
+  - Stage 13 - Testing va Release Quality
+- O'zgarish:
+  - [services/checkers/tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_multi_agent.py)
+    - Eski Agent1 `source_pack`, TZ candidate parser, comment candidate parser va fallback requirement inventory kodlari olib tashlandi.
+    - Agent1 runtime endi `source_pack` yaratmaydi va `validate_output/refine_requirements`ga uzatmaydi.
+    - Artifact previewdan eski `source_stats`/discarded candidate previewlari chiqarildi.
+    - Agent1 rules ichidan ishlatilmaydigan `coverage_threshold` olib tashlandi.
+  - [services/checkers/tzpr_agents/agent1.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_agents/agent1.py)
+    - Agent1 validator eski `source_section`, `requirement_type`, `testability`/AC inference metadata'larini yaratmaydigan qilindi.
+    - Validator faqat yangi contract uchun kerakli `requirement_id`, requirement text, `source_kind`, `scope_change_type`, `source_refs` normalizatsiyasini saqlaydi.
+  - [services/checkers/tz_pr_checker.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tz_pr_checker.py)
+    - Effective settingsdan eski Agent1 coverage threshold payloadi olib tashlandi.
+  - [scripts/debug_tzpr_input_context.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/scripts/debug_tzpr_input_context.py)
+    - Debug export eski `source_pack/tz_candidate_items` o'rniga Agent1 sanitized input summary'ni ko'rsatadigan qilindi.
+  - [scripts/debug_agent1_dev8220.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/scripts/debug_agent1_dev8220.py)
+    - DEV-8220ga bog'langan eski source-pack debug skripti olib tashlandi.
+  - [tests/test_tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_multi_agent.py)
+    - Eski `source_pack`, candidate parser va coverage re-prompt testlari yangi contract regression testlari bilan almashtirildi.
+  - [tests/conftest.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/conftest.py), [pytest.ini](/Users/mac/Documents/projects/JIRA-AI-Analyzer/pytest.ini)
+    - DB ishlatmaydigan unit testlar uchun `no_db` marker qo'shildi; bu marker umumiy DB setup fixture'larini bypass qiladi.
+- Verification:
+  - `./.venv/bin/python -m py_compile services/checkers/tzpr_multi_agent.py services/checkers/tzpr_agents/agent1.py services/checkers/tzpr_agents/agent2.py services/checkers/tzpr_agents/agent3.py services/checkers/tzpr_agents/common.py scripts/debug_tzpr_input_context.py services/checkers/tz_pr_checker.py tests/test_tzpr_multi_agent.py tests/conftest.py` ✅
+  - `./.venv/bin/pytest -q tests/test_tzpr_multi_agent.py` (`7 passed`) ✅
+  - Runtime service/scriptlarda `source_pack`, fallback requirement, TZ candidate parser, coverage threshold va eski source metadata izlari qolmagani `rg` bilan tekshirildi ✅
+
+#### 2026-05-18 - Multi-agent checker agent kodlari alohida modullarga ajratildi
+
+- Roadmap bog'lanishi:
+  - Stage 2 - Target Architecture
+  - Stage 10 - Core Feature Stabilization
+- O'zgarish:
+  - [services/checkers/tzpr_agents/agent1.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_agents/agent1.py)
+    - Agent1 prompt, response schema, JSON recovery, requirement normalize/validate/merge helperlari alohida modulga ko'chirildi.
+  - [services/checkers/tzpr_agents/agent2.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_agents/agent2.py)
+    - Agent2 prompt, response schema, verification normalizer va verifier fallback alohida modulga ko'chirildi.
+  - [services/checkers/tzpr_agents/agent3.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_agents/agent3.py)
+    - Agent3 prompt, response schema, arbiter decision normalize, quality artifact va fallback arbiter alohida modulga ko'chirildi.
+  - [services/checkers/tzpr_agents/common.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_agents/common.py)
+    - Agentlar ishlatadigan JSON parse helperlari umumiy modulga ajratildi.
+  - [services/checkers/tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_multi_agent.py)
+    - Orchestrator fayldan agent prompt/schema/normalizer/fallback bloklari olib tashlandi.
+    - Eski private importlar uchun compatibility aliaslar qoldirildi, lekin runtime yangi agent modullarini chaqiradi.
+- Verification:
+  - `./.venv/bin/python -m py_compile services/checkers/tzpr_multi_agent.py services/checkers/tzpr_agents/agent1.py services/checkers/tzpr_agents/agent2.py services/checkers/tzpr_agents/agent3.py services/checkers/tzpr_agents/common.py tests/test_tzpr_multi_agent.py` ✅
+  - Manual compatibility import check ✅
+  - `./.venv/bin/python scripts/debug_tzpr_input_context.py --task-key DEV-8358 --user-id 160 --company-id 329 --execution-mode multi_agent` ✅
+  - DEV-8358 debugda Agent1 input keys hali ham faqat `filtered_tz`, `filtered_comments`, `filtered_figma_text` ✅
+
+#### 2026-05-18 - Agent1 system prompt vazifa formatida qayta yozildi
+
+- Roadmap bog'lanishi:
+  - Stage 2 - Target Architecture
+  - Stage 10 - Core Feature Stabilization
+- O'zgarish:
+  - [services/checkers/tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_multi_agent.py)
+    - Agent1 prompti taqiq/guardrail uslubidan vazifa/spec uslubiga o'tkazildi.
+    - Prompt Agent1 oladigan source'larni, ish tartibini, talabni ajratish mezonini, merge qoidalarini va JSON contractni o'zbek tilida tushuntiradi.
+    - Agent1 ko'rmaydigan PR/code/verdict/compliance mavzulari promptdan chiqarildi.
+- Verification:
+  - `./.venv/bin/python -m py_compile services/checkers/tzpr_multi_agent.py` ✅
+  - Manual prompt check: `Vazifa:` va `Ish tartibi:` bloklari bor ✅
+
+#### 2026-05-18 - Agent1 eski static coverage/backfill helperlari olib tashlandi
+
+- Roadmap bog'lanishi:
+  - Stage 2 - Target Architecture
+  - Stage 10 - Core Feature Stabilization
+- O'zgarish:
+  - [services/checkers/tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_multi_agent.py)
+    - Eski Agent1 candidate coverage/backfill oqimidan qolgan `_agent1_text_has_obligation_or_outcome`, `_agent1_text_mentions_validation`, `_check_agent1_coverage`, `_complete_agent1_requirement_inventory` va bog'liq helperlar olib tashlandi.
+    - `_refine_agent1_requirements` endi model qaytargan `tz_talablar`ni normalizatsiya/renumber qiladi; Checker tomonidan TZ candidate backfill qilmaydi.
+    - Agent1 extraction javobgarligi yana model contractiga qaytarildi; Checker semantic talab qo'shmaydi.
+- Verification:
+  - `./.venv/bin/python -m py_compile services/checkers/tzpr_multi_agent.py tests/test_tzpr_multi_agent.py` ✅
+  - `./.venv/bin/pytest -q tests/test_tzpr_multi_agent.py` eski multi-agent test expectationlari sabab yiqildi: testlar hali `untrusted_comment_signals`, `figma_scope_enabled`, coverage re-prompt/backfill kabi olib tashlangan legacy contractlarni kutyapti.
+
+#### 2026-05-18 - Agent1 vazifasi va output contracti Uzbek sanitized-only formatga o'tkazildi
+
+- Roadmap bog'lanishi:
+  - Stage 2 - Target Architecture
+  - Stage 10 - Core Feature Stabilization
+  - Stage 13 - Testing va Release Quality
+- O'zgarish:
+  - [services/checkers/tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_multi_agent.py)
+    - Agent1 prompti to'liq o'zbekcha vazifa bilan qayta yozildi: Agent1 faqat requirement extraction/merge qiladi.
+    - Agent1 promptidan `TASK SUMMARY`, `SOURCE_METADATA`, candidate/coverage va untrusted signal bloklari chiqarildi.
+    - Agent1 inputi runtime'da faqat `filtered_tz`, `filtered_comments`, `filtered_figma_text` keylari bilan tasdiqlandi.
+    - Agent1 response schema va persisted artifact yangi contractga moslandi: `tz_talablar`, `comment_talablar`, `figma_talablar`, `warnings`.
+    - `tz_talablar` artifacti public contract formatida saqlanadi: `requirement_id`, `requirement_text`, `source_kind`, `scope_change_type`, `source_refs`.
+    - Agent3 promptidan eski untrusted comment signal bloki olib tashlandi; Checker filter qarorlari Agentlarga qayta uzatilmaydi.
+- Verification:
+  - `./.venv/bin/python -m py_compile services/checkers/tzpr_multi_agent.py` ✅
+  - Manual Agent1 prompt check: `TASK SUMMARY`, `SOURCE_METADATA`, `section_groups` yo'q ✅
+  - `./.venv/bin/python scripts/debug_tzpr_input_context.py --task-key DEV-8358 --user-id 160 --company-id 329 --execution-mode multi_agent` ✅
+  - DEV-8358 debugda `agent1_input` keys: `filtered_tz`, `filtered_comments`, `filtered_figma_text`; extra key yo'q ✅
+
+#### 2026-05-18 - Multi-agent checker qoidalari hujjatlashtirildi
+
+- Roadmap bog'lanishi:
+  - Stage 2 - Target Architecture
+  - Stage 10 - Core Feature Stabilization
+  - Stage 13 - Testing va Release Quality
+- O'zgarish:
+  - [docs/MULTI_AGENT_CHECKER_RULES.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/docs/MULTI_AGENT_CHECKER_RULES.md)
+    - Checker, Agent1, Agent2 va Agent3 mas'uliyatlari alohida runtime contract sifatida yozildi.
+    - Preflight, sanitized Agent1 input, strict Agent2 `completed/failed` status modeli, Agent3 quality control va Checker score hisoblash qoidalari belgilandi.
+    - `partial`, `unknown`, `unverified`, `confidence` yangi Agent2 contractida ishlatilmasligi va webhook auto-return hozircha scope tashqarida ekani qayd etildi.
+- Verification:
+  - Markdown hujjat workspace ichida yaratildi va tekshirildi.
+
+#### 2026-05-18 - Multi-agent checker legacy contract qoldiqlari tozalandi
+
+- Roadmap bog'lanishi:
+  - Stage 10 - Core Feature Stabilization
+  - Stage 13 - Testing va Release Quality
+- O'zgarish:
+  - [services/checkers/tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_multi_agent.py)
+    - Multi-agent final result va Agent1-only resultdan eski `partial` analysis section olib tashlandi.
+    - Agent1/Agent2/Agent3 run artifactlarida `confidence` hisoblash va saqlash oqimi to'xtatildi.
+    - Agent2 missing verificationlarni Checker avtomatik yamaydigan eski helper olib tashlandi; endi bu holatni Agent3 contract gap sifatida aniqlaydi.
+  - [frontend/src/lib/tzpr-sections.ts](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/lib/tzpr-sections.ts), [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx), [frontend/src/lib/mock-tzpr-result.ts](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/lib/mock-tzpr-result.ts)
+    - UI visible sectionlardan `partial` olib tashlandi; qisman bajarilgan holatlar endi `failed` sifatida ko'rsatiladi.
+    - Agent inventory va agent run kartalaridan confidence badge'lari olib tashlandi.
+    - Mock checker result strict `completed/failed` status modeliga moslandi.
+- Verification:
+  - `./.venv/bin/python -m py_compile services/checkers/tzpr_multi_agent.py tests/test_tzpr_multi_agent.py tests/test_tzpr_ui_contract.py`
+  - `./.venv/bin/pytest -q tests/test_tzpr_multi_agent.py tests/test_tzpr_ui_contract.py -q` (`63 passed`)
+  - `cd frontend && npm run typecheck`
+
+#### 2026-05-18 - Multi-agent checker rollari qat'iy contractga ajratildi
+
+- Roadmap bog'lanishi:
+  - Stage 10 - Core Feature Stabilization
+  - Stage 13 - Testing va Release Quality
+- O'zgarish:
+  - [services/checkers/tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_multi_agent.py)
+    - Checker Agent1'dan oldin sanitized input tayyorlaydigan bo'ldi: trusted comment, AI comment filtering va Figma policy Agent1 tashqarisida tugaydi.
+    - Agent1 faqat filtered TZ/comment/Figma source'lardan requirement inventory ajratadi; raw task/comment/Figma/settings policy promptga kirmaydi.
+    - Agent2 contracti strict `completed/failed` modelga o'tdi; `partial`, `unknown`, `unverified`, `confidence` verificationdan olib tashlandi.
+    - Agent3 Agent2 output contractini audit qiladi, missing/invalid verificationlarni `blocked` holatga chiqaradi va score uchun countlarni qaytaradi.
+    - Checker compliance score'ni `completed_count / total_requirements * 100` formulasi bilan deterministic hisoblaydi.
+  - [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx), [frontend/src/lib/types.ts](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/lib/types.ts)
+    - Agent1 inventory kartalarida Agent2 verification status/evidence ko'rinadigan qilindi.
+    - Frontend tiplari strict Agent2/Agent3 artifactlariga moslashtirildi.
+  - [tests/test_tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_multi_agent.py)
+    - Sanitized Agent1 input, strict Agent2 failed fallback/normalization va Agent3 missing verification gate uchun regression testlar qo'shildi.
+- Verification:
+  - `./.venv/bin/python -m py_compile services/checkers/tzpr_multi_agent.py`
+  - `./.venv/bin/pytest -q tests/test_tzpr_multi_agent.py tests/test_tzpr_ui_contract.py -q` (`63 passed`)
+  - `cd frontend && npm run typecheck`
+
+#### 2026-05-17 - Agent1 natijalari run davomida UI kartaga bog'landi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI: checker natijalari foydalanuvchiga real vaqtda ko'rinishi
+  - Stage 10 - Core Feature Stabilization
+- O'zgarish:
+  - [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx)
+    - Agent1 inventory endi faqat final `result.requirement_inventory`dan emas, `activeRun.agent_runs[].artifact.requirements`dan ham olinadi.
+    - Mavjud Agent1 inventory card component sifatida ajratildi va run hali yakunlanmagan holatda ham Agent1 tugashi bilan ko'rinadigan qilindi.
+    - Final result kelganda eski final result oqimi saqlanadi.
+- Verification:
+  - `cd frontend && npm run typecheck`
+
+#### 2026-05-17 - AI data orderdan Figma signalini UI orqali o'chirish yoqildi
+
+- Roadmap bog'lanishi:
+  - Stage 4 - Multi-Tenant Isolation: tenant/module settings har kompaniyada umumiy policy sifatida ishlashi
+  - Stage 9 - Product UX/UI: checker settinglari real boshqariladigan bo'lishi
+  - Stage 10 - Core Feature Stabilization
+- O'zgarish:
+  - [frontend/src/components/settings/base-card-system.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/settings/base-card-system.tsx)
+    - `BaseOrderPills` faqat drag/reorder emas, optional itemlarni olib tashlash va qayta qo'shishni ham qo'llaydi.
+    - Required itemlar (`tz`, `code` checkerda; `tz` testcase generatorida) UI orqali o'chirilmaydigan qilindi.
+  - [frontend/src/components/settings-panel.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/settings-panel.tsx)
+    - Checker AI data orderida `figma` optional bo'ldi; olib tashlansa Agent1 Figma signalni requirementga aylantirmasligi haqida xabar ko'rinadi.
+  - [frontend/src/app/globals.css](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/app/globals.css)
+    - Order pilllarda remove/add kontrollari uchun style qo'shildi.
+- Verification:
+  - `cd frontend && npm run typecheck`
+
+#### 2026-05-17 - Agent1 coverage policy 100% re-promptga o'tkazildi
+
+- Roadmap bog'lanishi:
+  - Stage 10 - Core Feature Stabilization
+  - Stage 13 - Testing va Release Quality
+- O'zgarish:
+  - [config/app_settings.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/config/app_settings.py)
+    - `agent1_coverage_threshold` default qiymati `1.0` qilindi.
+  - [services/checkers/tz_pr_checker.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tz_pr_checker.py)
+    - Agent1 coverage threshold fallback qiymati ham `1.0` bo'ldi.
+  - [services/checkers/tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_multi_agent.py)
+    - `Agent1RulesConfig.coverage_threshold` default qiymati `1.0` bo'ldi.
+    - Section low coverage hisobida ham real threshold ishlatiladi.
+  - [tests/test_tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_multi_agent.py), [tests/test_tzpr_ui_contract.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_ui_contract.py)
+    - Eski `80%+ bo'lsa re-prompt shart emas` kutilmasi olib tashlandi; 100%dan past coverage re-prompt qilishi test bilan tasdiqlandi.
+- Verification:
+  - `./.venv/bin/python -m py_compile services/checkers/tzpr_multi_agent.py services/checkers/tz_pr_checker.py config/app_settings.py tests/test_tzpr_multi_agent.py tests/test_tzpr_ui_contract.py`
+  - `./.venv/bin/pytest -q tests/test_tzpr_multi_agent.py tests/test_tzpr_ui_contract.py -q` (`59 passed`)
+
+#### 2026-05-17 - Agent1 Figma va comment policy mavjud checker settinglarga bog'landi
+
+- Roadmap bog'lanishi:
+  - Stage 4 - Multi-Tenant Isolation: tenant/user module settings orqali policy ajratish
+  - Stage 9 - Product UX/UI: mavjud settings panel bilan boshqarish
+  - Stage 10 - Core Feature Stabilization
+  - Stage 13 - Testing va Release Quality
+- O'zgarish:
+  - [services/checkers/tz_pr_checker.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tz_pr_checker.py)
+    - Agent1 Figma policy endi alohida fielddan emas, `ai_data_section_order` ichida `figma` bor-yo'qligidan olinadi
+    - `figma` olib tashlansa `effective_settings.agent1_rules.figma_scope_enabled=false` bo'ladi
+  - [services/checkers/tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_multi_agent.py)
+    - Figma scope o'chirilgan va taskda Figma signal bor bo'lsa, Agent1 warning chiqaradi
+    - Comment oqimi mavjud `read_comments_enabled`, `max_comments_to_read` va `trusted_scope_comment_authors` bilan ishlaydi: trusted author requirementni o'zgartiradi, boshqalar faqat untrusted signal bo'ladi
+    - Coverage re-prompt logi ham qattiq `60%` matndan emas, real `agent1_coverage_threshold` qiymatidan foydalanadi
+  - [config/app_settings.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/config/app_settings.py)
+    - Alohida `agent1_figma_scope_enabled` field olib tashlandi; eski settings faylda qolgan bo'lsa loader ignore qiladi
+  - [frontend/src/components/settings-panel.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/settings-panel.tsx)
+    - Checker `AI ga ma'lumotlar darajasi` ichidan `figma` olib tashlansa, Agent1 Figma signalni requirementga aylantirmasligi haqida xabar ko'rsatiladi
+  - [tests/test_tzpr_ui_contract.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_ui_contract.py)
+    - Agent1 Figma scope `ai_data_section_order`ga bog'langani regression test bilan yopildi
+- Verification:
+  - `./.venv/bin/python -m py_compile services/checkers/tzpr_multi_agent.py services/checkers/tz_pr_checker.py config/app_settings.py tests/test_tzpr_multi_agent.py tests/test_tzpr_ui_contract.py`
+  - `./.venv/bin/pytest -q tests/test_tzpr_multi_agent.py tests/test_tzpr_ui_contract.py -q` (`59 passed`)
+  - `cd frontend && npm run typecheck`
+
+#### 2026-05-17 - Agent1 SaaS-ready generic rule modelga soddalashtirildi
+
+- Roadmap bog'lanishi:
+  - Stage 0 - Foundation Audit: global va tenantga xos sozlamalarni ajratish
+  - Stage 4 - Multi-Tenant Isolation: yangi tenantlar default policy bilan ishlashi
+  - Stage 10 - Core Feature Stabilization
+  - Stage 13 - Testing va Release Quality
+- O'zgarish:
+  - [config/app_settings.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/config/app_settings.py)
+    - Agent1 uchun faqat SaaS-level product policy qoldirildi: Figma policy mavjud `ai_data_section_order` orqali, coverage policy esa `agent1_coverage_threshold` orqali boshqariladi
+    - Company/domain phrase markerlarni har tenant uchun sozlash talabi olib tashlandi
+  - [services/checkers/tz_pr_checker.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tz_pr_checker.py)
+    - `effective_settings.agent1_rules` payloadi faqat Figma policy va coverage thresholdni uzatadi
+  - [services/checkers/tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_multi_agent.py)
+    - Agent1 uchun minimal `Agent1RulesConfig` qo'shildi
+    - `AGENT1_FIGMA_SCOPE_ENABLED` kabi kod ichidagi doimiy flag olib tashlandi
+    - Domain/taskga o'xshash markerlar engine kodidan olib tashlandi; `rg` bilan `Cislink`, `tpparent`, `shablon`, `KPI`, `client_plan`, `DEV-*` kabi task-specific markerlar qolmagani tekshirildi
+    - Coverage auditor endi company-specific phrase listga emas, TZ section va umumiy obligation/outcome signallariga tayanadi
+  - [tests/test_tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_multi_agent.py)
+    - Agent1 Figma policy, coverage regressionlari va effective settingsdan minimal rule o'qilishi test bilan saqlandi
+- Verification:
+  - `./.venv/bin/pytest -q tests/test_tzpr_multi_agent.py -q` (`42 passed`)
+  - `./.venv/bin/python -m py_compile services/checkers/tzpr_multi_agent.py services/checkers/tz_pr_checker.py config/app_settings.py tests/test_tzpr_multi_agent.py`
+  - `./.venv/bin/pytest -q tests/test_tzpr_ui_contract.py -q` (`16 passed`)
+  - `rg -n "shablon|parametrlarni kiritadi|client_plan|Cislink|tpparent|KPI|DEV-[0-9]+|Vazifaning maqsadi|TASK nomi|goal_context_markers|context_heading_markers|use_case_action|dod_process_markers|validation_markers" services/checkers/tzpr_multi_agent.py config/app_settings.py services/checkers/tz_pr_checker.py`
+
+#### 2026-05-17 - Agent1 requirement extractionda Figma vaqtincha o'chirildi
+
+- Roadmap bog'lanishi:
+  - Stage 10 - Core Feature Stabilization
+  - Stage 13 - Testing va Release Quality
+- O'zgarish:
+  - [services/checkers/tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_multi_agent.py)
+    - Agent1 uchun `AGENT1_FIGMA_SCOPE_ENABLED = False` flag qo'shildi
+    - Figma text/comment signal endi Agent1 promptidagi candidate inputga kirmaydi
+    - Model yoki fallback Figma source requirement qaytarsa ham post-processing ularni final inventorydan chiqarib tashlaydi
+    - Source stats ichida `figma_scope_enabled=false` saqlanadi, discarded previewda Figma hozircha ignore qilingani ko'rinadi
+    - Final resultdagi Figma evidence bo'limi alohida ko'rinishi mumkin, lekin Agent1 requirement scope/coverage/re-promptga aralashmaydi
+  - [tests/test_tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_multi_agent.py)
+    - Figma candidate promptga o'tmasligi, fallback Figma requirement chiqarmasligi va model qaytargan Figma requirementlar drop bo'lishi regression testlar bilan yopildi
+- Verification:
+  - `./.venv/bin/pytest -q tests/test_tzpr_multi_agent.py -q` (`41 passed`)
+  - `./.venv/bin/python -m py_compile services/checkers/tzpr_multi_agent.py tests/test_tzpr_multi_agent.py`
+  - `./.venv/bin/pytest -q tests/test_tzpr_ui_contract.py -q` (`16 passed`)
+
+#### 2026-05-17 - Agent1 DEV-8275 retest coverage shovqini yopildi
+
+- Roadmap bog'lanishi:
+  - Stage 10 - Core Feature Stabilization
+  - Stage 13 - Testing va Release Quality
+- O'zgarish:
+  - [services/checkers/tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_multi_agent.py)
+    - Uzbek `Vazifaning maqsadi` benefit satrlari va `Use Case` action steplari endi coverage auditorida majburiy requirement deb sanalmaydi
+    - `TASK nomi` sarlavhasi ostidagi title va menu path kabi navigatsion context re-prompt trigger qilmaydi
+    - `source_kind/source_section/scope_change_type` normalization xabarlari user-facing warninglardan yashirildi
+    - DEV-8275 retest payloadi lokal qayta hisoblanganda coverage `100%`, `needs_reprompt=False`, uncovered item `0` bo'ldi
+  - [tests/test_tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_multi_agent.py)
+    - Uzbek goal/use-case context coverage false-positive va schema-normalization warning filtering uchun regression testlar qo'shildi
+- Verification:
+  - `./.venv/bin/pytest -q tests/test_tzpr_multi_agent.py -q` (`41 passed`)
+  - `./.venv/bin/python -m py_compile services/checkers/tzpr_multi_agent.py tests/test_tzpr_multi_agent.py`
+  - `./.venv/bin/pytest -q tests/test_tzpr_ui_contract.py -q` (`16 passed`)
+
+#### 2026-05-17 - Agent1 retest kamchiliklari tuzatildi
+
+- Roadmap bog'lanishi:
+  - Stage 10 - Core Feature Stabilization
+  - Stage 13 - Testing va Release Quality
+- O'zgarish:
+  - [services/checkers/tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_multi_agent.py)
+    - Coverage auditor Figma linklari, Figma unavailable izohi, umumiy maqsad matni, user action step va DoR/DoD process itemlarni requirement sifatida missing deb sanamaydi
+    - TZda aniq yozilgan `Валидация ... работает корректно` kabi validation talabi modeldan tushib qolsa, Agent1 deterministic backfill orqali requirementga qo'shadi
+    - Coverage re-promptdan kelgan semantic duplicate requirementlar endi mavjud inventoryga qo'shilmaydi
+    - Russian/Uzbek token similarity bo'shliqlarni yo'qotib yubormaydigan qilindi, shuning uchun coverage va duplicate detection real matnga yaxshiroq ishlaydi
+  - [tests/test_tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_multi_agent.py)
+    - validation backfill, DEV-8198ga o'xshash coverage false-positive va re-prompt duplicate uchun regression testlar qo'shildi
+- Verification:
+  - `./.venv/bin/pytest -q tests/test_tzpr_multi_agent.py -q` (`39 passed`)
+  - `./.venv/bin/python -m py_compile services/checkers/tzpr_multi_agent.py tests/test_tzpr_multi_agent.py`
+  - `./.venv/bin/pytest -q tests/test_tzpr_ui_contract.py -q` (`16 passed`)
+
+#### 2026-05-17 - Agent1 retestdan keyingi AC heading va coverage fixlari qo'shildi
+
+- Roadmap bog'lanishi:
+  - Stage 10 - Core Feature Stabilization
+  - Stage 13 - Testing va Release Quality
+- O'zgarish:
+  - [services/checkers/tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_multi_agent.py)
+    - `h4. ✔️ AC`, `АС`, `AC`, `AC-1` kabi symbolic Acceptance Criteria headinglar endi `acceptance` section sifatida taniladi
+    - Coverage auditor context-only user action step, user story/problem/actual-result signal va DoD process itemlarni missing requirement deb sanamaydi
+    - Coverage source refs, source id va yumshatilgan semantic similarity orqali requirementlar bilan yaxshiroq match qiladi
+  - [tests/test_tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_multi_agent.py)
+    - DoDdan keyin kelgan `✔️ AC` sectioni acceptance bo'lib qolishi uchun regression test qo'shildi
+    - Use case user action va DoD process itemlari coverage re-promptni keraksiz trigger qilmasligi test bilan yopildi
+- Verification:
+  - `./.venv/bin/python -m py_compile services/checkers/tzpr_multi_agent.py tests/test_tzpr_multi_agent.py`
+  - `./.venv/bin/pytest -q tests/test_tzpr_multi_agent.py -q` (`36 passed`)
+  - `./.venv/bin/pytest -q tests/test_tzpr_ui_contract.py -q` (`16 passed`)
+
+#### 2026-05-17 - Agent1 Scope Builder P0 contractlari yakunlandi
+
+- Roadmap bog'lanishi:
+  - Stage 10 - Core Feature Stabilization
+  - Stage 11 - Jobs, Queue va Reliability
+  - Stage 13 - Testing va Release Quality
+- O'zgarish:
+  - [services/checkers/tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_multi_agent.py)
+    - Agent1 trusted comment policy prod-safe qilindi: assignee endi avtomatik trusted scope author emas; faqat `trusted_scope_comment_authors` ro'yxatidagi author commentidan requirement chiqadi
+    - Agent1 source pack `read_comments_enabled` va `max_comments_to_read` settinglariga amal qiladigan bo'ldi
+    - Requirement contract `source_refs[]` bilan kengaytirildi: har REQ source id, source type, quote, section, subsection, heading path, author/frame metadata bilan audit qilinadi
+    - `requirement_type` canonical qilindi: `acceptance_criterion`, `business_rule`, `definition_of_done`, `use_case_behavior`, `bug_expected_behavior`, `bug_actual_symptom`, `ui_requirement`, `api_requirement`, `data_requirement`, `comment_scope_change`, `design_requirement`
+    - Figma availability status qo'shildi: `not_linked`, `usable`, `unusable`, `explicitly_unavailable`, `jira_says_unavailable_but_signals_present`
+    - JIRA description/comment ichida `Figma недоступна` kabi aniq unavailable signali bor va real usable Figma data yo'q bo'lsa, Agent1 Figma signalni requirementga aylantirmaydi
+    - Agent1 artifact endi `figma_access_status` ni saqlaydi, prompt esa Figma statusni modelga ochiq beradi
+  - [tests/test_tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_multi_agent.py)
+    - assignee auto-trust bloklanishi, comment settinglari, `source_refs`, `requirement_type` canonicalization va Figma unavailable handling uchun regression testlar qo'shildi
+- Verification:
+  - `./.venv/bin/python -m py_compile services/checkers/tzpr_multi_agent.py tests/test_tzpr_multi_agent.py`
+  - `./.venv/bin/pytest -q tests/test_tzpr_multi_agent.py -q` (`34 passed`)
+  - `./.venv/bin/pytest -q tests/test_tzpr_ui_contract.py -q` (`16 passed`)
+
+#### 2026-05-17 - Agent1 scope builder P0 production-safety fixlari boshlandi
+
+- Roadmap bog'lanishi:
+  - Stage 10 - Core Feature Stabilization
+  - Stage 11 - Jobs, Queue va Reliability
+  - Stage 13 - Testing va Release Quality
+- O'zgarish:
+  - [services/checkers/tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_multi_agent.py)
+    - Agent1 requirement schema `source_id`, `source_subsection`, `source_heading_path`, `requirement_type` maydonlari bilan kengaytirildi
+    - TZ source extraction parent sectionni saqlaydigan qilindi: Acceptance Criteria ichidagi `Хранение`, `Импорт`, `Mobile` kabi subheadinglar endi parent `acceptance` ostida qoladi
+    - `Конкретные изменения по PR`, `Implementation summary`, `Реализация по PR` kabi post-implementation note'lar requirement candidate sifatida o'tmaydigan qilindi
+    - coverage hisoblash section-countdan excerpt/source similarity asosiga o'tkazildi, yolg'on past coverage va keraksiz reprompt kamaytirildi
+    - Agent1 validator `source_kind`, `source_section`, `scope_change_type`, `source_excerpt` ni canonical contractga normalizatsiya qiladi va source metadata bilan boyitadi
+    - coverage re-prompt parse yiqilganda AI JSON fix + partial recovery yo'li qo'shildi
+    - fallback inventory endi TZ/Figma/comment source section metadata bilan requirement yaratadi
+  - [tests/test_tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_multi_agent.py)
+    - Acceptance subheading parent label saqlanishi, implementation note skip, schema normalization va excerpt-based coverage uchun regression testlar qo'shildi
+- Verification:
+  - `./.venv/bin/python -m py_compile services/checkers/tzpr_multi_agent.py`
+  - `./.venv/bin/pytest -q tests/test_tzpr_multi_agent.py -q`
+  - `./.venv/bin/pytest -q tests/test_tzpr_ui_contract.py -q`
+  - Izoh: `tests/test_tzpr_stabilization.py` auth DB fixture Postgres DSN bo'sh bo'lgani uchun setupda yiqildi; Agent1 patchiga aloqador regression topilmadi
+
+#### 2026-05-17 - Multi-agent checker rebuild spec tayyorlandi
+
+- Roadmap bog'lanishi:
+  - Stage 2 - Target Architecture
+  - Stage 4 - Multi-Tenant Isolation
+  - Stage 9 - Product UX/UI
+- O'zgarish:
+  - [docs/MULTI_AGENT_CHECKER_REBUILD_SPEC.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/docs/MULTI_AGENT_CHECKER_REBUILD_SPEC.md) qo'shildi
+    - prod-level multi-agent checker uchun rebuild maqsadi, non-goals va no-hardcode qoidalari yozildi
+    - deterministic `Source Normalizer`, Agent1/Agent2/Agent3 va ixtiyoriy Agent4 rollari ajratildi
+    - har agent uchun input/output contract, qoidalar, validatorlar va failure mode'lar belgilandi
+    - `Source -> Requirement -> Evidence -> QA Decision -> Actionable Feedback` formulasi asosiy product contract sifatida qayd etildi
+- Verification:
+  - hujjat o'zgarishi, test ishga tushirilmadi
+
+#### 2026-05-13 - Agent1 bug-task atomic split va auto-generated checker comment filtering kuchaytirildi
+
+- Roadmap bog'lanishi:
+  - Stage 10 - Core Feature Stabilization
+  - Stage 13 - Testing va Release Quality
+- O'zgarish:
+  - [services/checkers/tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_multi_agent.py)
+    - Agent1 promptiga bug-tasklar uchun alohida qoida qo'shildi: `Фактический результат / Ожидаемый результат` va bir nechta symptom bo'lsa, ularni alohida atomic requirementlarga ajratish kerak
+    - model `1 ta umbrella requirement` qaytargan bug tasklarda post-processing refinement qo'shildi
+    - `DEV-7172`ga o'xshash holatlarda endi `available list`, `save binding`, `attach paid modules` va `business rule` signallari alohida requirementlarga maydalanadi
+    - requirement normalization ichida `source_author="None"` kabi servis qiymatlari bo'sh stringga normalize qilinadigan bo'ldi
+    - dedupe kaliti toraytirildi, shu sabab bir xil source excerptdan kelgan lekin turli verifiable expectation bo'lgan requirementlar endi bir-birini bosib yubormaydi
+    - Agent1 source pack comment yig'ishda `CommentSeparator.is_ai_comment()` ishlatadigan qilindi, shuning uchun auto-generated checker/testcase commentlar untrusted signal sifatida ham kirmaydi
+  - [core/tz_helper.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/core/tz_helper.py)
+    - `[AI_S1]/[AI_S2]` markerlarsiz kelgan auto-generated QA report/testcase commentlarini aniqlash uchun content-based filter qo'shildi
+    - `Avtomatik TZ-PR Moslik Tekshiruvi`, `Avtomatik Test Case'lar`, `Bu komment AI tomonidan avtomatik yaratilgan` kabi commentlar endi human scope-change sifatida sanalmaydi
+  - [tests/test_tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_multi_agent.py), [tests/test_tzpr_ui_contract.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_ui_contract.py)
+    - bug-task umbrella requirement split bo'yicha regression test qo'shildi
+    - markerlarsiz auto-generated checker commentlar filter bo'lishi bo'yicha regression test qo'shildi
+- Verification:
+  - `./.venv/bin/python -m py_compile services/checkers/tzpr_multi_agent.py core/tz_helper.py tests/test_tzpr_multi_agent.py tests/test_tzpr_ui_contract.py`
+  - `./.venv/bin/pytest -q tests/test_tzpr_multi_agent.py tests/test_tzpr_ui_contract.py`
+  - natija: muvaffaqiyatli
+
+#### 2026-05-13 - Agent1 partial JSON recovery, context-aware Figma filtering va smarter fallback bilan kuchaytirildi
+
+- Roadmap bog'lanishi:
+  - Stage 10 - Core Feature Stabilization
+  - Stage 11 - Jobs, Queue va Reliability
+- O'zgarish:
+  - [services/checkers/tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_multi_agent.py)
+    - Agent1 parse bosqichida endi to'liq `heuristic_fallback`ga tushishdan oldin raw model outputdan partial JSON recover qilish qo'shildi
+    - structured parse yiqilganda, valid requirement objectlar raw javob ichidan deterministic tarzda yig'ilib `recovered_json` mode bilan saqlanadigan bo'ldi
+    - Figma signal filtering context-aware qilindi: task summary va TZ requirement contextidan kelib chiqib taskga aloqasiz Figma commentlar chiqarib tashlanadi
+    - `комментарий / koment / comment` kabi aralash til variantlari bir xil feature signal sifatida taniladigan relevance gate qo'shildi
+    - TZ parser parent + child bullet bloklarni birlashtirib, `Для каждой строки ... указывает Товар, План, Комментарий` kabi foydaliroq candidate yasaydigan bo'ldi
+    - fallback inventory endi incomplete scenario fragmentlarni (`При создании заказа`, `... указывает`) requirement sifatida ko'r-ko'rona saqlamaydi
+  - [tests/test_tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_multi_agent.py)
+    - partial JSON recovery, context-aware Figma filtering va merged TZ list-block behavior bo'yicha regression testlar qo'shildi
+- Verification:
+  - `./.venv/bin/python -m py_compile services/checkers/tzpr_multi_agent.py tests/test_tzpr_multi_agent.py`
+  - `./.venv/bin/pytest -q tests/test_tzpr_multi_agent.py`
+  - natija: muvaffaqiyatli
+
+#### 2026-05-13 - Agent1 source preprocessing, structured JSON va debug observability chuqurlashtirildi
+
+- Roadmap bog'lanishi:
+  - Stage 10 - Core Feature Stabilization
+  - Stage 11 - Jobs, Queue va Reliability
+- O'zgarish:
+  - [services/checkers/tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_multi_agent.py)
+    - Agent1 uchun shared `source pack` qo'shildi: TZ candidate, trusted/untrusted comment split, Figma text/comment signal va discarded noisy satrlar alohida yig'iladi
+    - Agent1 prompti endi xom `description` va xom Figma summary o'rniga tozalangan candidate input bilan quriladi
+    - fallback extractor raw uzun satrlarni kesib olish o'rniga shu shared source pack'dan requirement inventory yig'adigan qilindi
+    - Figma metadata (`FRAME'LAR`, `Size:`, `Modified`, separatorlar) va user story fragmentlari requirement inventory'ga tushmaydigan bo'ldi
+    - Agent1 JSON parse oqimi `model_json / recovered_json / heuristic_fallback` parse mode bilan ajratiladi, raw model excerpt va source stats artifact ichida saqlanadi
+    - agent1 event artifact preview'i endi parse mode, source stats va discarded countni ko'rsatadi
+  - [utils/ai/gemini_helper.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/utils/ai/gemini_helper.py)
+    - `GeminiHelper.analyze()` ga `generation_config_overrides` qo'shildi
+    - Agent1 structured output uchun `response_mime_type=application/json` va `response_schema` yuborish imkoni paydo bo'ldi
+  - [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx), [frontend/src/lib/types.ts](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/lib/types.ts)
+    - `Agent1 inventory` kartasi parse mode badge, source stats, input candidate preview, untrusted comment signal, discarded example va raw model excerpt bilan kengaytirildi
+  - [tests/test_tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_multi_agent.py)
+    - source pack filtering, structured JSON mode, recovered JSON mode va heuristic fallback bo'yicha regression testlar qo'shildi
+- Verification:
+  - `./.venv/bin/python -m py_compile services/checkers/tzpr_multi_agent.py utils/ai/gemini_helper.py tests/test_tzpr_multi_agent.py`
+  - `./.venv/bin/pytest -q tests/test_tzpr_multi_agent.py`
+  - `./.venv/bin/pytest -q tests/test_tzpr_runs_api.py tests/test_tzpr_ui_contract.py`
+  - `cd frontend && npm run typecheck`
+  - natija: muvaffaqiyatli
+
+#### 2026-05-13 - Multi-agent checker final result bo'limlari arbiter decisionlardan to'g'ridan-to'g'ri quriladigan qilindi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+  - Stage 10 - Core Feature Stabilization
+  - Stage 11 - Jobs, Queue va Reliability
+- O'zgarish:
+  - [services/checkers/tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_multi_agent.py)
+    - multi-agent final result uchun `analysis_sections` endi placeholder AI matndan parse qilinmaydi, balki `agent3.final_decisions` asosida bevosita yig'iladi
+    - `completed/partial/failed` bo'limlari bo'sh holatda endi `Bajarilgan talab topilmadi` kabi sun'iy itemlar yaratmaydi
+    - `issues` bo'limida `unknown/manual_review` decisionlar agregatsiya qilingan signal sifatida ko'rsatiladi
+    - `analysis_overview.section_counts` va `qa_recommendation` endi shu to'g'ridan-to'g'ri section snapshot bilan mos holatda quriladi
+    - final narrative matnda ham placeholder requirement satrlari olib tashlandi, requirement matrix parser uchun esa decisionlardan stabil inline item format ishlatiladi
+  - [tests/test_tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_multi_agent.py)
+    - `manual_review + barcha decision unknown` holatida completed/partial/failed sectionlar bo'sh qolishi va requirement matrix placeholder qatorlar bilan ifloslanmasligi bo'yicha regression test qo'shildi
+- Verification:
+  - `./.venv/bin/python -m py_compile services/checkers/tzpr_multi_agent.py tests/test_tzpr_multi_agent.py`
+  - `./.venv/bin/pytest -q tests/test_tzpr_multi_agent.py tests/test_tzpr_ui_contract.py tests/test_tzpr_runs_api.py tests/test_checker_run_repository.py`
+  - `cd frontend && npm run typecheck`
+  - natija: muvaffaqiyatli
+
+#### 2026-05-13 - Multi-agent checker osilib qolish holati uchun fail-safe va copyable JSON debug karta qo'shildi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+  - Stage 10 - Core Feature Stabilization
+  - Stage 11 - Jobs, Queue va Reliability
+- O'zgarish:
+  - [services/checkers/tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_multi_agent.py)
+    - agentlar tugagandan keyin finalization bosqichida kutilmagan exception bo'lsa run endi `running` holatda osilib qolmaydi
+    - `run_finalizing` va `run_internal_error` eventlari qo'shildi
+    - unexpected failure bo'lsa run `failed` holatida yopiladi, `finished_at` yoziladi va JSON-friendly debug meta saqlanadi
+    - agent finish eventlarining `meta` qismi model, fallback, warning va artifact preview bilan boyitildi
+    - stuck bo'lib qolgan eski multi-agent runlar uchun recovery qo'shildi: agent artefaktlari saqlangan bo'lsa final result qayta yig'iladi va run terminal holatga o'tkaziladi
+    - `failed` holatidagi `datetime is not JSON serializable` tipidagi runlar ham recovery qilinadigan bo'ldi
+  - [services/api/tzpr_api.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/api/tzpr_api.py)
+    - `GET /api/tzpr/runs/{run_id}` stuck run aniqlansa avtomatik recovery qilishga urinadi
+  - [utils/database/checker_run_repository.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/utils/database/checker_run_repository.py)
+    - checker run storage JSON serializer'i `datetime/date`, `tuple/set`, `bytes` qiymatlarni xavfsiz serialize qiladigan bo'ldi
+  - [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx)
+    - multi-agent holat blokiga alohida `Debug JSON` karta qo'shildi
+    - run, agent va event timeline payloadlari copy qilsa bo'ladigan JSON ko'rinishida chiqariladigan bo'ldi
+    - timeline eventlar ichida `Event JSON meta` preview qo'shildi
+    - barcha agentlar tugab, lekin run hali terminal holatga o'tmagan `suspicious stall` holati UI warning bilan ko'rsatiladigan bo'ldi
+    - polling logikasi `finished_at` yoki `final_result` mavjud bo'lsa ham runni resolved deb qabul qiladigan qilindi
+    - polling `useEffect` dependency arrayi stabil `runPollingKey` ga o'tkazildi, shunda Fast Refresh vaqtida hook dependency length warning chiqmaydi
+  - [tests/test_tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_multi_agent.py)
+    - final result yig'ish bosqichi yiqilganda run `failed` bo'lib yopilishi va `run_internal_error` event yozilishi bo'yicha regression test qo'shildi
+    - `failed + json serializable error + final_result yo'q` holati recoveryable ekani uchun unit test qo'shildi
+  - [tests/test_tzpr_runs_api.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_runs_api.py)
+    - stuck run read endpoint orqali recovery qilinishi bo'yicha API regression test qo'shildi
+  - [tests/test_checker_run_repository.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_checker_run_repository.py)
+    - `save_checker_run_final_result()` ichida datetime qiymatlar JSON ga ISO formatda serialize bo'lishi bo'yicha regression test qo'shildi
+- Verification:
+  - `./.venv/bin/python -m py_compile utils/database/checker_run_repository.py services/checkers/tzpr_multi_agent.py tests/test_checker_run_repository.py tests/test_tzpr_multi_agent.py`
+  - `./.venv/bin/pytest -q tests/test_checker_run_repository.py tests/test_tzpr_multi_agent.py tests/test_tzpr_runs_api.py tests/test_tzpr_ui_contract.py`
+  - `cd frontend && npm run typecheck`
+  - natija: muvaffaqiyatli
+
+#### 2026-05-13 - Multi-agent checker run insert'i PostgreSQL uchun atomik va boolean-safe qilindi
+
+- Roadmap bog'lanishi:
+  - Stage 10 - Core Feature Stabilization
+  - Stage 11 - Jobs, Queue va Reliability
+- O'zgarish:
+  - [utils/database/checker_run_repository.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/utils/database/checker_run_repository.py)
+    - `checker_agent_runs` seed insert querysi `used_fallback BOOLEAN` va `attempts INTEGER` ustunlariga to'g'ri placeholder mapping bilan tuzatildi
+    - `used_fallback` endi aniq `bool(...)`, `attempts` esa alohida `int(...)` sifatida uzatiladi
+    - `create_checker_run`, `seed_checker_agent_runs` va `append_checker_run_event` funksiyalariga `commit` boshqaruvi qo'shildi
+  - [utils/database/checker_run_db.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/utils/database/checker_run_db.py)
+    - `create_checker_run_record()` endi bitta transaction ichida run insert + agent seed + initial event yozadi
+    - agent seed yoki event yozishda xato bo'lsa `rollback()` ishlaydi va orphan `checker_runs` yozuvi qoldirilmaydi
+  - [tests/test_checker_run_repository.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_checker_run_repository.py), [tests/test_tzpr_runs_api.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_runs_api.py)
+    - Postgres-style `used_fallback=False`, `attempts=0` mappingi uchun unit test qo'shildi
+    - muvaffaqiyatli create va seed failure rollback integratsion testlari qo'shildi
+    - `POST /api/tzpr/runs` route smoke test qo'shildi
+- Verification:
+  - `./.venv/bin/python -m py_compile utils/database/checker_run_repository.py utils/database/checker_run_db.py`
+  - `./.venv/bin/pytest -q tests/test_checker_run_repository.py tests/test_tzpr_runs_api.py tests/test_tzpr_multi_agent.py tests/test_tzpr_ui_contract.py`
+  - natija: muvaffaqiyatli
+
+#### 2026-05-13 - Checker UI uchun multi-agent run-based test rejimi qo'shildi, single-agent fallback saqlandi
+
+- Roadmap bog'lanishi:
+  - Stage 2 - Target Architecture
+  - Stage 9 - Product UX/UI
+  - Stage 10 - Core Feature Stabilization
+  - Stage 11 - Jobs, Queue va Reliability
+- O'zgarish:
+  - [services/checkers/tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_multi_agent.py)
+    - `Agent1 Scope Builder`, `Agent2 Verifier`, `Agent3 Arbiter` ketma-ket ishlaydigan yangi multi-agent orchestrator qo'shildi
+    - run-based oqim uchun AI promptlar, fallback qoidalar va final adjudication matni yaratildi
+  - [utils/database/checker_run_repository.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/utils/database/checker_run_repository.py), [utils/database/checker_run_db.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/utils/database/checker_run_db.py), [utils/database/task_db.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/utils/database/task_db.py)
+    - checker run, agent run va timeline eventlar uchun persisted storage qo'shildi
+    - processing DB init bosqichida checker run jadvallari avtomatik yaratiladigan qilindi
+  - [services/api/tzpr_api.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/api/tzpr_api.py), [services/worker/main.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/worker/main.py)
+    - `POST /api/tzpr/runs` va `GET /api/tzpr/runs/{run_id}` endpointlari qo'shildi
+    - queue rejimida `tzpr_multi_agent_run` job'i worker orqali bajariladigan qilindi
+  - [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx)
+    - checker sahifasiga `Single-agent / Multi-agent` selector qo'shildi
+    - multi-agent rejimda polling bilan run holati, agent kartalari va event timeline ko'rinadigan qilindi
+    - eski single-agent oqim saqlandi va default xavfsiz fallback sifatida ishlashda davom etadi
+  - [frontend/src/lib/types.ts](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/lib/types.ts), [frontend/src/lib/backend.ts](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/lib/backend.ts), [frontend/src/lib/tzpr-result-cache.ts](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/lib/tzpr-result-cache.ts), [frontend/src/app/api/tzpr/analyze/route.ts](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/app/api/tzpr/analyze/route.ts), [frontend/src/app/api/tzpr/runs/route.ts](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/app/api/tzpr/runs/route.ts), [frontend/src/app/api/tzpr/runs/[runId]/route.ts](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/app/api/tzpr/runs/[runId]/route.ts)
+    - frontend/backend shared run contractlar, run proxy route'lar va cache metadata execution mode bilan kengaytirildi
+  - [config/app_settings.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/config/app_settings.py)
+    - checker settings ga `checker_execution_mode` va `trusted_scope_comment_authors` fieldlari qo'shildi
+  - [tests/test_tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_multi_agent.py)
+    - trusted/untrusted scope signal, fallback arbiter va source excerpt bo'yicha regression testlar qo'shildi
+- Verification:
+  - `./.venv/bin/python -m py_compile services/checkers/tzpr_multi_agent.py services/api/tzpr_api.py utils/database/checker_run_repository.py utils/database/checker_run_db.py services/worker/main.py services/checkers/tz_pr_checker.py utils/database/task_db.py config/app_settings.py`
+  - `cd frontend && npm run typecheck`
+  - `./.venv/bin/pytest -q tests/test_tzpr_multi_agent.py tests/test_tzpr_ui_contract.py`
+  - natija: muvaffaqiyatli
+  - izoh: `./.venv/bin/pytest -q tests/test_tzpr_stabilization.py` auth DB fixture konfiguratsiyasi sabab muhit xatosi bilan yiqildi, yangi multi-agent checker logic regressioni sifatida emas
+
+#### 2026-05-12 - Checker AI requirement count va karta tarkibi TZ bo'yicha aniqlashtirildi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+  - Stage 10 - Core Feature Stabilization
+- O'zgarish:
+  - [services/checkers/tz_pr_checker.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tz_pr_checker.py)
+    - `Talab / Dalil / Fayl` ko'rinishidagi ko'p satrli AI requirementlar endi bitta item sifatida guruhlanadigan qilindi
+    - section oxiriga tushib qoladigan `barcha talablar bajarilgan` kabi summary satrlar count'ni buzmasligi uchun status section item'laridan filtrlanadigan qilindi
+    - requirement parser `1. Talab:` prefiksini tozalab, requirement matrix'ga sof requirement matnini uzatadigan bo'ldi
+  - [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx)
+    - `AI bo'limlari` badge count'i endi raw line emas, requirement soniga qarab chiqadigan qilindi
+    - `Bajarilgan`, `Qisman bajarilgan` va `Bajarilmagan` bo'limlari requirement matrix asosida karta ko'rinishida render qilinadigan bo'ldi
+    - har kartada `TZ da so'ralgan ish`, `qilingan/topilgan holat`, `fayl`, `Figma`, `izoh` bloklari chiqariladigan qilindi
+  - [tests/test_tzpr_ui_contract.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_ui_contract.py)
+    - 3 ta multi-line requirement 3 ta count bo'lib chiqishini va requirement matrix to'g'ri parse bo'lishini tekshiradigan regression test qo'shildi
+- Verification:
+  - `PYTHONPATH=. ./.venv/bin/pytest -q tests/test_tzpr_ui_contract.py --noconftest`
+  - `cd frontend && npm run typecheck`
+  - natija: muvaffaqiyatli
+
+#### 2026-05-12 - Checker AI model metadata va empty negative section UI tuzatildi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+  - Stage 10 - Core Feature Stabilization
+- O'zgarish:
+  - [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx)
+    - `Servis holati` kartasidagi AI blok endi ishlagan model nomini ko'rsatadi
+    - asosiy model band bo'lib yordamchi model ishlatilsa, AI detail ichida bu ham ko'rsatiladigan qilindi
+    - `Qisman/Bajarilmagan/Potensial muammolar` bo'limlarida `... yo'q` placeholder matnlar UI'da endi signal sifatida sanalmaydi
+  - [services/checkers/tz_pr_checker.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tz_pr_checker.py)
+    - `run_info` payloadi `ai_model`, `ai_primary_model`, `ai_fallback_model`, `ai_used_fallback` metadata bilan kengaytirildi
+    - screenshotdagi `Ushbu PR doirasida ... yo'q` kabi matnlar explicit empty section sifatida taniladigan qilindi
+  - [utils/ai/gemini_helper.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/utils/ai/gemini_helper.py)
+    - oxirgi AI urinishida qaysi model ishlagani va fallback ishlatilgan-ishlatilmagani helper ichida track qilinadigan bo'ldi
+  - [frontend/src/lib/mock-tzpr-result.ts](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/lib/mock-tzpr-result.ts)
+    - mock run info ga AI primary/fallback model metadata qo'shildi
+  - [tests/test_tzpr_ui_contract.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_ui_contract.py)
+    - screenshotga yaqin empty negative section matnlari va AI model metadata uchun regression test qo'shildi
+- Verification:
+  - `PYTHONPATH=. ./.venv/bin/pytest -q tests/test_tzpr_ui_contract.py --noconftest`
+  - `cd frontend && npm run typecheck`
+  - natija: quyida tekshirildi
+
+#### 2026-05-12 - Checker AI bo'limlari tartibi va servis holati kartasi yangilandi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+- O'zgarish:
+  - [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx)
+    - `AI bo'limlari` endi checker settings dagi canonical bo'lim tartibiga mos render qilinadi
+    - AI bo'limlari ustidagi explanatory info kartasi olib tashlandi
+    - `Ogohlantirishlar` bloki JIRA, GitHub, Figma va AI uchun status kartalariga almashtirildi
+    - mock run holatida statuslar `Mock`, real run holatida esa mavjud signalga qarab `Ishladi / Topilmadi / Ishlamadi` ko'rinishida chiqadigan qilindi
+- Verification:
+  - `cd frontend && npm run typecheck`
+  - natija: quyida tekshirildi
+
+#### 2026-05-12 - Checker empty negative section parseri 100% resultni noto'g'ri fail qilmasligi tuzatildi
+
+- Roadmap bog'lanishi:
+  - Stage 10 - Core Feature Stabilization
+  - Stage 9 - Product UX/UI
+- O'zgarish:
+  - [services/checkers/tz_pr_checker.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tz_pr_checker.py)
+    - `Qisman bajarilgan`, `Bajarilmagan talablar` va `Potensial muammolar` bo'limlari `Yo'q...` yoki `topilmadi...` deb boshlanganida empty section sifatida normallashtiriladigan qilindi
+    - shu sabab `COMPLIANCE_SCORE: 100%` bo'lgan natijalar bekordan-bekor `Need Work` yoki `Partial` verdictga tushib ketmaydi
+  - [tests/test_tzpr_ui_contract.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_ui_contract.py)
+    - explicit empty negative sectionlar uchun regression test qo'shildi
+- Verification:
+  - `PYTHONPATH=. ./.venv/bin/pytest -q tests/test_tzpr_ui_contract.py --noconftest`
+  - natija: quyida tekshirildi
+
+#### 2026-05-12 - TZ-PR checker prompt guard, return guard va webhook filter barqarorlashtirildi
+
+- Roadmap bog'lanishi:
+  - Stage 10 - Core Feature Stabilization
+  - Stage 11 - Jobs, Queue va Reliability
+  - Stage 6 - Secret Management va Security
+- O'zgarish:
+  - [services/checkers/tz_pr_checker.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tz_pr_checker.py)
+    - Gemini promptga data-only safety instruction qo'shildi; TZ/comment/Figma/code ichidagi manipulyativ matn buyruq sifatida emas, data sifatida talqin qilinadi
+    - AI chaqiruvdan oldin prompt preflight qo'shildi; FULL policy buzilmasdan, juda katta promptlar erta `prompt too large for full analysis` bilan bloklanadi
+    - `min_tz_description_chars` tekshiruvi `summary + description` bo'yicha ishlaydigan qilindi
+  - [services/webhook/jira_webhook_handler.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/webhook/jira_webhook_handler.py)
+    - `allowed_issue_types` filteri case-insensitive ishlaydigan qilindi
+  - [services/webhook/error_handler.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/webhook/error_handler.py)
+    - full-analysis overload/context-length/token-limit xatolari `ai_timeout` sifatida qayta urinishga mos klassifikatsiya qilinadigan bo'ldi
+  - [utils/jira/jira_status_manager.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/utils/jira/jira_status_manager.py)
+    - `can_transition_to()` helper qo'shildi; return status transitioni oldindan tekshiriladi
+  - [services/webhook/service_runner.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/webhook/service_runner.py)
+    - JIRA return transition muvaffaqiyatsiz bo'lsa DB task holati endi `returned` bo'lib ketmaydi
+    - `FULL_BLOCKED_OVERLOAD` banner kodi Service1 oqimida `blocked/retry` semantikasiga mos talqin qilinadi
+  - [config/app_settings.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/config/app_settings.py)
+    - `min_tz_description_chars` help matni yangi `summary + description` semantikasiga moslashtirildi
+  - [tests/test_tzpr_stabilization.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_stabilization.py)
+    - issue type normalization, prompt preflight, overload classification va auto-return DB guard uchun regression testlar qo'shildi
+- Verification:
+  - `./.venv/bin/python -m py_compile services/checkers/tz_pr_checker.py services/webhook/jira_webhook_handler.py services/webhook/error_handler.py services/webhook/service_runner.py utils/jira/jira_status_manager.py config/app_settings.py tests/test_tzpr_stabilization.py`
+  - `PYTHONPATH=. ./.venv/bin/pytest -q tests/test_tzpr_stabilization.py --noconftest`
+  - Natija: `5 passed`
+
+#### 2026-05-12 - Checker oxirgi 3 ta natijani cache'da saqlab, tez restore qiladigan bo'ldi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+  - Stage 10 - Core Feature Stabilization
+- O'zgarish:
+  - [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx)
+    - checker resultlari `localStorage` orqali restore qilinadigan bo'ldi
+    - sahifaga qaytilganda oxirgi ochilgan natija avtomatik tiklanadigan qilindi
+    - form ostiga `Oxirgi checker natijalari` bloki qo'shildi va user 3 ta cached natijadan birini tez ochishi mumkin bo'ldi
+    - history ichida tanlangan natija yuqoriga ko'tarilib, keyingi qaytishda ham shu result ochiq qoladigan oqim qo'shildi
+  - [frontend/src/lib/tzpr-result-cache.ts](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/lib/tzpr-result-cache.ts)
+    - checker uchun scoped cache key, history parse/write va 3 ta result limit helperlari qo'shildi
+  - [frontend/src/app/(app)/tzpr/page.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/app/(app)/tzpr/page.tsx)
+    - cache user/company scope bilan ishlashi uchun session identifikatorlari checkerga uzatiladigan bo'ldi
+- Verification:
+  - `cd frontend && npm run typecheck`
+  - `./.venv/bin/pytest -q tests/test_tzpr_ui_contract.py`
+  - natija: muvaffaqiyatli
+
+#### 2026-05-12 - Checker assignee resolution real JIRA payloadlar uchun kuchaytirildi
+
+- Roadmap bog'lanishi:
+  - Stage 10 - Core Feature Stabilization
+  - Stage 9 - Product UX/UI
+- O'zgarish:
+  - [utils/jira/jira_client.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/utils/jira/jira_client.py)
+    - `_resolve_user_name()` endi `raw` va nested user payloadlarni ham ko'rib chiqadi
+    - generik Python object repr qiymatlari `assignee` sifatida sizib chiqmaydigan qilindi
+  - [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx)
+    - `Assignee` kartasi `unknown/none/null/n/a` va repr ko'rinishidagi placeholderlarni `Ma'lumot kelmadi`ga normallashtiradi
+  - [tests/test_jira_client.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_jira_client.py)
+    - `raw` payload, nested user va repr fallback case'lari uchun regression testlar qo'shildi
+- Verification:
+  - `./.venv/bin/pytest -q tests/test_jira_client.py --noconftest`
+  - `npm run typecheck` (`frontend/`)
+  - natija: quyida tekshirildi
+
+#### 2026-05-12 - Checker AI xulosa dropdownlari default yopiq qilindi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+- O'zgarish:
+  - [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx)
+    - `AI bo'limlari` ichidagi Gemini dropdown sectionlaridan default `open` holati olib tashlandi
+    - checker natijasi chiqqanda xulosa bo'limlari endi yopiq turadi, user o'zi keraklisini ochib ko'radi
+- Verification:
+  - `cd frontend && npm run typecheck`
+  - natija: quyida tekshirildi
+
+#### 2026-05-12 - Checker assignee maydoni uchun JIRA user fallback tuzatildi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+  - Stage 10 - Core Feature Stabilization
+- O'zgarish:
+  - [utils/jira/jira_client.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/utils/jira/jira_client.py)
+    - JIRA user obyektidan ism olish uchun `_resolve_user_name()` helper qo'shildi
+    - `displayName` bo'sh yoki `None` bo'lsa `name`, `emailAddress`, `accountId` bo'yicha fallback ishlaydigan qilindi
+    - assignee, reporter va comment/history author joylari shu helperga o'tkazildi
+  - [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx)
+    - `Assignee` kartasida `N/A` o'rniga `Biriktirilmagan` yoki `Ma'lumot kelmadi` ko'rsatiladigan qilindi
+  - [tests/test_jira_client.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_jira_client.py)
+    - JIRA user name fallback uchun focused regression testlar qo'shildi
+- Verification:
+  - `./.venv/bin/python -m pytest -q tests/test_jira_client.py --noconftest`
+  - `cd frontend && npm run typecheck`
+  - natija: muvaffaqiyatli
+
+#### 2026-05-12 - Checker PR diff preview o'qilishi oson ko'rinishga o'tkazildi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+- O'zgarish:
+  - [frontend/src/components/pr-details-stack.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/pr-details-stack.tsx)
+    - patch preview `smart patch` va `raw diff` badge'lari bilan ajratildi
+    - diff satrlari line number bilan rangli ko'rinishga o'tkazildi
+    - qo'shilgan, o'chirilgan va hunk satrlar alohida ranglar bilan ajraladigan bo'ldi
+    - PR va file header'lari badge'lar bilan soddaroq va o'qilishi qulay ko'rinish oldi
+- Verification:
+  - `cd frontend && npm run typecheck`
+  - natija: muvaffaqiyatli
+
+#### 2026-05-12 - Checker task kartasida dark mode ranglari tiklandi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+- O'zgarish:
+  - [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx)
+    - task kartasidagi `from-white`, `bg-white` va `white/...` sinflari theme tokenlarga almashtirildi
+    - hero gradient `surface` va `brand-soft` tokenlari bilan light/dark rejimga moslandi
+    - `task key`, `assignee` va `AI xulosasi` ichki bloklari dark mode bilan kontrastini yo'qotmaydigan surface ranglarga o'tkazildi
+- Verification:
+  - `cd frontend && npm run typecheck`
+  - natija: muvaffaqiyatli
+
+#### 2026-05-12 - Task kartasi vizual jihatdan qayta ishlanib, hero ko'rinishiga o'tkazildi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+- O'zgarish:
+  - [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx)
+    - task kartasi gradientli summary panel ko'rinishiga o'tkazildi
+    - `task key` badge ko'rinishida ajratildi
+    - `title` kattaroq va ko'proq hero uslubida ko'rsatildi
+    - `assignee` alohida ajralib turadigan yon panelga o'tkazildi
+    - `AI xulosasi` ichki child-card sifatida kuchliroq vizual ajratildi
+- Verification:
+  - `cd frontend && npm run typecheck`
+  - `./.venv/bin/pytest -q tests/test_tzpr_ui_contract.py`
+  - natija: muvaffaqiyatli
+
+#### 2026-05-12 - Checker top section foydalanuvchi so'roviga ko'ra qayta yig'ildi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+- O'zgarish:
+  - [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx)
+    - `Yakuniy xulosa` va `QA tavsiyasi` metric kartalari olib tashlandi
+    - o'rniga `Figma` va `Diff` kartalari qo'shildi
+    - `Task` kartasi soddalashtirildi: `task key`, `title`, `assignee`
+    - `AI xulosasi` task kartasi ichida alohida bola blok sifatida chiqarildi
+    - `AI xulosasi` ichidan takroriy `Compliance score` qatori filtrlanadigan qilindi
+- Verification:
+  - `cd frontend && npm run typecheck`
+  - `./.venv/bin/pytest -q tests/test_tzpr_ui_contract.py`
+  - natija: muvaffaqiyatli
+
+#### 2026-05-12 - Checker UI soddalashtirildi: ortiqcha kartalar olib tashlandi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+- O'zgarish:
+  - [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx)
+    - `QA qarori`, `Talablar bo'yicha tekshiruv`, `Jarayon holati`, `Kommentlar tahlili`, `Figma manbalari` kartalari olib tashlandi
+    - checker yuqori qismida faqat umumiy natija va qisqa xulosa qoldirildi
+    - pastda `AI bo'limlari` va `PR tafsilotlari` asosiy o'qiladigan blok sifatida qoldi
+- Verification:
+  - `cd frontend && npm run typecheck`
+  - `./.venv/bin/pytest -q tests/test_tzpr_ui_contract.py`
+  - natija: muvaffaqiyatli
+
+#### 2026-05-12 - Checker UI copy soddalashtirildi va asosiy bo'limlar o'zbekcha QA tiliga o'tkazildi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+- O'zgarish:
+  - [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx)
+    - inglizcha product copy'larning katta qismi o'zbekcha QA tiliga o'tkazildi
+    - takroriy `moslik bali` ko'rinishi soddalashtirildi: yuqori kartadagi score saqlandi, pastdagi ring o'rniga `Qisqa xulosa` qo'yildi
+    - `Talablar bo'yicha tekshiruv` checkerning asosiy bo'limi sifatida aniqroq copy bilan chiqarildi
+    - `Warnings`, `Workflow diagnostics`, `Comment intelligence` bo'limlari mos ravishda:
+      - `Ogohlantirishlar`
+      - `Jarayon holati`
+      - `Kommentlar tahlili`
+      nomlariga o'tkazildi va ustiga izoh matni qo'shildi
+    - `AI Analysis` debug semantikaga tushirildi: asosiy qaror uchun emasligi copy bilan ko'rsatildi
+- Verification:
+  - `cd frontend && npm run typecheck`
+  - `./.venv/bin/pytest -q tests/test_tzpr_ui_contract.py`
+  - natija: muvaffaqiyatli
+
+#### 2026-05-12 - Checker default `Real mode` ga o'tkazildi, mock debug-only fallback bo'ldi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+  - Stage 10 - Core Feature Stabilization
+- O'zgarish:
+  - [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx)
+    - checker default `Real mode` ga o'tkazildi
+    - mock toggle faqat debug holatda ko'rinadigan qilindi
+    - mock oqimi oddiy user flowdan chiqib debug-only fallback sifatida qoldi
+  - [docs/CHECKER_QA_EXECUTION_PLAN.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/docs/CHECKER_QA_EXECUTION_PLAN.md)
+    - `Phase 5` bajarilgan qismiga real-default va debug-only mock holati yozildi
+- QA checkpoint:
+  - checkerning asosiy oqimi endi real backendga qaratilgan
+  - mock product flowga emas, debug/dev ehtiyojga xizmat qiladi
+- Verification:
+  - `./.venv/bin/python -m py_compile services/checkers/tz_pr_checker.py services/api/tzpr_api.py`
+  - `./.venv/bin/pytest -q tests/test_tzpr_ui_contract.py`
+  - `cd frontend && npm run typecheck`
+  - natija: muvaffaqiyatli
+
+#### 2026-05-12 - Checker Phase 4 yopildi, Phase 5 uchun Mock/Real bridge qo'shildi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+  - Stage 10 - Core Feature Stabilization
+- O'zgarish:
+  - [docs/CHECKER_QA_EXECUTION_PLAN.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/docs/CHECKER_QA_EXECUTION_PLAN.md)
+    - `Phase 4` statusi `Done` ga o'tkazildi
+    - `Phase 5` statusi `In Progress` ga o'tkazildi
+    - Phase 4 uchun QA checkpoint yozildi
+  - [services/checkers/tz_pr_checker.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tz_pr_checker.py)
+    - requirement matrix code reference'lariga `change_type`, `additions`, `deletions`, `patch_preview` qo'shildi
+    - Figma source'lariga `node_id` va `summary` qo'shildi
+  - [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx)
+    - requirement row ichida patch preview va PR metadata ko'rinadigan bo'ldi
+    - Figma source card ichida node id va summary ko'rinadigan bo'ldi
+    - Figma access cheklovi alohida warning holatida ko'rsatiladigan bo'ldi
+    - checkerga `Mock mode / Real mode` toggle qo'shildi
+  - [frontend/src/lib/types.ts](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/lib/types.ts)
+    - patch preview va Figma node/source summary type'lari qo'shildi
+  - [frontend/src/lib/mock-tzpr-result.ts](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/lib/mock-tzpr-result.ts)
+    - mock requirement matrix Phase 4 contractiga moslashtirildi
+  - [tests/test_tzpr_ui_contract.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_ui_contract.py)
+    - patch preview va Figma node parsing uchun regression assertlar qo'shildi
+- QA checkpoint:
+  - `Phase 4`: QA requirement row ichidan kod source, patch preview, Figma source va restrictionlarni ko'ra oladi
+  - umumiy baho: checker QA baseline'ga ancha yaqinlashdi, asosiy qolgan phase endi real-only oqimga o'tish
+- Verification:
+  - `./.venv/bin/python -m py_compile services/checkers/tz_pr_checker.py services/api/tzpr_api.py`
+  - `./.venv/bin/pytest -q tests/test_tzpr_ui_contract.py`
+  - `cd frontend && npm run typecheck`
+  - natija: muvaffaqiyatli
+
+#### 2026-05-12 - Checker Phase 2 va Phase 3 yopildi, Phase 4 evidence deepening boshlandi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+  - Stage 10 - Core Feature Stabilization
+- O'zgarish:
+  - [docs/CHECKER_QA_EXECUTION_PLAN.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/docs/CHECKER_QA_EXECUTION_PLAN.md)
+    - `Phase 2` statusi `Done` ga o'tkazildi
+    - `Phase 3` statusi `Done` ga o'tkazildi
+    - har ikki phase uchun QA checkpoint yozildi
+    - `Phase 4` statusi `In Progress` ga o'tkazildi
+  - [services/checkers/tz_pr_checker.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tz_pr_checker.py)
+    - `comment_intelligence` va `workflow_info` structured contractlari qo'shildi
+    - requirement matrix qatorlari `code_refs` va `figma_sources` bilan boyitildi
+  - [frontend/src/lib/types.ts](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/lib/types.ts)
+    - checker uchun `comment_intelligence`, `workflow_info`, `code_refs`, `figma_sources` type'lari qo'shildi
+  - [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx)
+    - `Workflow diagnostics` kartasi qo'shildi
+    - `Comment intelligence` kartasi qo'shildi
+    - requirement matrix ichidagi code reference va Figma source'lar clickable ko'rinishga o'tkazildi
+  - [frontend/src/lib/mock-tzpr-result.ts](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/lib/mock-tzpr-result.ts)
+    - mock payload Phase 3 va Phase 4 contractlariga moslashtirildi
+  - [tests/test_tzpr_ui_contract.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_ui_contract.py)
+    - comment intelligence va workflow info helperlari uchun regression testlar qo'shildi
+- QA checkpoint:
+  - `Phase 2`: requirement-level audit, evidence va file/Figma relation checker ichida ko'rinadi
+  - `Phase 3`: comment scope o'zgarishlari, dev objection va workflow sabablar checker qaroriga yaqin joyda ko'rinadi
+  - umumiy baho: checker QA baseline bo'yicha to'g'ri yo'nalishda ketmoqda
+- Verification:
+  - `./.venv/bin/python -m py_compile services/checkers/tz_pr_checker.py services/api/tzpr_api.py`
+  - `./.venv/bin/pytest -q tests/test_tzpr_ui_contract.py`
+  - `cd frontend && npm run typecheck`
+  - natija: muvaffaqiyatli
+
+#### 2026-05-12 - Checker Phase 2 boshlandi: requirement matrix va evidence audit UI qo'shildi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+  - Stage 10 - Core Feature Stabilization
+- O'zgarish:
+  - [docs/CHECKER_QA_EXECUTION_PLAN.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/docs/CHECKER_QA_EXECUTION_PLAN.md)
+    - `Phase 2 — Requirement and Evidence Matrix` statusi `In Progress` ga o'tkazildi
+    - bajarilgan va qolgan Phase 2 ishlar aniq yozildi
+  - [services/checkers/tz_pr_checker.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tz_pr_checker.py)
+    - `requirement_matrix` structured contracti qo'shildi
+    - requirement audit qatorlari uchun `status`, `evidence`, `code_files`, `figma_relation`, `notes` maydonlari qaytariladigan bo'ldi
+    - Gemini section instructionlari requirement-level item va evidence signaliga yaqinlashtirildi
+  - [frontend/src/lib/types.ts](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/lib/types.ts)
+    - `TZPREvidenceItem` va `TZPRRequirementMatrixItem` type'lari qo'shildi
+  - [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx)
+    - filterlanadigan `Requirement matrix` audit bloki qo'shildi
+    - har requirement uchun evidence kartalari, code file badge'lari va Figma relation ko'rsatiladigan qilindi
+  - [frontend/src/lib/mock-tzpr-result.ts](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/lib/mock-tzpr-result.ts)
+    - mock Gemini section itemlari realroq `Talab / Evidence / File / Figma` formatiga o'tkazildi
+    - mock payloadga `requirement_matrix` qo'shildi
+  - [tests/test_tzpr_ui_contract.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_ui_contract.py)
+    - requirement matrix helper'i uchun focused regression test qo'shildi
+- Verification:
+  - `./.venv/bin/python -m py_compile services/checkers/tz_pr_checker.py services/api/tzpr_api.py`
+  - `./.venv/bin/pytest -q tests/test_tzpr_ui_contract.py`
+  - `cd frontend && npm run typecheck`
+  - natija: muvaffaqiyatli
+
+#### 2026-05-12 - Checker QA execution plan yozildi va Phase 1 (`QA first fold`) bajarildi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+  - Stage 10 - Core Feature Stabilization
+- O'zgarish:
+  - [docs/CHECKER_QA_EXECUTION_PLAN.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/docs/CHECKER_QA_EXECUTION_PLAN.md) qo'shildi
+    - checker QA talablarini yopish uchun phase-by-phase execution plan yozildi
+    - `Phase 2` va `Phase 3` keyingi ustuvor yo'nalish sifatida belgilandi
+  - [services/checkers/tz_pr_checker.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tz_pr_checker.py)
+    - `task_info`, `run_info`, `qa_recommendation` contractlari qo'shildi
+    - checker result endi QA first fold uchun kerakli task identity va keyingi action signalini qaytaradi
+  - [frontend/src/lib/types.ts](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/lib/types.ts)
+    - yangi checker QA contract type'lari qo'shildi
+  - [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx)
+    - `QA Decision` kartasi qo'shildi
+    - task identity maydonlari checker ichida ko'rinadigan qilindi
+    - `Figma summary` evidence bloki `Figma evidence` semantikasi bilan qayta nomlandi
+  - [frontend/src/lib/mock-tzpr-result.ts](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/lib/mock-tzpr-result.ts)
+    - mock payload yangi QA contractga moslashtirildi
+  - [tests/test_tzpr_ui_contract.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_ui_contract.py)
+    - `task_info` va `qa_recommendation` helperlari uchun focused testlar qo'shildi
+- Verification:
+  - `./.venv/bin/python -m py_compile services/checkers/tz_pr_checker.py services/api/tzpr_api.py`
+  - `./.venv/bin/pytest -q tests/test_tzpr_ui_contract.py`
+  - `cd frontend && npm run typecheck`
+  - natija: muvaffaqiyatli
+
+#### 2026-05-12 - Checker uchun QA baseline requirement hujjati asosiy source of truth sifatida belgilandi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+  - Stage 10 - Core Feature Stabilization
+- O'zgarish:
+  - [docs/CHECKER_QA_REQUIREMENTS.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/docs/CHECKER_QA_REQUIREMENTS.md) qo'shildi
+    - checker uchun QA nuqtayi nazaridan asosiy product requirement yozildi
+    - hujjatda `pass/return` qarori, evidence, PR, Figma, commentlar va action recommendation bo'yicha QA kutadigan narsalar aniq belgilandi
+    - kelgusi checker ishlari uchun asosiy savol sifatida `Bu o'zgarish QA'ga tezroq va ishonchliroq qaror chiqarishga yordam beradimi?` qabul qilindi
+  - [docs/CHECKER_UI_TZ.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/docs/CHECKER_UI_TZ.md)
+    - mavjud checker UI/TZ hujjati endi yangi QA baseline hujjatiga tayanuvchi secondary design/spec hujjat sifatida belgilandi
+- Verification:
+  - Documentation update only
+  - checker product scope va mavjud checker hujjatlari bilan qo'lda tekshirildi
+
+#### 2026-05-12 - Checker section nomlari Gemini formatiga moslashtirildi, mock ham shu formatdan yig'iladigan bo'ldi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+  - Stage 10 - Core Feature Stabilization
+- O'zgarish:
+  - [frontend/src/lib/tzpr-sections.ts](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/lib/tzpr-sections.ts) qo'shildi
+    - checker sectionlari uchun yagona canonical mapping yaratildi:
+      - `Bajarilgan talablar`
+      - `Qisman bajarilgan`
+      - `Bajarilmagan talablar`
+      - `Potensial muammolar`
+      - `Figma dizayn mosligi`
+  - [frontend/src/components/settings-panel.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/settings-panel.tsx)
+    - `Comment bo'limlari` label'lari endi Gemini section nomlari bilan bir xil semantikada ko'rsatiladi
+    - raw `completed/partial/failed/issues/figma` badge'lari olib tashlandi
+  - [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx)
+    - dropdown section title'lari `analysis_sections.title` dan olinadigan qilindi, shu sabab real backend qaytargan Gemini section nomi UI'da ham aynan ko'rinadi
+  - [frontend/src/lib/mock-tzpr-result.ts](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/lib/mock-tzpr-result.ts)
+    - mock result endi bitta canonical `analysis_sections` manbasidan yig'iladi
+    - `ai_analysis` raw matni qo'lda alohida yozilmaydi; sectionlardan real Gemini formatiga yaqin ko'rinishda generatsiya qilinadi
+- Verification:
+  - `cd frontend && npm run typecheck`
+  - natija: quyida tekshirildi
+
+#### 2026-05-12 - Checker UI `Comment bo'limlari` settings bilan moslashtirildi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+- O'zgarish:
+  - [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx)
+    - Gemini dropdown sectionlari endi checker module settingdagi bo'limlar bilan moslashtirildi
+    - `Bajarildi`, `Qisman bajarildi`, `Bajarilmadi` yoniga `Muammolar` va `Figma bo'limlari` ham qo'shildi
+    - render mantiqi `result.effective_settings.visible_sections` bo'yicha ishlaydigan qilindi; settingda yoqilgan bo'limlar checker UI da chiqadi
+- Verification:
+  - `cd frontend && npm run typecheck`
+  - natija: quyida tekshirildi
+
+#### 2026-05-12 - Gemini dropdown kartalari ichki mock kontent bilan boyitildi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+- O'zgarish:
+  - [frontend/src/lib/mock-tzpr-result.ts](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/lib/mock-tzpr-result.ts)
+    - `Bajarildi`, `Qisman bajarildi`, `Bajarilmadi` dropdownlari ichidagi mock itemlar kengaytirildi
+    - qisqa 1 qatorli punktlar o'rniga requirement/evidencega yaqinroq, ko'proq ma'lumotli mock textlar yozildi
+    - raw `ai_analysis` matni ham shu boyitilgan sectionlar bilan moslashtirildi
+- Verification:
+  - `cd frontend && npm run typecheck`
+  - natija: quyida tekshirildi
+
+#### 2026-05-12 - Gemini tahlili dropdown child-cardlarga ajratildi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+- O'zgarish:
+  - [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx)
+    - `Gemini tahlili` karti ichiga `Bajarildi`, `Qisman bajarildi`, `Bajarilmadi` bo'limlari dropdown child-card ko'rinishida qo'shildi
+    - har bir child-card item count va section badge bilan chiqadi
+    - to'liq AI matni ham alohida `Raw` dropdown ichida saqlandi
+  - [frontend/src/lib/mock-tzpr-result.ts](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/lib/mock-tzpr-result.ts)
+    - mock payloadga `analysis_sections` qo'shildi, shuning uchun structured dropdownlar mock rejimda ham darhol ko'rinadi
+- Verification:
+  - `cd frontend && npm run typecheck`
+  - natija: quyida tekshirildi
+
+#### 2026-05-12 - Checker UI uchun vaqtinchalik mock preview yoqildi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+  - vaqtinchalik QA/dev preview ishi
+- O'zgarish:
+  - [frontend/src/lib/mock-tzpr-result.ts](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/lib/mock-tzpr-result.ts) qo'shildi
+    - checker sahifasi uchun tayyor `TZPRAnalysisResult` mock payload yaratildi
+    - mock ichida compliance, warninglar, figma summary, AI analysis va PR details bor
+  - [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx)
+    - `CHECKER_UI_MOCK_ENABLED = true` vaqtinchalik flag qo'shildi
+    - `Tekshirish` bosilganda hozircha real `/api/tzpr/analyze` o'rniga frontend mock payload ko'rsatiladigan qilindi
+    - sahifada `Mock mode: ON` badge va tegishli izoh ko'rsatiladi
+- Verification:
+  - `cd frontend && npm run typecheck`
+  - natija: muvaffaqiyatli
+
+#### 2026-05-12 - Checker UI `QA-Assistant.zip` dagi ko'rinish bilan almashtirildi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+- O'zgarish:
+  - [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx)
+    - tizimdagi structured cockpit ko'rinishi o'rniga `docs/QA-Assistant.zip` ichidagi checker UI layouti olib kirildi
+    - yangi ko'rinish input form, metric kartalar, compliance summary, warninglar, raw AI analysis, figma summary va PR details bloklariga qaytdi
+    - zip UI ko'rinishi saqlangan holda joriy backend contract bilan moslashtirildi:
+      - `output_profile: "ui"` saqlandi
+      - `use_smart_patch: null` orqali setting-based run logikasi buzilmadi
+      - `status_banner` mavjud bo'lsa sahifada ko'rsatish saqlandi
+- Verification:
+  - `cd frontend && npm run typecheck`
+  - natija: quyida tekshirildi
+
+#### 2026-05-12 - Checker UI/TZ specifikatsiyasi tayyorlandi (`as-is` + `to-be`)
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+  - Stage 10 - Core Feature Stabilization
+- O'zgarish:
+  - [docs/CHECKER_UI_TZ.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/docs/CHECKER_UI_TZ.md) qo'shildi
+  - Hujjat ichida quyidagilar aniq yozildi:
+    - checkerning hozirgi manual UI va webhook oqimi (`as-is`)
+    - mavjud response payload va UX bo'shliqlari
+    - Claude Design uchun yangi checker sahifasi bloklari, tablari va state'lari
+    - `moslik bali`, `bajarilgan`, `qisman bajarilgan`, `bajarilmagan`, `figma moslik`, `potensial muammolar`, `kod o'zgarishlari`, `task info`, `kim bajargan`, `qaysi task` kabi barcha asosiy segmentlar
+    - keyinchalik checkerga ulash uchun tavsiya etilgan backend data contract (`task_info`, `run_info`, `workflow_info`, `requirements`, `figma_checks`, `risk_items`)
+- Verification:
+  - Documentation update only
+  - checker source, frontend contract va mavjud `docs/TZPR_CHECKER_CASES.md` asosida qo'lda tekshirildi
+
+#### 2026-05-11 - Modules settings kartalari webhook uslubiga birxillashtirildi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+- O'zgarish:
+  - [frontend/src/components/settings-panel.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/settings-panel.tsx)
+    - `Modullar` tabidagi `TZ-PR Checker` va `Test Case Generator` kartalari webhook bo'limidagi kabi `family card` ko'rinishiga o'tkazildi
+    - mavjud module fieldlari o'sha-o'sha saqlandi; faqat layout, section grouping va save CTA matnlari yangilandi
+    - `checker` va `testcase` settinglari endi webhook kartalariga o'xshash `Default ishga tushirish`, `Comment o'qish oilasi`, `AI ga ma'lumotlar darajasi` va `Mustaqil settinglar` bo'lib ko'rsatiladi
+- Verification:
+  - `cd frontend && npm run typecheck`
+  - natija: muvaffaqiyatli
+
+#### 2026-05-11 - Gemini canonical analysis birxillashtirildi, UI va webhook faqat ko'rinishda ajratildi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+  - Stage 10 - Core Feature Stabilization
+- O'zgarish:
+  - [services/checkers/tz_pr_checker.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tz_pr_checker.py)
+    - Gemini prompt endi har doim to'liq canonical section set (`summary/completed/partial/failed/issues/figma`) bilan ishlaydi
+    - `visible_sections` analysisni qisqartirishdan chiqarildi; u endi faqat presentation semantikasi uchun qoldi
+    - natijaga `effective_settings` metadata qo'shildi (`visible_sections`, `read_comments_enabled`, `max_comments_to_read`, `default/effective_use_smart_patch`, `ai_data_section_order`)
+    - structured `analysis_sections` endi UI yoki webhook profilidan qat'i nazar to'liq canonical ko'rinishda qaytariladi
+  - [utils/jira/jira_adf_formatter.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/utils/jira/jira_adf_formatter.py)
+    - webhook/JIRA formatter `raw ai_analysis` regex parse qilish o'rniga avvalo `analysis_sections` structured payloadidan foydalanadigan qilindi
+    - simple fallback comment ham endi structured sectionlar va `visible_sections` filteriga amal qiladi
+  - [services/webhook/error_handler.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/webhook/error_handler.py)
+    - oddiy text fallback commentga ham webhook `visible_sections` uzatiladigan qilindi
+  - [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx)
+    - UI checker structured resultni to'liq oladi, lekin requirement/coverage/open-signal bloklarini `tz_pr_checker.visible_sections` bo'yicha filtrlab ko'rsatadi
+    - `Raw AI` tab debug uchun to'liq saqlandi
+  - [frontend/src/lib/types.ts](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/lib/types.ts)
+    - `TZPREffectiveSettings` type'i qo'shildi va `TZPRAnalysisResult.effective_settings` kontrakti kengaytirildi
+  - [tests/test_tzpr_ui_contract.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_ui_contract.py)
+    - canonical sectionlar profilga bog'liq emasligi, `effective_settings` payloadi va webhook formatter structured resultdan ishlashi uchun regression testlar qo'shildi
+- Verification:
+  - `./.venv/bin/python -m py_compile services/checkers/tz_pr_checker.py services/webhook/error_handler.py utils/jira/jira_adf_formatter.py services/api/tzpr_api.py`
+  - `./.venv/bin/pytest -q tests/test_tzpr_ui_contract.py`
+  - `cd frontend && npm run typecheck`
+  - natija: muvaffaqiyatli
+
 #### 2026-05-11 - TZPR checker Gemini oqimi tozalandi va UI structured analysis cockpitga o'tkazildi
 
 - Roadmap bog'lanishi:
@@ -3121,6 +4365,40 @@ Bu fayl loyihada amalda bajarilgan ishlarni, qolgan ishlarni va keyingi qadamlar
 - Tekshiruv:
   - `cd frontend && npm run build` ✅
 
+#### 2026-05-13 - `only_agent1` execution mode qo‘shildi va Agent1 inventory UI’da ko‘rinadigan bo‘ldi
+
+- [services/checkers/tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_multi_agent.py):
+  - Yangi run-based mode `only_agent1` qo‘shildi.
+  - Bu mode Agent1’dan keyin oqimni to‘xtatadi, Agent2 va Agent3’ni `skipped` qilib belgilaydi.
+  - `only_agent1` uchun PR/diff majburiyati olib tashlandi, shuning uchun Agent1 TZ/comment/Figma qatlamini mustaqil tahlil qila oladi.
+  - Agent1-only final result builder qo‘shildi: `requirement_inventory` saqlanadi, `compliance_score` esa `N/A` qoladi.
+  - Stalled run recovery ham `only_agent1` ni taniydigan qilindi.
+
+- [services/api/tzpr_api.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/api/tzpr_api.py), [frontend/src/app/api/tzpr/runs/route.ts](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/app/api/tzpr/runs/route.ts), [frontend/src/lib/types.ts](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/lib/types.ts):
+  - `execution_mode` run create payload orqali backendgacha uzatiladigan qilindi.
+  - Frontend types `only_agent1` ni tanadigan qilindi.
+
+- [services/api/settings_api.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/api/settings_api.py), [frontend/src/app/api/settings/modules/route.ts](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/app/api/settings/modules/route.ts), [frontend/src/components/settings-panel.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/settings-panel.tsx), [config/app_settings.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/config/app_settings.py):
+  - Checker module settings uchun `checker_execution_mode` va `trusted_scope_comment_authors` UI/API orqali boshqariladigan bo‘ldi.
+  - Module settings proxy `user` scope uchun ham o‘qish/saqlashga ruxsat beradigan qilindi.
+
+- [frontend/src/components/tzpr-checker.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/tzpr-checker.tsx):
+  - Checker sahifasiga `Only Agent1` engine tugmasi qo‘shildi.
+  - Module settings’dan default execution mode o‘qish qo‘shildi.
+  - Agent1 yig‘gan requirementlar uchun alohida `Agent1 inventory` kartasi qo‘shildi.
+  - Run-based mode badge/timeline/debug ko‘rinishlari `only_agent1` ni to‘g‘ri ko‘rsatadigan bo‘ldi.
+  - Async settings load foydalanuvchi qo‘lda tanlagan execution mode’ni ustidan bosib yubormasligi uchun race condition yopildi.
+
+- [tests/test_tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_multi_agent.py), [tests/test_tzpr_runs_api.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_runs_api.py):
+  - Agent1-only final result va stalled recovery uchun regression testlar qo‘shildi.
+  - `/api/tzpr/runs` endpoint `execution_mode=only_agent1` ni to‘g‘ri uzatishini tekshiruvchi test qo‘shildi.
+  - Executor darajasida `only_agent1` haqiqatan Agent2/Agent3 ni chaqirmasligini tekshiruvchi test qo‘shildi.
+
+- Tekshiruv:
+  - `./.venv/bin/python -m py_compile services/checkers/tzpr_multi_agent.py services/api/tzpr_api.py services/api/settings_api.py tests/test_tzpr_multi_agent.py tests/test_tzpr_runs_api.py` ✅
+  - `./.venv/bin/pytest -q tests/test_tzpr_multi_agent.py tests/test_tzpr_runs_api.py tests/test_tzpr_ui_contract.py tests/test_checker_run_repository.py` ✅
+  - `cd frontend && npm run typecheck` ✅
+
 #### 2026-05-11 - `testcase` va `tzpr` kartalarida gear (customizer) to‘liq yoqildi
 
 - [frontend/src/components/testcase-generator.tsx](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/components/testcase-generator.tsx):
@@ -3159,3 +4437,113 @@ Bu fayl loyihada amalda bajarilgan ishlarni, qolgan ishlarni va keyingi qadamlar
 - Tekshiruv:
   - `cd frontend && npm run typecheck` ✅
   - `cd frontend && npm run build` ✅
+
+#### 2026-05-13 - Agent1 requirement extraction production-safety qatlamlari kuchaytirildi
+
+- [services/checkers/tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_multi_agent.py):
+  - Agent1 post-processing endi model qaytargan inventory’ni yakuniy deb qoldirmaydi; TZ candidate’lar bilan qayta solishtirib missing requirementlarni safety-net orqali to‘ldiradi.
+  - Bug tasklar uchun atomic refinement kuchaydi:
+    - list visibility
+    - save/binding
+    - paid modules attach
+    - business rule (`renewed user => active`)
+    alohida requirement sifatida saqlanadigan bo‘ldi.
+  - `Бизнес-логика:`, `Ожидаемый результат:`, `Фактический результат:` kabi colon-heading sectionlar yaxshiroq taniladigan qilindi.
+  - Incomplete TZ candidate’lar (`... то`, `... либо`) requirement sifatida o‘tib ketmasligi uchun filter qo‘shildi.
+  - `tz_candidate_items` metadata qo‘shilib, section-aware completion uchun source pack boyitildi.
+
+- [tests/test_tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_multi_agent.py):
+  - `Бизнес-логика` colon-heading ichidagi candidate saqlanishi test bilan yopildi.
+  - Bug taskda model business rule’ni tushirib qoldirsa, Agent1 uni alohida requirement qilib qayta tiklashi regression bilan yopildi.
+  - Oddiy TZ taskda missing business-rule candidate’ni backfill qilish regression testi qo‘shildi.
+
+- Natija:
+  - Agent1 endi faqat `1 ta umumiy requirement` muammosidan emas, `model qisman to‘g‘ri ajratib, bitta muhim talabni tashlab yuborishi` holatidan ham himoyalangan.
+  - `DEV-7172` kabi bug tasklarda requirement inventory yanada atomic va audit-friendly bo‘ldi.
+
+- Tekshiruv:
+  - `./.venv/bin/python -m py_compile services/checkers/tzpr_multi_agent.py tests/test_tzpr_multi_agent.py tests/test_tzpr_ui_contract.py` ✅
+  - `./.venv/bin/pytest -q tests/test_tzpr_multi_agent.py tests/test_tzpr_ui_contract.py` ✅ (`36 passed`)
+
+#### 2026-05-13 - Agent1 safety-net over-extractioni tozalandi
+
+- [services/checkers/tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_multi_agent.py):
+  - TZ completion safety-net endi `mailto:` linklar, plain email, va Jira attachment markup (`!file.mp4|...!`) ni requirement sifatida umuman qabul qilmaydi.
+  - Bug/business-rule completion key’lari kengaytirildi, shuning uchun `в том числе ... Click Dashboard` va `Следовательно ... доступны для назначения` kabi dependent fragmentlar mavjud kuchli requirement bilan bir semantics deb taniladi.
+  - Natijada model qaytargan yaxshi 4 ta requirement ustiga ortiqcha `REQ-5..REQ-8` qo‘shilib ketish holati yopildi.
+
+- [tests/test_tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/tests/test_tzpr_multi_agent.py):
+  - Jira contact/attachment markup TZ candidate’ga kirmasligi regression bilan yopildi.
+  - `DEV-7172`ga o‘xshash bug taskda model 4 ta to‘g‘ri requirement qaytarganda, safety-net yana fragment va metadata qo‘shib yubormasligi test bilan tasdiqlandi.
+
+- Tekshiruv:
+  - `./.venv/bin/python -m py_compile services/checkers/tzpr_multi_agent.py tests/test_tzpr_multi_agent.py` ✅
+  - `./.venv/bin/pytest -q tests/test_tzpr_multi_agent.py tests/test_tzpr_ui_contract.py` ✅ (`38 passed`)
+
+#### 2026-05-18 - DEV-8358 uchun checker input-context debug eksporti qo‘shildi
+
+- [scripts/debug_tzpr_input_context.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/scripts/debug_tzpr_input_context.py):
+  - Multi-agent checker run yaratib, Agent1/Agent2/Agent3 yoki Gemini chaqirmasdan `_collect_context()` natijasini eksport qiladigan debug skript qo‘shildi.
+  - Eksport ichiga Jira `task_details`, checker `tz_content/comment/figma/pr` contexti, sanitized `agent1_input`, Agent1 source stats va TZ candidate itemlari kiritildi.
+
+- DEV-8358 debug natijasi:
+  - JSON: [tzpr_input_context_DEV-8358_20260518_142647.json](/Users/mac/Documents/projects/JIRA-AI-Analyzer/data/debug/tzpr_input_context_DEV-8358_20260518_142647.json)
+  - MD: [tzpr_input_context_DEV-8358_20260518_142647.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/data/debug/tzpr_input_context_DEV-8358_20260518_142647.md)
+
+- Tekshiruv:
+  - `./.venv/bin/python -m py_compile scripts/debug_tzpr_input_context.py` ✅
+  - `./.venv/bin/python scripts/debug_tzpr_input_context.py --task-key DEV-8358 --user-id 160 --company-id 329 --execution-mode multi_agent` ✅
+
+#### 2026-05-18 - Jira task snapshot cache va PR/Figma request optimizatsiyasi
+
+- [utils/jira/task_details_cache.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/utils/jira/task_details_cache.py):
+  - Webhook zanjirida `checker -> testcase` ketma-ket ishlaganda Jira task ma'lumotlarini qayta tortmaslik uchun 5 daqiqalik process-local cache qo‘shildi.
+  - Cache key Jira server + email + task key bo‘yicha ajratiladi.
+
+- [utils/jira/jira_client.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/utils/jira/jira_client.py):
+  - `get_task_details()` endi `include_pr_urls`, `include_figma_links`, `use_cache` flaglarini qabul qiladi.
+  - PR dev-status uchun kerakli `issue_id` birinchi issue snapshotdan olinadi; faqat issue id uchun Jira qayta chaqirilmaydi.
+  - Figma link extraction endi mavjud `description/comments`dan ishlaydi; Figma link qidirish uchun Jira qayta chaqirilmaydi.
+  - Cache’da base snapshot bor, lekin PR/Figma yetishmasa, faqat yetishmayotgan qismi boyitiladi.
+
+- [services/generators/testcase_generator.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/generators/testcase_generator.py):
+  - `include_pr=False` bo‘lsa testcase generator Jira dev-status PR lookup qilmaydigan bo‘ldi.
+
+- [services/checkers/tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_multi_agent.py):
+  - `only_agent1` mode’da PR link lookup so‘ralmaydi; `multi_agent` mode’da PR link kerakligi aniq flag orqali beriladi.
+
+- Tekshiruv:
+  - `./.venv/bin/python -m py_compile utils/jira/jira_client.py utils/jira/task_details_cache.py services/checkers/tz_pr_checker.py services/checkers/tzpr_multi_agent.py services/generators/testcase_generator.py tests/test_jira_client.py` ✅
+  - Manual Jira cache check ✅
+  - `./.venv/bin/pytest -q tests/test_jira_client.py` hozir repo test fixture’dagi DB backend sozlamasi sabab setup bosqichida yiqildi (`APP_POSTGRES_DSN bo'sh`), test kodiga yetib bormadi.
+
+#### 2026-05-18 - Figma source faqat Jira description bilan cheklandi
+
+- [utils/jira/jira_figma_helper.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/utils/jira/jira_figma_helper.py):
+  - Figma URL extraction endi faqat Jira `description` textidan ishlaydi; comment ichidagi Figma linklar source sifatida olinmaydi.
+
+- [services/checkers/tz_pr_checker.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tz_pr_checker.py), [services/checkers/tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_multi_agent.py):
+  - Checker `ai_data_section_order` ichida `figma` yoqilgan bo‘lsa Figma link extraction qiladi, aks holda task snapshotda Figma link so‘ramaydi.
+
+- [services/generators/testcase_generator.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/generators/testcase_generator.py):
+  - Testcase generator Figma ishlatmagani uchun Jira task snapshotda Figma link extraction so‘ramaydigan qilindi.
+
+- Tekshiruv:
+  - `./.venv/bin/python -m py_compile utils/jira/jira_figma_helper.py utils/jira/jira_client.py services/checkers/tz_pr_checker.py services/checkers/tzpr_multi_agent.py services/generators/testcase_generator.py` ✅
+  - Manual description-only Figma extraction check ✅
+
+#### 2026-05-18 - Agent1 input faqat allowed source'larga tozalandi
+
+- [services/checkers/tzpr_multi_agent.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/checkers/tzpr_multi_agent.py):
+  - Agent1 sanitized inputidan `untrusted_comment_signals` olib tashlandi; untrusted commentlar Agent1 requirement source bo‘la olmaydi.
+  - Agent1 sanitized inputidan `source_metadata` ham olib tashlandi.
+  - Agent1 promptidan `TZ SECTIONS`/candidate checklist va `UNTRUSTED COMMENT SIGNALS` bo‘limlari olib tashlandi.
+  - Agent1 prompt endi faqat `filtered_tz`, `filtered_comments`, `filtered_figma_text` oladi.
+  - Candidate extraction checker ichki fallback/audit oqimidan ham Agent1 run path uchun uzildi; Agent1 promptiga yoki re-promptga yuborilmaydi.
+  - Coverage re-prompt orqali candidate itemlarni Agent1’ga qayta yuborish to‘xtatildi.
+
+- Tekshiruv:
+  - `./.venv/bin/python -m py_compile services/checkers/tzpr_multi_agent.py` ✅
+  - `./.venv/bin/python scripts/debug_tzpr_input_context.py --task-key DEV-8358 --user-id 160 --company-id 329 --execution-mode multi_agent` ✅
+  - DEV-8358 debugda `agent1_input` keys: `filtered_tz`, `filtered_comments`, `filtered_figma_text` ✅
+  - Manual Agent1 prompt sanitized-only check ✅

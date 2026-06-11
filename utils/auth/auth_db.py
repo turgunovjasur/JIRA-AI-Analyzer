@@ -20,7 +20,6 @@ Arxitektura:
 
 Author: JASUR TURGUNOV
 """
-import sqlite3
 import hashlib
 import json
 import os
@@ -29,13 +28,7 @@ import secrets
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List, Tuple
 from core.logger import get_logger
-from utils.database.runtime import (
-    ensure_data_dir,
-    get_auth_db_path,
-    connect_auth_sqlite,
-    connect_auth_db,
-    is_sqlite_backend,
-)
+from utils.database.runtime import connect_auth_db
 from utils.auth.company_repository import (
     fetch_company_by_id,
     fetch_company_by_code,
@@ -89,22 +82,7 @@ from utils.auth.platform_repository import (
     touch_web_session,
     revoke_web_session,
 )
-from utils.auth.auth_schema import (
-    migrate_user_credentials as schema_migrate_user_credentials,
-    migrate_figma_tokens as schema_migrate_figma_tokens,
-    migrate_global_settings as schema_migrate_global_settings,
-    migrate_platform_admins as schema_migrate_platform_admins,
-    migrate_gemini_model as schema_migrate_gemini_model,
-    migrate_login_attempts as schema_migrate_login_attempts,
-    migrate_login_audit_logs as schema_migrate_login_audit_logs,
-    migrate_user_password_reset_tokens as schema_migrate_user_password_reset_tokens,
-    migrate_user_roles as schema_migrate_user_roles,
-    migrate_company_subscriptions as schema_migrate_company_subscriptions,
-)
-from utils.auth.auth_bootstrap import (
-    maybe_backup_legacy_auth_db,
-    run_auth_schema_bootstrap,
-)
+from utils.auth.auth_bootstrap import run_auth_bootstrap
 from utils.auth.auth_config_helpers import (
     build_company_gemini_keys,
     build_company_credentials,
@@ -121,7 +99,7 @@ from utils.auth.auth_subscription_helpers import (
     get_effective_company_modules as helper_get_effective_company_modules,
 )
 
-log = get_logger("auth.db")
+log = get_logger("auth_db")
 
 # Barcha mavjud modullar ro'yxati (super admin shu ro'yxatdan tanlaydi)
 ALL_MODULES = {
@@ -175,8 +153,6 @@ WEB_SESSION_TTL_MINUTES = max(
     ),
 )
 
-AUTH_DB_FILE = get_auth_db_path()
-
 # Username formati: "name@company_code"
 # name qismi: lotin harflar, raqam, nuqta, tire, underscore
 # company_code qismi: lotin harflar va raqam
@@ -184,22 +160,8 @@ _USERNAME_RE = re.compile(r'^[a-z0-9._-]+@[a-z0-9]+$')
 _PLAN_NAME_RE = re.compile(r'^[a-z0-9][a-z0-9_-]{1,31}$')
 
 
-def _ensure_dir():
-    ensure_data_dir()
-
-
-def _get_conn() -> sqlite3.Connection:
-    conn = connect_auth_db(timeout=30)
-    if is_sqlite_backend():
-        # PRAGMA journal_mode=WAL cursor'ini to'liq iste'mol qilish kerak,
-        # aks holda read-lock ushlanadi va "database is locked" xatosi chiqadi.
-        cur = conn.execute("PRAGMA journal_mode=WAL")
-        cur.fetchone()
-        cur.close()
-        conn.execute("PRAGMA busy_timeout=30000")
-        conn.execute("PRAGMA foreign_keys=ON")
-        conn.execute("PRAGMA synchronous=NORMAL")
-    return conn
+def _get_conn():
+    return connect_auth_db(timeout=30)
 
 
 def validate_username_format(full_username: str) -> bool:
@@ -234,7 +196,7 @@ def _normalize_project_keys(raw_keys: str) -> List[str]:
     return [k.strip().upper() for k in (raw_keys or '').split(',') if k.strip()]
 
 
-def _find_project_key_conflicts(conn: sqlite3.Connection, company_id: int, project_keys: List[str]) -> List[str]:
+def _find_project_key_conflicts(conn, company_id: int, project_keys: List[str]) -> List[str]:
     """Boshqa kompaniyalar bilan project key to'qnashuvlarini topish."""
     return find_project_key_conflicts(conn, company_id, project_keys, _normalize_project_keys)
 
@@ -270,26 +232,15 @@ def _now_matching(value: Optional[datetime]) -> datetime:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def init_auth_db():
-    """Auth DB jadvallarini yaratish (idempotent). Eski schema aniqlansa backup + fresh."""
-    _ensure_dir()
-
-    backup = maybe_backup_legacy_auth_db(_get_conn, AUTH_DB_FILE)
-    if backup:
-        print(f"[auth_db] Eski schema aniqlandi. Backup: {backup}")
-
+    """Auth DB runtime jadvallarini yaratish (idempotent)."""
     conn = _get_conn()
-    run_auth_schema_bootstrap(
+    run_auth_bootstrap(
         conn,
         default_plan_name=DEFAULT_PLAN_NAME,
         default_billing_mode=DEFAULT_BILLING_MODE,
     )
     conn.close()
     seed_default_platform_admin()
-
-
-def _migrate_user_credentials(conn: sqlite3.Connection):
-    """user_credentials jadvali mavjud emasligini tekshirib yaratish (migration)."""
-    schema_migrate_user_credentials(conn)
 
 
 def _parse_figma_tokens(raw) -> list:
@@ -305,49 +256,6 @@ def _parse_figma_tokens(raw) -> list:
         return []
 
 
-def _migrate_figma_tokens(conn: sqlite3.Connection):
-    """company_settings va user_credentials ga figma_tokens ustunini qo'shish."""
-    schema_migrate_figma_tokens(conn)
-
-
-def _migrate_global_settings(conn: sqlite3.Connection):
-    """global_settings jadvali yo'q bo'lsa yaratish."""
-    schema_migrate_global_settings(conn)
-
-
-def _migrate_platform_admins(conn: sqlite3.Connection):
-    """platform_admins jadvali yo'q bo'lsa yaratish."""
-    schema_migrate_platform_admins(conn)
-
-
-def _migrate_gemini_model(conn: sqlite3.Connection):
-    """user_credentials va company_settings ga gemini_model ustunini qo'shish."""
-    schema_migrate_gemini_model(conn)
-
-
-def _migrate_login_attempts(conn: sqlite3.Connection):
-    """login_attempts jadvali yo'q bo'lsa yaratish (migration)."""
-    schema_migrate_login_attempts(conn)
-
-
-def _migrate_login_audit_logs(conn: sqlite3.Connection):
-    """login_audit_logs jadvali yo'q bo'lsa yaratish (migration)."""
-    schema_migrate_login_audit_logs(conn)
-
-
-def _migrate_user_password_reset_tokens(conn: sqlite3.Connection):
-    """user_password_reset_tokens jadvali yo'q bo'lsa yaratish (migration)."""
-    schema_migrate_user_password_reset_tokens(conn)
-
-
-def _migrate_user_roles(conn: sqlite3.Connection):
-    """users jadvaliga role ustunini qo'shish."""
-    schema_migrate_user_roles(conn)
-
-
-def _migrate_company_subscriptions(conn: sqlite3.Connection):
-    """company_subscriptions jadvalini yaratish va eski companylarni backfill qilish."""
-    schema_migrate_company_subscriptions(conn, DEFAULT_PLAN_NAME, DEFAULT_BILLING_MODE)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -520,6 +428,13 @@ def get_global_gemini_defaults() -> dict:
         'api_key_1': get_global_setting('gemini_default_api_key_1'),
         'api_key_2': get_global_setting('gemini_default_api_key_2'),
         'model':     get_global_setting('gemini_default_model'),
+        'fallback_model': get_global_setting('gemini_default_fallback_model', 'gemini-2.5-flash'),
+        'agent1_primary_model': get_global_setting('checker_agent1_primary_model', 'gemini-2.5-flash'),
+        'agent1_fallback_model': get_global_setting('checker_agent1_fallback_model', 'gemini-2.5-flash'),
+        'agent2_primary_model': get_global_setting('checker_agent2_primary_model', 'gemini-2.5-pro'),
+        'agent2_fallback_model': get_global_setting('checker_agent2_fallback_model', 'gemini-2.5-flash'),
+        'agent3_primary_model': get_global_setting('checker_agent3_primary_model', 'gemini-2.5-flash'),
+        'agent3_fallback_model': get_global_setting('checker_agent3_fallback_model', 'gemini-2.5-flash'),
     }
 
 
@@ -587,11 +502,6 @@ def create_company(
             f"seat_limit={max(0, int(seat_limit))} | webhook={bool(mods.get('webhook'))}"
         )
         return get_company_by_code(code_lower)
-    except sqlite3.IntegrityError as exc:
-        log.warning(
-            f"create_company integrity error | code={company_code.strip().lower()} | err={exc}"
-        )
-        return None
     except Exception as exc:
         log.error(
             f"create_company unexpected error | code={company_code.strip().lower()} | "

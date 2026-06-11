@@ -78,7 +78,7 @@ Chiqish natijasi:
 
 ### 3. Data Layer Migration
 
-Maqsad: `SQLite`dan production darajadagi bazaga o'tish.
+Maqsad: production darajadagi PostgreSQL data layerni to'liq ishlatish.
 
 Must Have:
 - `PostgreSQL`ga o'tish

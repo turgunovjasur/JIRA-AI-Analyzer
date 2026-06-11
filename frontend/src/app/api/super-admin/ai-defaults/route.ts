@@ -17,6 +17,12 @@ export async function POST(request: Request) {
       fallback_model?: string;
       key_freeze_minutes?: number;
       model?: string;
+      agent1_primary_model?: string;
+      agent1_fallback_model?: string;
+      agent2_primary_model?: string;
+      agent2_fallback_model?: string;
+      agent3_primary_model?: string;
+      agent3_fallback_model?: string;
     } | null;
 
     const freezeMinutesRaw = Number(payload?.key_freeze_minutes ?? 10);
@@ -28,6 +34,12 @@ export async function POST(request: Request) {
       ["gemini_default_model", (payload?.model || "").trim()],
       ["gemini_default_fallback_model", (payload?.fallback_model || "gemini-2.5-flash").trim()],
       ["gemini_key_freeze_minutes", String(freezeMinutes)],
+      ["checker_agent1_primary_model", (payload?.agent1_primary_model || "gemini-2.5-flash").trim()],
+      ["checker_agent1_fallback_model", (payload?.agent1_fallback_model || "gemini-2.5-flash").trim()],
+      ["checker_agent2_primary_model", (payload?.agent2_primary_model || "gemini-2.5-pro").trim()],
+      ["checker_agent2_fallback_model", (payload?.agent2_fallback_model || "gemini-2.5-flash").trim()],
+      ["checker_agent3_primary_model", (payload?.agent3_primary_model || "gemini-2.5-flash").trim()],
+      ["checker_agent3_fallback_model", (payload?.agent3_fallback_model || "gemini-2.5-flash").trim()],
     ];
 
     // Bo'sh qiymat yuborilsa, saqlangan kalitni o'chirmaymiz.

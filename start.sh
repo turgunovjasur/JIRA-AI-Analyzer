@@ -292,21 +292,14 @@ PY
 }
 
 choose_database_backend() {
-  local configured_backend="${APP_DB_BACKEND:-$(dotenv_get APP_DB_BACKEND)}"
   local configured_dsn="${APP_POSTGRES_DSN:-$(dotenv_get APP_POSTGRES_DSN)}"
 
-  configured_backend="$(printf '%s' "${configured_backend:-postgres}" | tr '[:upper:]' '[:lower:]')"
-  if [[ "$configured_backend" != "postgres" ]]; then
-    die "Faqat PostgreSQL qo'llab-quvvatlanadi. APP_DB_BACKEND=postgres bo'lishi shart."
-  fi
-
   if postgres_ready "$configured_dsn" >/dev/null 2>&1; then
-    export APP_DB_BACKEND="postgres"
     export APP_POSTGRES_DSN="$configured_dsn"
     return 0
   fi
 
-  die "APP_DB_BACKEND=postgres, lekin PostgreSQL ulanmayapti. SQLite fallback o'chirilgan."
+  die "PostgreSQL ulanmayapti. APP_POSTGRES_DSN to'g'ri sozlangan bo'lishi shart."
 }
 
 bootstrap_local_databases() {
@@ -375,7 +368,7 @@ print_banner
 log "UI  (Next.js)   : http://127.0.0.1:${NEXT_PORT}"
 log "API (FastAPI)   : ${BACKEND_BASE_URL}"
 log "Mode            : ${WEBHOOK_EXECUTION_MODE}"
-log "DB backend      : ${APP_DB_BACKEND}"
+log "DB              : PostgreSQL"
 log "DATA_DIR        : ${DATA_DIR}"
 log "VECTOR_DB_PATH  : ${VECTOR_DB_PATH}"
 log "MODELS_DIR      : ${MODELS_DIR}"
@@ -406,7 +399,6 @@ else
     EXCEL_DIR="$EXCEL_DIR" \
     VECTOR_DB_PATH="$VECTOR_DB_PATH" \
     MODELS_DIR="$MODELS_DIR" \
-    APP_DB_BACKEND="$APP_DB_BACKEND" \
     APP_POSTGRES_DSN="$APP_POSTGRES_DSN" \
     APP_USE_BACKEND_API="$APP_USE_BACKEND_API" \
     APP_WEBHOOK_EXECUTION_MODE="$WEBHOOK_EXECUTION_MODE" \
@@ -443,7 +435,6 @@ if [[ "$START_WORKER" == "1" ]]; then
       EXCEL_DIR="$EXCEL_DIR" \
       VECTOR_DB_PATH="$VECTOR_DB_PATH" \
       MODELS_DIR="$MODELS_DIR" \
-      APP_DB_BACKEND="$APP_DB_BACKEND" \
       APP_POSTGRES_DSN="$APP_POSTGRES_DSN" \
       APP_USE_BACKEND_API="$APP_USE_BACKEND_API" \
       APP_WEBHOOK_EXECUTION_MODE="$WEBHOOK_EXECUTION_MODE" \

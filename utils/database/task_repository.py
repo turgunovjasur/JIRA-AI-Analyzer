@@ -9,7 +9,6 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Callable
 from utils.database.repository_common import (
-    uses_postgres_params as _uses_postgres_params,
     prepare_query as _prepare_query,
     execute as _execute,
     row_to_dict as _row_to_dict,
@@ -22,8 +21,6 @@ def fetch_task_by_id(
     timeout: float,
 ) -> Optional[Dict[str, Any]]:
     conn = connect_processing(timeout=timeout, row_factory=True)
-    if not _uses_postgres_params(conn):
-        _execute(conn, "PRAGMA synchronous=FULL")
     cursor = _execute(
         conn,
         """
@@ -42,22 +39,16 @@ def upsert_task_record(
     task_id: str,
     fields: Dict[str, Any],
     timeout: float,
-    busy_timeout: int,
 ) -> None:
     payload = dict(fields)
     conn = connect_processing(timeout=timeout)
     cursor = conn.cursor()
-    if not _uses_postgres_params(conn):
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute(f"PRAGMA busy_timeout={busy_timeout}")
-        cursor.execute("BEGIN IMMEDIATE")
     cursor.execute(_prepare_query(conn, "SELECT task_id FROM task_processing WHERE task_id = ?"), [task_id])
     exists = cursor.fetchone()
     payload["updated_at"] = datetime.now().isoformat()
 
     if exists:
-        placeholder = "%s" if _uses_postgres_params(conn) else "?"
-        set_clause = ", ".join(f"{key} = {placeholder}" for key in payload.keys())
+        set_clause = ", ".join(f"{key} = %s" for key in payload.keys())
         values = list(payload.values()) + [task_id]
         cursor.execute(
             _prepare_query(conn, f"UPDATE task_processing SET {set_clause} WHERE task_id = ?"),
@@ -67,7 +58,7 @@ def upsert_task_record(
         payload["task_id"] = task_id
         payload["created_at"] = datetime.now().isoformat()
         columns = ", ".join(payload.keys())
-        placeholders = ", ".join("%s" if _uses_postgres_params(conn) else "?" for _ in payload)
+        placeholders = ", ".join("%s" for _ in payload)
         values = list(payload.values())
         cursor.execute(f"INSERT INTO task_processing ({columns}) VALUES ({placeholders})", values)
 
@@ -101,14 +92,9 @@ def delete_task_record(
     task_id: str,
     company_id: Optional[int],
     timeout: float,
-    busy_timeout: int,
 ) -> bool:
     conn = connect_processing(timeout=timeout)
     cursor = conn.cursor()
-    if not _uses_postgres_params(conn):
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute(f"PRAGMA busy_timeout={busy_timeout}")
-        cursor.execute("BEGIN IMMEDIATE")
     if company_id is None:
         cursor.execute(_prepare_query(conn, "SELECT task_id FROM task_processing WHERE task_id = ?"), [task_id])
     else:
@@ -131,8 +117,6 @@ def delete_task_record(
             [task_id, company_id],
         )
     conn.commit()
-    if not _uses_postgres_params(conn):
-        cursor.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     if company_id is None:
         cursor.execute(_prepare_query(conn, "SELECT task_id FROM task_processing WHERE task_id = ?"), [task_id])
     else:
@@ -151,26 +135,15 @@ def fetch_stuck_tasks(
 ) -> List[Dict[str, Any]]:
     conn = connect_processing(row_factory=True)
     cutoff_time = (datetime.now() - timedelta(minutes=timeout_minutes)).isoformat()
-    if _uses_postgres_params(conn):
-        query = """
-        SELECT task_id, task_status, service1_status, service2_status,
-               last_processed_at, updated_at,
-               ROUND(EXTRACT(EPOCH FROM (NOW() - updated_at)) / 60.0) as stuck_minutes
-        FROM task_processing
-        WHERE task_status = 'progressing'
-          AND updated_at < ?
-        ORDER BY updated_at ASC
-        """
-    else:
-        query = """
-        SELECT task_id, task_status, service1_status, service2_status,
-               last_processed_at, updated_at,
-               ROUND((julianday('now') - julianday(updated_at)) * 1440) as stuck_minutes
-        FROM task_processing
-        WHERE task_status = 'progressing'
-          AND updated_at < ?
-        ORDER BY updated_at ASC
-        """
+    query = """
+    SELECT task_id, task_status, service1_status, service2_status,
+           last_processed_at, updated_at,
+           ROUND(EXTRACT(EPOCH FROM (NOW() - updated_at)) / 60.0) as stuck_minutes
+    FROM task_processing
+    WHERE task_status = 'progressing'
+      AND updated_at < ?
+    ORDER BY updated_at ASC
+    """
     cursor = _execute(conn, query, [cutoff_time])
     rows = cursor.fetchall()
     conn.close()
@@ -190,26 +163,15 @@ def insert_status_history(
     timeout: float,
 ) -> None:
     conn = connect_processing(timeout=timeout)
-    if _uses_postgres_params(conn):
-        cursor = _execute(
-            conn,
-            """
-            INSERT INTO task_status_history
-                (task_id, company_id, from_status, to_status, changed_at, assignee, story_points, issue_type)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [task_id, company_id, from_status, to_status, changed_at_iso, assignee, story_points, issue_type],
-        )
-    else:
-        cursor = _execute(
-            conn,
-            """
-            INSERT INTO task_status_history
-                (task_id, from_status, to_status, changed_at, assignee, story_points, issue_type)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            [task_id, from_status, to_status, changed_at_iso, assignee, story_points, issue_type],
-        )
+    _execute(
+        conn,
+        """
+        INSERT INTO task_status_history
+            (task_id, company_id, from_status, to_status, changed_at, assignee, story_points, issue_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [task_id, company_id, from_status, to_status, changed_at_iso, assignee, story_points, issue_type],
+    )
     conn.commit()
     conn.close()
 

@@ -198,7 +198,7 @@ CREATE TABLE IF NOT EXISTS job_runs (
 CREATE TABLE IF NOT EXISTS task_processing (
     id BIGSERIAL PRIMARY KEY,
     task_id VARCHAR(128) NOT NULL UNIQUE,
-    company_id BIGINT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    company_id BIGINT REFERENCES companies(id) ON DELETE CASCADE,
     task_status VARCHAR(32) NOT NULL DEFAULT 'none',
     task_update_time TIMESTAMPTZ,
     return_count INTEGER NOT NULL DEFAULT 0,

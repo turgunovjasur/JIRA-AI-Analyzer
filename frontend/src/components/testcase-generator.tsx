@@ -7,6 +7,7 @@ import { PRDetailsStack } from "@/components/pr-details-stack";
 import { AnalysisStatusBannerView } from "@/components/analysis-status-banner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { BaseCard } from "@/components/ui/card";
 import { MetricCard } from "@/components/ui/metric-card";
 import { Notice } from "@/components/ui/notice";
 import { SectionHeader } from "@/components/ui/section-header";
@@ -38,7 +39,12 @@ function priorityTone(priority: string): "danger" | "warning" | "soft" {
 
 function renderTestCaseCard(testCase: GeneratedTestCase) {
   return (
-    <details className="qa-tc-card" key={`${testCase.id}-${testCase.title}`}>
+    <BaseCard
+      as="details"
+      className="qa-tc-card"
+      key={`${testCase.id}-${testCase.title}`}
+      padding="none"
+    >
       <summary>
         <span className="qa-tc-id">{testCase.id}</span>
         <span className="flex-1 text-sm font-semibold text-foreground">
@@ -83,7 +89,7 @@ function renderTestCaseCard(testCase: GeneratedTestCase) {
           </div>
         ) : null}
       </div>
-    </details>
+    </BaseCard>
   );
 }
 
@@ -219,7 +225,7 @@ export function TestCaseGenerator() {
           </section>
 
           <section className="grid gap-4 lg:grid-cols-3">
-            <SettingsBaseCard className="card">
+            <SettingsBaseCard>
               <div className="inline-flex rounded-full bg-primary/10 p-2 text-primary">
                 <ClipboardList size={16} />
               </div>
@@ -228,7 +234,7 @@ export function TestCaseGenerator() {
                 {result.task_summary || "Task summary mavjud emas."}
               </p>
             </SettingsBaseCard>
-            <SettingsBaseCard className="card">
+            <SettingsBaseCard>
               <div className="inline-flex rounded-full bg-primary/10 p-2 text-primary">
                 <ListChecks size={16} />
               </div>
@@ -239,7 +245,7 @@ export function TestCaseGenerator() {
                 High priority testcase soni
               </p>
             </SettingsBaseCard>
-            <SettingsBaseCard className="card">
+            <SettingsBaseCard>
               <div className="inline-flex rounded-full bg-primary/10 p-2 text-primary">
                 <FileCode2 size={16} />
               </div>

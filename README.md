@@ -109,7 +109,7 @@ Izoh:
 - `start.sh` endi default holatda `Next.js` frontend + `FastAPI` backendni birga ko'taradi.
 - Customer, company admin va super admin oqimlari yangi web portal ichida ishlaydi.
 - `.env` ichida `APP_WEBHOOK_EXECUTION_MODE=queue` bo'lsa, `start.sh` worker'ni ham avtomatik ko'taradi.
-- Local run paytida `.env` ichida `APP_DB_BACKEND=postgres` bo'lsa-yu Postgres ulanmasa, `start.sh` mavjud `data/auth.db` va `data/processing.db` orqali avtomatik `sqlite` fallback qiladi.
+- Runtime faqat PostgreSQL bilan ishlaydi; `APP_POSTGRES_DSN` to'g'ri sozlangan bo'lishi kerak.
 - `.env` ichida Windows pathlar qolgan bo'lsa, `start.sh` local session uchun ularni repo ichidagi `data/` va `models/` papkalariga almashtirib beradi.
 - Yangi build'larda local backend avtomatik ko'tarishga urinadi; agar bu ishlamasa `logs/backend_api.log` ni tekshiring.
 - Qo'lda ishga tushirish kerak bo'lsa:

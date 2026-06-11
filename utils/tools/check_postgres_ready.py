@@ -6,7 +6,6 @@ Bu script real migratsiyani boshlashdan oldin quyidagilarni tekshiradi:
 - driver bormi
 - DSN bormi
 - schema file bormi
-- export/import artifactlar bormi
 """
 from __future__ import annotations
 
@@ -27,20 +26,14 @@ from utils.database.runtime import (
 
 def check_postgres_ready(
     schema_file: str | Path = "database/postgresql/001_initial_schema.sql",
-    export_dir: str | Path = "data/postgres_export",
-    import_sql_file: str | Path = "data/postgres_import/import.sql",
 ) -> dict:
     config = get_database_backend_config()
     schema_path = Path(schema_file)
-    export_path = Path(export_dir)
-    import_path = Path(import_sql_file)
 
     checks = {
         "driver_available": is_postgres_driver_available(),
         "dsn_configured": bool(config.postgres_dsn),
         "schema_file_exists": schema_path.exists(),
-        "export_manifest_exists": (export_path / "manifest.json").exists(),
-        "import_sql_exists": import_path.exists(),
     }
 
     missing = [name for name, ok in checks.items() if not ok]
@@ -51,9 +44,9 @@ def check_postgres_ready(
         "checks": checks,
         "missing": missing,
         "next_step": (
-            "Migration runnerni ishga tushiring."
+            "PostgreSQL schema bootstrapni ishga tushiring."
             if not missing
-            else "Missing bandlarni to'ldiring, keyin migration runnerni ishga tushiring."
+            else "Missing bandlarni to'ldiring, keyin schema bootstrapni ishga tushiring."
         ),
     }
 
@@ -63,10 +56,8 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     args = list(argv or sys.argv[1:])
     schema_file = args[0] if len(args) >= 1 else "database/postgresql/001_initial_schema.sql"
-    export_dir = args[1] if len(args) >= 2 else "data/postgres_export"
-    import_sql_file = args[2] if len(args) >= 3 else "data/postgres_import/import.sql"
 
-    result = check_postgres_ready(schema_file, export_dir, import_sql_file)
+    result = check_postgres_ready(schema_file)
     print(json.dumps(result, ensure_ascii=True, indent=2))
     return 0 if result["ok"] else 1
 

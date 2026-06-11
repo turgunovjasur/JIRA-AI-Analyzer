@@ -10,6 +10,8 @@ from datetime import datetime
 import re
 from typing import Any, Dict, Optional
 
+SUBSCRIPTION_SUPPORT_MESSAGE = "Super admin bilan bog'laning yoki +998936026869 raqamiga murojaat qiling."
+
 
 def normalize_iso_date(value: Any) -> tuple[str, Optional[datetime.date], str]:
     if hasattr(value, "isoformat") and not isinstance(value, str):
@@ -71,6 +73,8 @@ def validate_company_subscription_data(
 
     if status in {"trial", "active", "past_due"} and not end_date:
         return False, "Trial, active va past_due holatlari uchun billing end date kiritilishi shart.", {}
+    if status in {"trial", "active"} and end_date and end_date < datetime.now().date():
+        return False, "Trial va active holatlari uchun billing end date bugungi sanadan oldin bo'lishi mumkin emas.", {}
     if start_date and end_date and start_date > end_date:
         return False, "Billing start date billing end datedan keyin bo'lishi mumkin emas.", {}
     if last_date and next_date and last_date > next_date:
@@ -85,18 +89,18 @@ def is_company_subscription_active(subscription: Dict) -> tuple[bool, str]:
 
     status = (subscription.get("subscription_status") or "active").strip().lower()
     if status in {"suspended", "cancelled"}:
-        return False, f"Obuna holati: {status}. Admin bilan bog'laning."
+        return False, f"Obuna holati: {status}. {SUBSCRIPTION_SUPPORT_MESSAGE}"
 
     raw_end_date = subscription.get("billing_end_date")
     end_date = raw_end_date.isoformat() if hasattr(raw_end_date, "isoformat") and not isinstance(raw_end_date, str) else str(raw_end_date or "").strip()
     if status in {"trial", "active", "past_due"} and not end_date:
-        return False, "Obuna sanalari sozlanmagan. Admin bilan bog'laning."
+        return False, f"Obuna sanalari sozlanmagan. {SUBSCRIPTION_SUPPORT_MESSAGE}"
     if end_date and status in {"trial", "active"}:
         try:
             if datetime.now().date() > datetime.fromisoformat(end_date).date():
-                return False, "Obuna muddati tugagan. Admin bilan bog'laning."
+                return False, f"Obuna muddati tugagan. {SUBSCRIPTION_SUPPORT_MESSAGE}"
         except ValueError:
-            return False, "Obuna sanasi noto'g'ri sozlangan. Admin bilan bog'laning."
+            return False, f"Obuna sanasi noto'g'ri sozlangan. {SUBSCRIPTION_SUPPORT_MESSAGE}"
 
     return True, ""
 

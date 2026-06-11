@@ -3,7 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { Badge } from "@/components/ui/badge";
-import { Card } from "@/components/ui/card";
+import { BaseCard, Card } from "@/components/ui/card";
 import { MetricCard } from "@/components/ui/metric-card";
 import { SectionHeader } from "@/components/ui/section-header";
 import { getBackendHealth } from "@/lib/backend";
@@ -96,10 +96,13 @@ export default async function DashboardPage() {
           />
           <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {moduleLinks.map((item) => (
-              <Link
+              <BaseCard
+                as={Link}
                 className="qa-module-card group"
                 href={item.href}
+                interactive
                 key={item.href}
+                padding="none"
               >
                 <div className="qa-module-card-icon">
                   {item.icon}
@@ -110,7 +113,7 @@ export default async function DashboardPage() {
                   </strong>
                   <p className="mt-1 text-xs leading-5 text-muted-foreground">{item.note}</p>
                 </div>
-              </Link>
+              </BaseCard>
             ))}
           </div>
         </Card>

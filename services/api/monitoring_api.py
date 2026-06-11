@@ -6,7 +6,6 @@ from backend persistence without changing business logic.
 """
 from __future__ import annotations
 
-import os
 from typing import Any, Optional
 
 import pandas as pd
@@ -24,12 +23,8 @@ from utils.database.monitoring_repository import (
     task_exists,
 )
 from utils.database.runtime import (
-    apply_sqlite_fresh_read_pragmas,
-    checkpoint_sqlite_wal,
     connect_processing_db,
     get_db_backend,
-    get_processing_db_path,
-    is_sqlite_backend,
 )
 
 router = APIRouter(prefix="/api/monitoring", tags=["monitoring"])
@@ -43,20 +38,15 @@ def _df_records(df: pd.DataFrame) -> list[dict[str, Any]]:
 
 
 def _ensure_monitoring_storage_ready() -> None:
-    db_path = get_processing_db_path()
-    if is_sqlite_backend() and not os.path.exists(db_path):
-        raise HTTPException(status_code=404, detail="Monitoring database not found")
+    return None
 
 
 def _build_source_info() -> dict[str, Any]:
-    db_path = get_processing_db_path()
-    sqlite_backend = is_sqlite_backend()
-    db_exists = os.path.exists(db_path) if sqlite_backend else True
     return {
         "backend": get_db_backend(),
-        "source_label": "PostgreSQL" if not sqlite_backend else "Local monitoring storage",
-        "db_exists": db_exists,
-        "db_size_kb": (os.path.getsize(db_path) / 1024.0) if sqlite_backend and db_exists else None,
+        "source_label": "PostgreSQL",
+        "db_exists": True,
+        "db_size_kb": None,
     }
 
 
@@ -80,7 +70,6 @@ async def get_monitoring_snapshot(
 
     try:
         conn = connect_processing_db(timeout=30.0, row_factory=True)
-        apply_sqlite_fresh_read_pragmas(conn)
 
         overall_stats = get_overall_stats_df(conn, scoped_company_id)
         task_status_counts = get_task_status_counts_df(conn, scoped_company_id)
@@ -160,8 +149,6 @@ async def delete_monitoring_task(
             raise HTTPException(status_code=404, detail="Task not found or delete failed")
 
         verify_conn = connect_processing_db(timeout=30.0)
-        if is_sqlite_backend():
-            checkpoint_sqlite_wal(verify_conn, "TRUNCATE")
         still_exists = task_exists(verify_conn, normalized_task_key) if scoped_company_id is None else bool(
             get_task_for_delete_check(verify_conn, normalized_task_key, scoped_company_id)
         )

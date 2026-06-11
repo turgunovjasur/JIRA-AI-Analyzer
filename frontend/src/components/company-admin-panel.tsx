@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { BaseCard } from "@/components/ui/card";
 import { MetricCard } from "@/components/ui/metric-card";
 import { Notice } from "@/components/ui/notice";
 import { PageIntro } from "@/components/ui/page-intro";
@@ -299,7 +300,7 @@ export function CompanyAdminPanel({ companyName }: CompanyAdminPanelProps) {
                   const resetToken = resetTokens[user.id];
                   const isOpen = openUserId === user.id;
                   return (
-                    <article className="rounded-[16px] border border-border bg-layer" key={user.id}>
+                    <BaseCard as="article" className="bg-layer" key={user.id} padding="none" tone="soft">
                       <button
                         className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
                         onClick={() => setOpenUserId((current) => (current === user.id ? null : user.id))}
@@ -373,7 +374,7 @@ export function CompanyAdminPanel({ companyName }: CompanyAdminPanelProps) {
                           ) : null}
 
                           <div className="mt-4 grid gap-4 lg:grid-cols-2">
-                            <div className="space-y-4 rounded-[18px] border border-border bg-card p-4">
+                            <BaseCard as="div" className="space-y-4 p-4" padding="none">
                               <h4 className="text-lg font-semibold text-foreground">Parolni yangilash</h4>
                               <BaseInputField
                                 className={SETTINGS_INPUT_CLASS}
@@ -396,9 +397,9 @@ export function CompanyAdminPanel({ companyName }: CompanyAdminPanelProps) {
                               >
                                 Saqlash
                               </Button>
-                            </div>
+                            </BaseCard>
 
-                            <div className="space-y-4 rounded-[18px] border border-border bg-card p-4">
+                            <BaseCard as="div" className="space-y-4 p-4" padding="none">
                               <h4 className="text-lg font-semibold text-foreground">Reset Token</h4>
                               <p className="text-sm leading-6 text-muted-foreground">
                                 Token bir martalik bo'ladi va userga xavfsiz kanal orqali yuboriladi.
@@ -412,18 +413,18 @@ export function CompanyAdminPanel({ companyName }: CompanyAdminPanelProps) {
                                 Reset Token yaratish
                               </Button>
                               {resetToken ? (
-                                <div className="rounded-[16px] border border-border bg-layer p-4">
+                                <BaseCard as="div" className="bg-layer p-4" padding="none" tone="soft">
                                   <code className="break-all text-foreground">{resetToken.token}</code>
                                   <p className="mt-2 text-sm leading-6 text-muted-foreground">
                                     Amal qilish muddati: {resetToken.expires_at}
                                   </p>
-                                </div>
+                                </BaseCard>
                               ) : null}
-                            </div>
+                            </BaseCard>
                           </div>
                         </div>
                       ) : null}
-                    </article>
+                    </BaseCard>
                   );
                 })}
               </div>

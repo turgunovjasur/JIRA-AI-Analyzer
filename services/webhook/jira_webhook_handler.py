@@ -124,6 +124,19 @@ def get_adf_formatter() -> JiraADFFormatter:
     return _adf_formatter
 
 
+def _normalize_filter_value(value: str) -> str:
+    return str(value or "").strip().casefold()
+
+
+def _is_allowed_issue_type(issue_type: str, allowed_types_raw: str) -> bool:
+    allowed_types = [t.strip() for t in str(allowed_types_raw or "").split(",") if t.strip()]
+    if not allowed_types:
+        return True
+    normalized_issue_type = _normalize_filter_value(issue_type)
+    normalized_allowed = {_normalize_filter_value(item) for item in allowed_types}
+    return normalized_issue_type in normalized_allowed
+
+
 # Blocked retry scheduler uchun global task (startup'da yaratiladi)
 _blocked_retry_task: Optional[asyncio.Task] = None
 # Oxirgi log qilingan task — yangi task boshida separator uchun
@@ -416,7 +429,7 @@ async def _jira_webhook_impl(
         allowed_types_raw = settings.allowed_issue_types.strip()
         if allowed_types_raw:
             allowed_types = [t.strip() for t in allowed_types_raw.split(',') if t.strip()]
-            if issue_type not in allowed_types:
+            if not _is_allowed_issue_type(issue_type, allowed_types_raw):
                 log.info(f"[{task_key}] SKIP → type '{issue_type}' allowed list da yo'q {allowed_types}")
                 return {
                     "status": "ignored",

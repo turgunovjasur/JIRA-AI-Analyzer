@@ -12,33 +12,32 @@ Author: JASUR TURGUNOV
 import sys
 import os
 import json
-import sqlite3
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
-DB_FILE = os.path.join(PROJECT_ROOT, 'data', 'processing.db')
+from utils.database.runtime import connect_processing_db
 
 
 def list_db_tasks():
     """DB dagi task keylarni ko'rsatish"""
     print(f"\n{'='*60}")
-    print(f"  DB dagi task keylar: {DB_FILE}")
+    print("  DB dagi task keylar: PostgreSQL")
     print(f"{'='*60}")
-    if not os.path.exists(DB_FILE):
-        print("  ❌ DB fayl topilmadi")
+    try:
+        conn = connect_processing_db(row_factory=True)
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT task_id, task_type, task_status, assignee, created_at
+            FROM task_processing
+            ORDER BY created_at DESC
+            LIMIT 20
+        """)
+        rows = cur.fetchall()
+        conn.close()
+    except Exception as exc:
+        print(f"  ❌ DB ulanish xatosi: {exc}")
         return
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT task_id, task_type, task_status, assignee, created_at
-        FROM task_processing
-        ORDER BY created_at DESC
-        LIMIT 20
-    """)
-    rows = cur.fetchall()
-    conn.close()
     if not rows:
         print("  DB bo'sh")
         return

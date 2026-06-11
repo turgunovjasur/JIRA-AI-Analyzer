@@ -119,6 +119,17 @@ class CommentReadingSettings:
 @dataclass
 class TZPRCheckerSettings:
     """TZ-PR Checker modul sozlamalari"""
+    agent2_parallelism: int = 5
+    agent2_batch_size: int = 6
+    trusted_scope_comment_authors: str = ""
+    agent1_coverage_threshold: float = 1.0
+    agent1_primary_model: str = ""
+    agent1_fallback_model: str = ""
+    agent2_primary_model: str = ""
+    agent2_fallback_model: str = ""
+    agent3_primary_model: str = ""
+    agent3_fallback_model: str = ""
+
     # Threshold Sozlamalari
     return_threshold: int = 60
     auto_return_enabled: bool = False
@@ -200,11 +211,11 @@ class TZPRCheckerSettings:
     )
 
     # ━━━ TZ Minimal Uzunlik ━━━
-    # Ikkala servis (Servis-1 va Servis-2) uchun: description shu belgidan qisqa bo'lsa
+    # Ikkala servis (Servis-1 va Servis-2) uchun: summary + description shu belgidan qisqa bo'lsa
     # task qaytariladi va error comment yoziladi.
     min_tz_description_chars: int = 50
     min_tz_description_chars_help: str = (
-        "Task description shu belgidan qisqa bo'lsa ikkala servis ham to'xtatiladi: "
+        "Task summary + description shu belgidan qisqa bo'lsa ikkala servis ham to'xtatiladi: "
         "JIRA'ga error comment yoziladi va task qaytariladi. "
         "50 = bo'sh yoki faqat sarlavha bo'lsa servislar ishlamaydi."
     )
@@ -221,6 +232,11 @@ class TZPRCheckerSettings:
     # ━━━ PR Fayl Cheklovlari ━━━
     # analyze_task() da max fayl soni (full strategiya)
     pr_max_files: int = 3              # DEFAULT: 3 ta fayl ko'rsatiladi
+    excluded_file_patterns: str = (
+        "package-lock.json,yarn.lock,pnpm-lock.yaml,"
+        ".next/*,dist/*,build/*,coverage/*,node_modules/*,vendor/*,"
+        "*.min.*,*.map,*.generated.*,*.gen.*,generated/*,__generated__/*"
+    )
     # Oxirgi N ta developer comment AI ga yuboriladi
     dev_comments_max: int = 5          # DEFAULT: oxirgi 5 ta comment
 
@@ -234,11 +250,39 @@ class TZPRCheckerSettings:
         "AI ga yuboriladigan maksimal PR fayl soni. "
         "Token tejash uchun - ko'p fayl = ko'p token. 3 tavsiya etiladi."
     )
+    excluded_file_patterns_help: str = (
+        "AI diff kontekstidan chiqarib tashlanadigan fayl patternlari. "
+        "Vergul bilan ajrating: package-lock.json, dist/*, *.min.*"
+    )
     dev_comments_max_help: str = (
         "AI ga yuboriladigan oxirgi N ta developer comment soni. "
         "5 = oxirgi 5 ta comment. Ko'p berish token sarfini oshiradi."
     )
     return_threshold_help: str = "Moslik bali shu foizdan past bo'lsa task qaytariladi (0-100)"
+    trusted_scope_comment_authors_help: str = (
+        "Faqat shu JIRA displayName ro'yxatidagi authorlar comment orqali scope'ni o'zgartira oladi. "
+        "Vergul bilan ajrating. Bo'sh qolsa hech bir comment scope'ni o'zgartirmaydi."
+    )
+    agent1_coverage_threshold_help: str = "Agent1 TZ coverage re-prompt threshold qiymati (0.0-1.0). Default: 1.0 = 100%."
+    agent2_extra_scan_enabled: bool = True
+    agent2_extra_scan_enabled_help: str = (
+        "Agent2 extra scan (TZ da yo'q qo'shimcha kod o'zgarishlarni aniqlash) yoqilganmi. "
+        "False = extra scan o'chiriladi, faqat talablar tekshiriladi."
+    )
+    agent2_parallelism_help: str = (
+        "Agent2 per-requirement rejimida bir vaqtda nechta Gemini chaqiruv ishlashi. "
+        "1 = sequential, 5 = default."
+    )
+    agent2_batch_size_help: str = (
+        "Agent2 bir Gemini chaqiruvida nechta requirement tekshirishi. "
+        "1 = eski per-requirement rejim, 6 = default batch."
+    )
+    agent1_primary_model_help: str = "Agent1 Scope Builder primary modeli. Bo'sh bo'lsa global default meros olinadi."
+    agent1_fallback_model_help: str = "Agent1 Scope Builder fallback modeli. Bo'sh bo'lsa global default meros olinadi."
+    agent2_primary_model_help: str = "Agent2 Verifier primary modeli. Bo'sh bo'lsa global default meros olinadi."
+    agent2_fallback_model_help: str = "Agent2 Verifier fallback modeli. Bo'sh bo'lsa global default meros olinadi."
+    agent3_primary_model_help: str = "Agent3 Arbiter primary modeli. Bo'sh bo'lsa global default meros olinadi."
+    agent3_fallback_model_help: str = "Agent3 Arbiter fallback modeli. Bo'sh bo'lsa global default meros olinadi."
     auto_return_help: str = "Moslik past bo'lganda avtomatik Return statusga o'tkazish"
     trigger_status_help: str = "Qaysi statusda TZ-PR tekshirish boshlanadi"
     trigger_aliases_help: str = "Trigger status uchun alternativ nomlar (vergul bilan ajrating)"
@@ -272,6 +316,14 @@ class TZPRCheckerSettings:
             raise ValueError(
                 f"return_threshold {self.return_threshold}% noto'g'ri: 0-100 oralig'ida bo'lishi kerak"
             )
+        if not 0 <= float(self.agent1_coverage_threshold) <= 1:
+            raise ValueError(
+                f"agent1_coverage_threshold {self.agent1_coverage_threshold} noto'g'ri: 0.0-1.0 oralig'ida bo'lishi kerak"
+            )
+        if int(self.agent2_parallelism) < 1:
+            raise ValueError("agent2_parallelism noto'g'ri: 1 yoki undan katta bo'lishi kerak")
+        if int(self.agent2_batch_size) < 1:
+            raise ValueError("agent2_batch_size noto'g'ri: 1 yoki undan katta bo'lishi kerak")
         if self.max_skip_check_comments < 1:
             raise ValueError(
                 f"max_skip_check_comments {self.max_skip_check_comments} noto'g'ri: 1 dan katta bo'lishi kerak"
@@ -418,9 +470,9 @@ class QueueSettings:
     ai_max_input_tokens: int = AI_MAX_INPUT_TOKENS  # DEFAULT 900K (Gemini 2.5 Flash limit 1M)
     # Token hisoblash koeffitsiyenti (1 token ≈ nechta belgi)
     chars_per_token: int = CHARS_PER_TOKEN           # DEFAULT 4 belgi
-    # SQLite bloklanganda kutish (millisekund)
+    # DB lock/retry kutish budjeti (millisekund)
     db_busy_timeout: int = 30000       # DEFAULT 30000 ms (30 sek)
-    # SQLite ulanish timeout (sekund)
+    # DB ulanish timeout (sekund)
     db_connection_timeout: int = 30    # DEFAULT 30 sek
     # GitHub/API so'rov timeout (sekund)
     http_timeout: int = 30             # DEFAULT 30 sek
@@ -468,11 +520,11 @@ class QueueSettings:
         "Platform policy bo'yicha boshqariladi."
     )
     db_busy_timeout_help: str = (
-        "SQLite boshqa jarayon tomonidan bloklanganda qancha vaqt kutadi (millisekund). "
-        "30000 = 30 sekund. Concurrent access muammosi bo'lsa oshiring."
+        "DB lock/retry holatlarida qancha vaqt kutish budjeti beriladi (millisekund). "
+        "30000 = 30 sekund."
     )
     db_connection_timeout_help: str = (
-        "SQLite ga ulanish ochish timeout (sekund). "
+        "DB ga ulanish ochish timeout (sekund). "
         "Normal sharoitda 30 sekund yetarli."
     )
     http_timeout_help: str = (
@@ -639,6 +691,21 @@ class AppSettingsManager:
                     data['testcase_generator'] = tc_data
                     log.info("min_tz_description_chars testcase_generator → tz_pr_checker ga ko'chirildi")
 
+                for checker_key in ('tz_pr_checker', 'webhook_tz_pr'):
+                    checker_data = data.get(checker_key, {})
+                    if isinstance(checker_data, dict):
+                        checker_data.pop('agent1_figma_scope_enabled', None)
+                        checker_data.pop('checker_execution_mode', None)
+                        data[checker_key] = checker_data
+
+                # Eski settings fayllarida webhook_* bo'limlari yo'q edi.
+                # Bunday holatda eski xulq saqlanishi uchun webhook sozlamalari
+                # standalone modul sozlamalaridan boshlang'ich qiymat oladi.
+                if 'webhook_tz_pr' not in data:
+                    data['webhook_tz_pr'] = dict(data.get('tz_pr_checker', {}))
+                if 'webhook_testcase' not in data:
+                    data['webhook_testcase'] = dict(data.get('testcase_generator', {}))
+
                 # Nested dataclass'larni yaratish
                 settings = AppSettings(
                     modules=ModuleVisibility(**data.get('modules', {})),
@@ -727,6 +794,20 @@ class AppSettingsManager:
 
 _settings_manager: Optional[AppSettingsManager] = None
 
+_CHECKER_AGENT_MODEL_DEFAULTS = {
+    "agent1_primary_model": "gemini-2.5-flash",
+    "agent1_fallback_model": "gemini-2.5-flash",
+    "agent2_primary_model": "gemini-2.5-pro",
+    "agent2_fallback_model": "gemini-2.5-flash",
+    "agent3_primary_model": "gemini-2.5-flash",
+    "agent3_fallback_model": "gemini-2.5-flash",
+}
+
+_CHECKER_AGENT_MODEL_GLOBAL_KEYS = {
+    field_name: f"checker_{field_name}"
+    for field_name in _CHECKER_AGENT_MODEL_DEFAULTS
+}
+
 
 def _parse_positive_int_or_default(raw: str, default: int) -> int:
     try:
@@ -780,6 +861,28 @@ def _apply_global_queue_overrides(settings: AppSettings) -> AppSettings:
     return settings
 
 
+def _apply_global_checker_overrides(settings: AppSettings) -> AppSettings:
+    """
+    Platform-level (super admin) TZ-PR agent model defaultlarini qo'llash.
+
+    Company/user settings bo'sh string qoldirsa, bu global qiymatlar meros bo'lib
+    ishlaydi. Yangi Gemini model nomlari kod validatsiyasisiz saqlanishi mumkin.
+    """
+    try:
+        from utils.auth.auth_db import get_global_setting
+    except Exception:
+        return settings
+
+    overrides: dict[str, str] = {}
+    for field_name, setting_key in _CHECKER_AGENT_MODEL_GLOBAL_KEYS.items():
+        default_value = _CHECKER_AGENT_MODEL_DEFAULTS[field_name]
+        overrides[field_name] = str(get_global_setting(setting_key, default_value) or "").strip()
+
+    settings.tz_pr_checker = dc_replace(settings.tz_pr_checker, **overrides)
+    settings.webhook_tz_pr = dc_replace(settings.webhook_tz_pr, **overrides)
+    return settings
+
+
 def get_app_settings(force_reload: bool = False) -> AppSettings:
     """Tizim sozlamalarini olish (global funksiya)
     
@@ -791,7 +894,7 @@ def get_app_settings(force_reload: bool = False) -> AppSettings:
     if _settings_manager is None:
         _settings_manager = AppSettingsManager()
     settings = _settings_manager.get_settings(force_reload=force_reload)
-    return _apply_global_queue_overrides(settings)
+    return _apply_global_checker_overrides(_apply_global_queue_overrides(settings))
 
 
 def save_app_settings(settings: AppSettings) -> bool:
@@ -847,8 +950,16 @@ def get_app_settings_for_company(company_id: int) -> AppSettings:
         if not override_dict:
             return base_obj
         known = {f.name for f in dc_fields(base_obj)}
-        clean = {k: v for k, v in override_dict.items()
-                 if k in known and not k.endswith('_help') and not k.startswith('_')}
+        clean = {
+            k: v
+            for k, v in override_dict.items()
+            if (
+                k in known
+                and not k.endswith('_help')
+                and not k.startswith('_')
+                and not (k in _CHECKER_AGENT_MODEL_DEFAULTS and str(v or "").strip() == "")
+            )
+        }
         if not clean:
             return base_obj
         try:
@@ -894,8 +1005,16 @@ def get_app_settings_for_user(user_id: int, company_id: int) -> AppSettings:
         if not override_dict:
             return base_obj
         known = {f.name for f in dc_fields(base_obj)}
-        clean = {k: v for k, v in override_dict.items()
-                 if k in known and not k.endswith('_help') and not k.startswith('_')}
+        clean = {
+            k: v
+            for k, v in override_dict.items()
+            if (
+                k in known
+                and not k.endswith('_help')
+                and not k.startswith('_')
+                and not (k in _CHECKER_AGENT_MODEL_DEFAULTS and str(v or "").strip() == "")
+            )
+        }
         if not clean:
             return base_obj
         try:

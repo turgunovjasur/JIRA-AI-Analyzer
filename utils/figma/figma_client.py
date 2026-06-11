@@ -177,18 +177,19 @@ class FigmaClient:
             else:
                 lines.append("⚠️  Frame'lar topilmadi")
 
-            text_snippets = self.get_text_snippets(file_key, node_id=node_id, max_items=20)
+            text_snippets = self.get_text_snippets(file_key, node_id=node_id, max_items=30)
             if text_snippets:
                 lines.append("")
                 lines.append(f"📝 FIGMA MATNLARI ({len(text_snippets)} ta):")
                 lines.append("─" * 60)
                 for i, item in enumerate(text_snippets, 1):
-                    lines.append(f"{i}. [{item['node_type']}] {item['node_name']}: {item['text']}")
+                    frame_label = f"[Frame: {item['frame_name']}] " if item.get('frame_name') else ""
+                    lines.append(f"{i}. {frame_label}{item['node_name']}: {item['text']}")
             else:
                 lines.append("")
                 lines.append("📝 FIGMA MATNLARI: topilmadi")
 
-            figma_comments = self.get_file_comments(file_key, node_id=node_id, max_items=10)
+            figma_comments = self.get_file_comments(file_key, node_id=node_id, max_items=15)
             if figma_comments:
                 lines.append("")
                 lines.append(f"💬 FIGMA COMMENT'LAR ({len(figma_comments)} ta):")
@@ -204,12 +205,16 @@ class FigmaClient:
         except Exception as e:
             return f"Figma summary error: {str(e)}"
 
-    def _collect_text_nodes(self, node: Dict, out: List[Dict], max_items: int = 20):
-        """Node daraxtidan TEXT qatlamlarini yig'ish."""
+    def _collect_text_nodes(self, node: Dict, out: List[Dict], max_items: int = 20, _frame_name: str = ""):
+        """Node daraxtidan TEXT qatlamlarini yig'ish, har birida frame_name bilan."""
         if not node or len(out) >= max_items:
             return
 
         node_type = node.get('type', '')
+        current_frame = _frame_name
+        if node_type in ('FRAME', 'COMPONENT', 'INSTANCE', 'SECTION'):
+            current_frame = node.get('name', '') or _frame_name
+
         if node_type == 'TEXT':
             raw = (node.get('characters') or '').strip()
             if raw:
@@ -219,13 +224,14 @@ class FigmaClient:
                         'node_id': node.get('id', ''),
                         'node_name': node.get('name', 'Text'),
                         'node_type': node_type,
+                        'frame_name': current_frame,
                         'text': cleaned[:500]
                     })
                     if len(out) >= max_items:
                         return
 
         for child in (node.get('children') or []):
-            self._collect_text_nodes(child, out, max_items=max_items)
+            self._collect_text_nodes(child, out, max_items=max_items, _frame_name=current_frame)
             if len(out) >= max_items:
                 return
 
@@ -281,10 +287,40 @@ class FigmaClient:
         except Exception:
             return []
 
-    def get_file_comments(self, file_key: str, node_id: str = None, max_items: int = 10) -> List[Dict]:
+    def _get_node_subtree_ids(self, file_key: str, node_id: str) -> set:
+        """node_id subtree'sindagi barcha node ID'larini qaytarish (comment filter uchun)."""
+        normalized = self._normalize_node_id(node_id)
+        if not normalized:
+            return set()
+        ids: set = {normalized}
+        try:
+            url = f"{self.base_url}/files/{file_key}/nodes"
+            response = requests.get(
+                url, headers=self.headers, timeout=15,
+                params={'ids': normalized, 'depth': 8}
+            )
+            if response.status_code != 200:
+                return ids
+            payload = response.json()
+            node_info = (payload.get('nodes') or {}).get(normalized) or {}
+            document = node_info.get('document') or {}
+            self._collect_node_ids(document, ids)
+        except Exception:
+            pass
+        return ids
+
+    def _collect_node_ids(self, node: Dict, out: set) -> None:
+        nid = node.get('id') or ''
+        if nid:
+            out.add(nid.replace('-', ':'))
+        for child in (node.get('children') or []):
+            self._collect_node_ids(child, out)
+
+    def get_file_comments(self, file_key: str, node_id: str = None, max_items: int = 15) -> List[Dict]:
         """
         Figma file comment'larini qaytaradi.
-        node_id berilsa, shu node bilan bog'liq comment'lar ustuvor olinadi.
+        node_id berilsa, FAQAT shu node subtree'siga anchored comment'lar qaytariladi.
+        Subtree'dan tashqaridagi comment'lar to'liq o'tkazib yuboriladi (fallback yo'q).
         """
         normalized = self._normalize_node_id(node_id)
         try:
@@ -311,9 +347,11 @@ class FigmaClient:
                 })
 
             if normalized:
-                node_related = [c for c in parsed if c.get('node_id') == normalized]
-                if node_related:
-                    return node_related[:max_items]
+                subtree_ids = self._get_node_subtree_ids(file_key, normalized)
+                node_related = [c for c in parsed if c.get('node_id') in subtree_ids]
+                if not node_related:
+                    _log.info(f"Figma: node_id={normalized} uchun subtree'ga anchored comment topilmadi, barchasi o'tkazildi.")
+                return node_related[:max_items]
 
             return parsed[:max_items]
         except Exception:

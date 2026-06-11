@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from typing import Dict, Optional, List, Callable, Tuple
-from utils.auth.repository_common import execute, row_to_dict, uses_postgres_params
+from utils.auth.repository_common import execute, row_to_dict
 from utils.auth.credential_crypto import (
     decrypt_sensitive_fields,
     encrypt_sensitive_fields,
@@ -20,19 +20,16 @@ from utils.auth.credential_crypto import (
 
 def _column_names(conn, table_name: str) -> set[str]:
     try:
-        if uses_postgres_params(conn):
-            rows = execute(
-                conn,
-                """
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_schema = 'public' AND table_name = ?
-                """,
-                [table_name],
-            ).fetchall()
-            return {row[0] if not isinstance(row, dict) else row["column_name"] for row in rows}
-        rows = execute(conn, f"PRAGMA table_info({table_name})").fetchall()
-        return {row[1] for row in rows}
+        rows = execute(
+            conn,
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = ?
+            """,
+            [table_name],
+        ).fetchall()
+        return {row[0] if not isinstance(row, dict) else row["column_name"] for row in rows}
     except Exception:
         return set()
 
@@ -61,16 +58,12 @@ def insert_user(
     try:
         conn = get_conn()
         payload = [company_id, full_username, password_hash, role]
-        if uses_postgres_params(conn):
-            row = execute(
-                conn,
-                "INSERT INTO users (company_id, username, password_hash, role) VALUES (?,?,?,?) RETURNING id",
-                payload,
-            ).fetchone()
-            user_id = row["id"] if isinstance(row, dict) else row[0]
-        else:
-            c = execute(conn, "INSERT INTO users (company_id, username, password_hash, role) VALUES (?,?,?,?)", payload)
-            user_id = c.lastrowid
+        row = execute(
+            conn,
+            "INSERT INTO users (company_id, username, password_hash, role) VALUES (?,?,?,?) RETURNING id",
+            payload,
+        ).fetchone()
+        user_id = row["id"] if isinstance(row, dict) else row[0]
         conn.commit()
         conn.close()
         return user_id, None
@@ -294,14 +287,13 @@ def upsert_user_credentials(get_conn: Callable, user_id: int, filtered_data: Dic
                 )
         else:
             if exists:
-                placeholder = "%s" if uses_postgres_params(conn) else "?"
-                set_clause = ", ".join(f"{k} = {placeholder}" for k in payload)
+                set_clause = ", ".join(f"{k} = %s" for k in payload)
                 values = list(payload.values()) + [user_id]
                 execute(conn, f"UPDATE user_credentials SET {set_clause} WHERE user_id = ?", values)
             else:
                 payload['user_id'] = user_id
                 cols = ", ".join(payload.keys())
-                placeholders = ", ".join("%s" if uses_postgres_params(conn) else "?" for _ in payload)
+                placeholders = ", ".join("%s" for _ in payload)
                 execute(
                     conn,
                     f"INSERT INTO user_credentials ({cols}) VALUES ({placeholders})",
@@ -357,30 +349,17 @@ def fetch_user_module_settings(get_conn: Callable, user_id: int, module_key: str
 def upsert_user_module_settings(get_conn: Callable, user_id: int, module_key: str, data: dict) -> bool:
     try:
         conn = get_conn()
-        if uses_postgres_params(conn):
-            execute(
-                conn,
-                """
-                INSERT INTO user_module_settings (user_id, module_key, settings_json, updated_at)
-                VALUES (?, ?, ?::jsonb, ?)
-                ON CONFLICT(user_id, module_key) DO UPDATE SET
-                  settings_json = excluded.settings_json,
-                  updated_at    = excluded.updated_at
-                """,
-                [user_id, module_key, json.dumps(data or {}, ensure_ascii=True), datetime.now().isoformat()]
-            )
-        else:
-            execute(
-                conn,
-                """
-                INSERT INTO user_module_settings (user_id, module_key, settings_json, updated_at)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(user_id, module_key) DO UPDATE SET
-                  settings_json = excluded.settings_json,
-                  updated_at    = excluded.updated_at
-                """,
-                [user_id, module_key, json.dumps(data or {}), datetime.now().isoformat()]
-            )
+        execute(
+            conn,
+            """
+            INSERT INTO user_module_settings (user_id, module_key, settings_json, updated_at)
+            VALUES (?, ?, ?::jsonb, ?)
+            ON CONFLICT(user_id, module_key) DO UPDATE SET
+              settings_json = excluded.settings_json,
+              updated_at    = excluded.updated_at
+            """,
+            [user_id, module_key, json.dumps(data or {}, ensure_ascii=True), datetime.now().isoformat()]
+        )
         conn.commit()
         conn.close()
         return True

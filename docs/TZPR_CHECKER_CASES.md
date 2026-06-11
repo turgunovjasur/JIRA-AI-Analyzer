@@ -1,4 +1,4 @@
-# TZPR Checker Case Documentation (As-Is)
+# TZPR Checker Case Documentation (Run-Based Multi-Agent As-Is)
 
 Bu hujjatning maqsadi: mavjud checker logikasini 1:1 hujjatlashtirish.
 
@@ -9,14 +9,17 @@ Muhim chegaralar:
 
 ## 1) Kirish nuqtalari
 
-### 1.1 Frontend API route (UI)
-Manba: `/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/app/api/tzpr/analyze/route.ts`
+### 1.1 Frontend API routes (UI)
+Manbalar:
+- `/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/app/api/tzpr/runs/route.ts`
+- `/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/app/api/tzpr/runs/[runId]/route.ts`
 
 Case-lar:
 1. Sessiya yo'q yoki muddati tugagan -> `401`, `{ success:false, error:"Sessiya topilmadi..." }`.
 2. Role/module ruxsat yo'q -> `403`, `{ success:false, error:"TZ-PR Checker uchun ruxsat yo'q." }`.
 3. `task_key` bo'sh -> `400`, `{ success:false, error:"Task key majburiy." }`.
-4. Valid payload -> backend `/api/tzpr/analyze` ga yuboradi.
+4. Valid payload -> backend `/api/tzpr/runs` ga yuboradi va run yaratadi.
+5. UI run holatini `/api/tzpr/runs/{runId}` orqali kuzatadi.
 
 Payload normalize:
 - `task_key` -> `trim().toUpperCase()`
@@ -24,13 +27,13 @@ Payload normalize:
 - `show_full_diff` default `true`
 - `use_smart_patch` default `null`
 
-### 1.2 Backend API route (direct checker call)
+### 1.2 Backend API route (run-based checker call)
 Manba: `/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/api/tzpr_api.py`
 
 Case-lar:
 1. Sessiya/scope ruxsati yo'q -> HTTPException (auth layer).
-2. Valid scope -> `TZPRService(user_id, company_id).analyze_task(...)` chaqiriladi.
-3. Kutilmagan backend exception -> `500`, `TZ-PR analyze error: ...`.
+2. Valid scope -> run record yaratiladi va multi-agent checker executor ishga tushadi.
+3. Kutilmagan backend exception -> `500`, `TZ-PR run error: ...`.
 
 ### 1.3 Webhook path (Service1)
 Manbalar:
@@ -291,4 +294,3 @@ C. Checker ichidagi success case-lar:
 4. Figma fail-safe: figma xatosi checkerni yiqitmaydi.
 5. `COMPLIANCE_SCORE` topilmasa ham result `success=true` bo'lishi mumkin (`score=None`).
 6. Webhookda faqat `WARN_LOW_SCORE` qayta-tekshiruv (`recheck`) kontekstini yoqadi.
-

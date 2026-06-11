@@ -4,6 +4,7 @@ import { ArrowRight, Blocks, BriefcaseBusiness, ShieldCheck } from "lucide-react
 
 import { Badge } from "@/components/ui/badge";
 import { buttonClassName } from "@/components/ui/button";
+import { BaseCard, Card } from "@/components/ui/card";
 import { getDefaultRouteForRole } from "@/lib/app-routes";
 import { getOptionalSession } from "@/lib/session";
 
@@ -15,7 +16,7 @@ export default async function HomePage() {
 
   return (
     <main className="mx-auto grid min-h-screen max-w-7xl gap-5 px-4 py-6 lg:grid-cols-[minmax(0,1.15fr)_360px] lg:px-6">
-      <section className="rounded-[28px] border border-border bg-card px-8 py-8 shadow-sm">
+      <Card className="px-8 py-8">
         <Badge tone="soft">Web Platform</Badge>
         <div className="mt-6 max-w-4xl space-y-5">
           <h1 className="text-4xl font-semibold tracking-tight text-foreground md:text-6xl md:leading-[1]">
@@ -27,7 +28,7 @@ export default async function HomePage() {
           </p>
         </div>
         <div className="mt-8 grid gap-4 md:grid-cols-2">
-          <div className="rounded-[20px] border border-border bg-slate-50/80 p-5">
+          <BaseCard as="div" className="p-5" padding="none" tone="soft">
             <div className="mb-4 inline-flex rounded-full bg-primary/10 p-2 text-primary">
               <Blocks size={18} />
             </div>
@@ -35,8 +36,8 @@ export default async function HomePage() {
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
               Login, settings, monitoring, checkerlar va admin sahifalari ishga tayyor.
             </p>
-          </div>
-          <div className="rounded-[20px] border border-border bg-slate-50/80 p-5">
+          </BaseCard>
+          <BaseCard as="div" className="p-5" padding="none" tone="soft">
             <div className="mb-4 inline-flex rounded-full bg-primary/10 p-2 text-primary">
               <ShieldCheck size={18} />
             </div>
@@ -44,11 +45,11 @@ export default async function HomePage() {
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
               Customer, company admin va super admin uchun boshqaruv oqimlari ajratilgan.
             </p>
-          </div>
+          </BaseCard>
         </div>
-      </section>
+      </Card>
 
-      <aside className="rounded-[28px] border border-border bg-card px-6 py-6 shadow-sm">
+      <Card as="aside" className="px-6 py-6">
         <Badge tone="soft">Current Scope</Badge>
         <div className="mt-5 grid gap-3">
           {[
@@ -57,29 +58,32 @@ export default async function HomePage() {
             "Super admin flows",
             "Queue-driven webhook runtime",
           ].map((item) => (
-            <div
-              className="rounded-[18px] border border-border bg-slate-50/80 px-4 py-4 text-sm font-medium text-foreground"
+            <BaseCard
+              as="div"
+              className="px-4 py-4 text-sm font-medium text-foreground"
               key={item}
+              padding="none"
+              tone="soft"
             >
               {item}
-            </div>
+            </BaseCard>
           ))}
         </div>
-        <div className="mt-6 rounded-[20px] border border-dashed border-primary/20 bg-primary/5 px-4 py-4">
+        <BaseCard as="div" className="mt-6 border-dashed px-4 py-4" padding="none" tone="accent">
           <div className="mb-3 inline-flex rounded-full bg-white p-2 text-primary shadow-sm">
             <BriefcaseBusiness size={18} />
           </div>
           <p className="text-sm leading-6 text-muted-foreground">
             Portal customer, ops va admin vazifalarini bir xil dizayn tilida birlashtiradi.
           </p>
-        </div>
+        </BaseCard>
         <div className="mt-6">
           <Link className={buttonClassName({ fullWidth: true })} href="/login">
             Portalni ochish
             <ArrowRight size={16} />
           </Link>
         </div>
-      </aside>
+      </Card>
     </main>
   );
 }

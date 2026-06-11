@@ -132,13 +132,12 @@ class JiraStatusManager:
             return False, "JIRA client not initialized"
 
         try:
-            # Transition ID topish
+            can_transition, validation_msg = self.can_transition_to(task_key, new_status)
+            if not can_transition:
+                return False, validation_msg
             transition_id = self.find_transition_by_name(task_key, new_status)
-
             if not transition_id:
-                available = self.get_available_transitions(task_key)
-                available_names = [t['name'] for t in available]
-                return False, f"'{new_status}' topilmadi. Mavjud: {available_names}"
+                return False, validation_msg
 
             # Transition bajarish
             if comment:
@@ -156,6 +155,19 @@ class JiraStatusManager:
             error_msg = str(e)
             log.log_error(task_key, "change_status", error_msg)
             return False, f"Xato: {error_msg}"
+
+    def can_transition_to(self, task_key: str, target_status: str) -> Tuple[bool, str]:
+        """Task berilgan statusga o'ta oladimi oldindan tekshiradi."""
+        if not self.jira:
+            return False, "JIRA client not initialized"
+
+        transition_id = self.find_transition_by_name(task_key, target_status)
+        if transition_id:
+            return True, ""
+
+        available = self.get_available_transitions(task_key)
+        available_names = [t['name'] for t in available]
+        return False, f"'{target_status}' topilmadi. Mavjud: {available_names}"
 
     def get_current_status(self, task_key: str) -> Optional[str]:
         """

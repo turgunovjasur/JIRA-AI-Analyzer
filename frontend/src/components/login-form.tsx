@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { BaseCard, Card } from "@/components/ui/card";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
@@ -110,20 +110,20 @@ export function LoginForm() {
       </Button>
 
       <div className="grid gap-3 pt-1 sm:grid-cols-2">
-        <div className="rounded-[18px] border border-border bg-[color:var(--bg-strong)] px-4 py-4">
+        <BaseCard as="div" className="px-4 py-4" padding="none" tone="soft">
           <div className="mb-3 inline-flex rounded-full bg-primary/10 p-2 text-primary">
             <UserRound size={16} />
           </div>
           <div className="text-sm font-medium text-foreground">Access</div>
           <div className="mt-1 text-sm text-muted-foreground">Role-based</div>
-        </div>
-        <div className="rounded-[18px] border border-border bg-[color:var(--bg-strong)] px-4 py-4">
+        </BaseCard>
+        <BaseCard as="div" className="px-4 py-4" padding="none" tone="soft">
           <div className="mb-3 inline-flex rounded-full bg-primary/10 p-2 text-primary">
             <LockKeyhole size={16} />
           </div>
           <div className="text-sm font-medium text-foreground">Session</div>
           <div className="mt-1 text-sm text-muted-foreground">Secure cookie</div>
-        </div>
+        </BaseCard>
       </div>
     </Card>
   );

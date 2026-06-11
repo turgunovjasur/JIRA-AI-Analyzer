@@ -1,24 +1,16 @@
 """
 Task Processing Database Helper
 
-SQLite DB orqali task va servis-bosqich holatlarini boshqarish.
+PostgreSQL orqali task va servis-bosqich holatlarini boshqarish.
 Webhook oqimida dublikat comment va qayta ishlashni oldini olish uchun.
 
 Author: JASUR TURGUNOV
 Date: 2026-02-09
-Version: 1.0
 """
-import sqlite3
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 from core.logger import get_logger
-from utils.database.runtime import (
-    ensure_data_dir,
-    get_processing_db_path,
-    connect_processing_sqlite,
-    connect_processing_db,
-    is_sqlite_backend,
-)
+from utils.database.runtime import connect_processing_db
 from utils.database.task_repository import (
     fetch_task_by_id,
     upsert_task_record,
@@ -37,12 +29,7 @@ from utils.database.job_queue_repository import (
     mark_job_failed as repo_mark_job_failed,
     fetch_queue_snapshot as repo_fetch_queue_snapshot,
 )
-from utils.database.processing_schema import (
-    apply_sqlite_processing_pragmas,
-    create_core_processing_tables,
-    migrate_task_processing_company_id,
-    migrate_task_processing_return_reason,
-)
+from utils.database.checker_run_repository import ensure_checker_run_tables
 
 log = get_logger("database")
 
@@ -58,139 +45,28 @@ def _get_db_settings():
             _settings_cache = get_app_settings(force_reload=False).queue
         except Exception as e:
             log.warning(f"Settings load failed, using defaults: {e}")
-            # Default values
             class DefaultSettings:
-                db_busy_timeout = 30000
                 db_connection_timeout = 30.0
             _settings_cache = DefaultSettings()
     return _settings_cache
 
-DB_FILE = get_processing_db_path()
-
-
-def _ensure_db_dir():
-    """Data papkasini yaratish"""
-    ensure_data_dir()
-
 
 def init_db() -> None:
-    """
-    SQLite ma'lumotlar bazasini ishga tushirish va kerakli strukturani yaratish.
-
-    Agar DB fayli mavjud bo'lmasa yaratadi. Agar jadval allaqachon mavjud bo'lsa
-    (IF NOT EXISTS), hech narsa o'zgarmaydi — idempotent funksiya.
-
-    Yaratilgan tuzilma:
-        - task_processing jadvali (v3 ustunlari bilan: blocked_*, assignee, task_type)
-        - WAL (Write-Ahead Logging) rejimi — parallel o'qish uchun
-        - busy_timeout=30000ms — bir vaqtda yozishda kutish muddati
-        - Tezlashtiruvchi indekslar: task_status, service1_status, service2_status
-
-    WAL rejimi nima uchun:
-        SQLite standard rejimda (DELETE mode) yozishda barcha o'qishlarni bloklaydi.
-        WAL rejimda yozish va o'qish parallel ishlaydi — webhook server bir vaqtda
-        ko'p taskni boshqarganda muhim. Natija: deadlock va timeout xatolari kamayadi.
-
-    v2 ustunlari (meros sifatida CREATE TABLE ga kiritilgan):
-        - assignee: JIRA task ijrochisi
-        - task_type: task turi (product, client, bug, error, analiz, other)
-        - feature_name: PR fayllaridan ajratilgan funksiya nomi
-        - technology_stack: PR fayllaridan ajratilgan texnologiyalar
-
-    v3 ustunlari (meros sifatida CREATE TABLE ga kiritilgan):
-        - blocked_at: task bloklanган vaqt
-        - blocked_retry_at: qayta urinish rejalashtirilgan vaqt
-        - block_reason: bloklash sababi (masalan: AI 429 limit)
-
-    Side Effects:
-        - `sqlite` backendda data/ katalogi yaratiladi (agar mavjud bo'lmasa)
-        - `sqlite` backendda data/processing.db fayli yaratiladi yoki mavjud faylga ulanadi
-        - `postgres` backendda runtime schema tekshiruvlari orqali primary DB ishlatiladi
-
-    Raises:
-        Exception: DB fayli yaratish yoki PRAGMA bajarishda muvaffaqiyatsiz bo'lsa
-    """
+    """PostgreSQL runtime jadvallarini idempotent yaratish/tekshirish."""
     try:
-        _ensure_db_dir()
         settings = _get_db_settings()
-
-        if is_sqlite_backend():
-            conn = connect_processing_sqlite()
-            apply_sqlite_processing_pragmas(conn, settings.db_busy_timeout)
-            create_core_processing_tables(conn)
-            ensure_job_queue_tables(conn)
-            conn.close()
-        else:
-            conn = connect_processing_db(timeout=settings.db_connection_timeout)
-            ensure_job_queue_tables(conn)
-            conn.close()
-
-        if is_sqlite_backend():
-            log.info(f"DB initialized (sqlite): {DB_FILE}")
-        else:
-            log.info("DB initialized (postgres runtime)")
+        conn = connect_processing_db(timeout=settings.db_connection_timeout)
+        ensure_job_queue_tables(conn)
+        ensure_checker_run_tables(conn)
+        conn.close()
+        log.info("DB initialized (postgres runtime)")
 
     except Exception as e:
         log.warning(f"DB initialization error: {e}")
         raise
 
-# DB migrations v2 (assignee/task_type/feature_name/technology_stack ustunlari) va
-# v3 (blocked_at/blocked_retry_at/block_reason ustunlari) yakunlandi va
-# yuqoridagi CREATE TABLE ga kiritildi. Migration funksiyalari o'chirildi 2026-02.
-
-
-def _migrate_db_v4():
-    """v4 migration: company_id ustunini qo'shish (mavjud DB uchun)"""
-    if not is_sqlite_backend():
-        return
-    try:
-        conn = connect_processing_sqlite()
-        migrate_task_processing_company_id(conn)
-        conn.close()
-        log.info("DB migration v4 checked: company_id ustuni tayyor")
-    except Exception as e:
-        log.warning(f"DB migration v4 error: {e}")
-
-
-def _migrate_db_v5():
-    """v5 migration: return_reason ustunini qo'shish (mavjud DB uchun)"""
-    if not is_sqlite_backend():
-        return
-    try:
-        conn = connect_processing_sqlite()
-        migrate_task_processing_return_reason(conn)
-        conn.close()
-        log.info("DB migration v5 checked: return_reason ustuni tayyor")
-    except Exception as e:
-        log.warning(f"DB migration v5 error: {e}")
-
-
 def get_task(task_id: str) -> Optional[Dict[str, Any]]:
-    """
-    Berilgan task_id bo'yicha task ma'lumotlarini SQLite dan o'qish.
-
-    WAL rejimda o'qishda eskirgan ma'lumot kelmasligi uchun
-    ``PRAGMA synchronous=FULL`` ishlatiladi — bu SQLite ni barcha yozuvlar
-    diskka to'liq tushishini kutishga majbur qiladi. Shunday qilib
-    ``upsert_task()`` commit qilgandan so'ng darhol chaqirilgan ``get_task()``
-    hamma vaqt yangi qiymatni qaytaradi.
-
-    ``conn.row_factory = sqlite3.Row`` o'rnatiladi — bu SELECT natijasini
-    oddiy tuple emas, balki nom orqali murojaat qilish mumkin bo'lgan
-    Row obyektiga aylantiradi. ``dict(row)`` chaqiruvida to'liq kalit-qiymat
-    lug'ati hosil qilinadi.
-
-    Args:
-        task_id: JIRA task identifikatori (masalan: DEV-1234, PROJ-999)
-
-    Returns:
-        Dict[str, Any]: Jadval ustunlari kalit, qiymatlari bo'lgan lug'at.
-            Agar task topilmasa — None qaytadi.
-
-    Note:
-        Xato yuz berganda (masalan DB fayli yo'q) None qaytadi va
-        log.warning chiqariladi — exception ko'tarilmaydi.
-    """
+    """Berilgan task_id bo'yicha task ma'lumotlarini PostgreSQLdan o'qish."""
     try:
         settings = _get_db_settings()
         return fetch_task_by_id(connect_processing_db, task_id, settings.db_connection_timeout)
@@ -208,23 +84,13 @@ def upsert_task(task_id: str, fields: Dict[str, Any]) -> None:
     bo'lmasa INSERT bajaradi. ``updated_at`` maydoni har safar avtomatik
     yangilanadi.
 
-    BEGIN IMMEDIATE transaction lock nima uchun:
-        SQLite da standart ``BEGIN`` (DEFERRED) holatida bir nechta jarayon
-        bir vaqtda o'qiy oladi, lekin birinchi yozuvchi lock olguncha
-        boshqalar ham o'qib, keyin yozmoqchi bo'lishi mumkin — bu race
-        condition ga olib keladi. ``BEGIN IMMEDIATE`` esa darhol write-lock
-        oladi: boshqa yozuvchilar kutadi. Webhook server bir vaqtda bir nechta
-        event qayta ishlaganda bu muhim himoya mexanizmi hisoblanadi.
-
     Args:
         task_id: JIRA task identifikatori (masalan: DEV-1234)
         fields: Yangilanishi kerak bo'lgan maydonlar lug'ati.
             Masalan: ``{'task_status': 'progressing', 'service1_status': 'pending'}``
 
     Raises:
-        sqlite3.OperationalError: DB lock xatosi (masalan: database is locked).
-            Lock xatosi bo'lsa log.warning chiqariladi va exception ko'tariladi.
-        Exception: Boshqa kutilmagan SQLite xatolari.
+        Exception: Kutilmagan DB xatolari.
 
     Note:
         ``fields`` lug'atidagi ``updated_at`` kaliti bu funksiya tomonidan
@@ -237,14 +103,8 @@ def upsert_task(task_id: str, fields: Dict[str, Any]) -> None:
             task_id,
             fields,
             settings.db_connection_timeout,
-            settings.db_busy_timeout,
         )
 
-    except sqlite3.OperationalError as e:
-        log.warning(f"[{task_id}] SQLite lock error: {e}")
-        if 'locked' in str(e).lower():
-            log.warning(f"[{task_id}] Database locked, retry recommended")
-        raise
     except Exception as e:
         log.warning(f"[{task_id}] upsert_task error: {e}")
         raise
@@ -407,7 +267,7 @@ def set_skip_detected(task_id: str):
     Skip detected flag ni True ga o'rnatish
     """
     upsert_task(task_id, {
-        'skip_detected': 1,
+        'skip_detected': True,
         'task_status': 'completed',  # yoki 'skipped'
         'last_processed_at': datetime.now().isoformat()
     })
@@ -604,7 +464,7 @@ def set_service1_skip(task_id: str):
         'service1_done_at': datetime.now().isoformat(),
         'service1_error': None,
         'compliance_score': 100,
-        'skip_detected': 1
+        'skip_detected': True
     })
 
 
@@ -660,7 +520,6 @@ def delete_task(task_id: str, company_id: Optional[int] = None) -> bool:
             task_id,
             company_id,
             settings.db_connection_timeout,
-            settings.db_busy_timeout,
         )
         if deleted:
             log.info(f"[{task_id}] DB-DELETE -> ok")
@@ -669,11 +528,6 @@ def delete_task(task_id: str, company_id: Optional[int] = None) -> bool:
             log.warning(f"[{task_id}] DB-DELETE -> task not found, nothing to delete")
             return False
 
-    except sqlite3.OperationalError as e:
-        log.warning(f"[{task_id}] SQLite lock error: {e}")
-        if 'locked' in str(e).lower():
-            log.warning(f"[{task_id}] Database locked, retry recommended")
-        return False
     except Exception as e:
         log.warning(f"[{task_id}] delete_task error: {e}")
         return False
@@ -891,8 +745,7 @@ def get_stuck_tasks(timeout_minutes: int = 30) -> List[Dict[str, Any]]:
         ``WHERE task_status = 'progressing'
            AND updated_at < :cutoff_time``
 
-        ``stuck_minutes`` = ``(julianday('now') - julianday(updated_at)) * 1440``
-        (julianday farqi kunlarda, x1440 → daqiqaga aylantiriladi)
+        ``stuck_minutes`` PostgreSQL vaqt farqi orqali daqiqalarda hisoblanadi.
 
     Monitoring ishlatilishi:
         Bu funksiya monitoring dashboard va cleanup scheduler tomonidan
@@ -1082,7 +935,5 @@ def get_background_queue_snapshot() -> Dict[str, Any]:
 # DB initialization on import
 try:
     init_db()
-    _migrate_db_v4()
-    _migrate_db_v5()
 except Exception as e:
     log.warning(f"DB initialization warning: {e}")

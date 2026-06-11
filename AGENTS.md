@@ -15,4 +15,13 @@
 
 ## Progress Tracking
 
-- Har bir muhim o'zgarishdan keyin `PROGRESS_LOG.md` yangilanib borilsin.
+- `PROGRESS_LOG.md` faqat foydalanuvchi alohida so'raganda yangilansin.
+
+## Code Change Permission
+
+- Kod yozish, fayl o'zgartirish, patch qilish, refactor yoki build/test kabi write-side effect beradigan ishlarni boshlashdan oldin foydalanuvchidan aniq ruxsat so'ralsin.
+- Foydalanuvchi `ha`, `bajar`, `kirit`, `implement qil` yoki shunga teng aniq rozilik bermaguncha faqat read-only tahlil, taklif va tushuntirish berilsin.
+
+## Testing
+
+- Testlar faqat foydalanuvchi alohida so'raganda ishga tushirilsin.

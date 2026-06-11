@@ -100,6 +100,7 @@ export async function PATCH(
         );
         const isValid = Array.isArray(validation) ? validation[0] : false;
         const validationError = Array.isArray(validation) ? validation[1] : "Subscription noto'g'ri.";
+        const normalizedSubscription = Array.isArray(validation) ? validation[2] : {};
         if (!isValid) {
           return NextResponse.json(
             { success: false, error: validationError || "Subscription noto'g'ri." },
@@ -108,7 +109,7 @@ export async function PATCH(
         }
         const success = await callInternalRpc<boolean>("save_company_subscription", [
           companyId,
-          subscription,
+          normalizedSubscription,
         ]);
         if (!success) {
           return NextResponse.json(

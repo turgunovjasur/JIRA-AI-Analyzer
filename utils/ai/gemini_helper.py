@@ -3,6 +3,7 @@ from google.genai import types
 import os
 from dotenv import load_dotenv
 import time
+from threading import Lock
 from core.logger import get_logger
 from config.token_limits import GEMINI_HELPER_DEFAULT_MAX_OUTPUT_TOKENS
 
@@ -56,7 +57,13 @@ class GeminiHelper:
     # Transient xatolik uchun kutish vaqtlari (soniya)
     TRANSIENT_RETRY_DELAYS = [5, 10, 20]
 
-    def __init__(self, api_keys: list = None, model_name: str = None):
+    def __init__(
+        self,
+        api_keys: list = None,
+        model_name: str = None,
+        fallback_model_name: str = None,
+        shared_state: dict | None = None,
+    ):
         if api_keys is not None:
             if not api_keys:
                 raise RuntimeError("Kompaniya Gemini API kalitlari kiritilmagan. Sozlamalar sahifasida kalit kiriting.")
@@ -67,11 +74,29 @@ class GeminiHelper:
         else:
             self.api_keys = self._load_keys()
 
-        self._frozen_until = {}
+        self._shared_state = shared_state
+        if self._shared_state is not None:
+            self._shared_state.setdefault("lock", Lock())
+            self._shared_state.setdefault("frozen_until", {})
+            self._shared_state.setdefault("last_request_time", 0.0)
+            self._shared_state.setdefault("request_count", 0)
+            self._frozen_until = self._shared_state["frozen_until"]
+        else:
+            self._frozen_until = {}
         self._current_idx = 0
         self.model_name = model_name or os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+        self.fallback_model_name = (fallback_model_name or "").strip()
         self.last_request_time = 0
         self.request_count = 0
+        self.last_model_used = self.model_name
+        self.last_primary_model_name = self.model_name
+        self.last_fallback_model_name = self._get_fallback_model() or ""
+        self.last_used_fallback = False
+        self.last_cached_content_token_count = 0
+        self.last_prompt_token_count = 0
+        self.last_candidates_token_count = 0
+        self.last_total_token_count = 0
+        self.last_usage_metadata: dict[str, int] = {}
         self._client = genai.Client(api_key=self.api_keys[self._current_idx])
 
     def _load_keys(self) -> list[str]:
@@ -113,6 +138,21 @@ class GeminiHelper:
         settings = _get_gemini_settings()
         min_interval = settings.gemini_min_interval
 
+        if self._shared_state is not None:
+            lock = self._shared_state["lock"]
+            with lock:
+                last_request_time = float(self._shared_state.get("last_request_time") or 0.0)
+                elapsed = time.time() - last_request_time
+                if elapsed < min_interval:
+                    wait_time = min_interval - elapsed
+                    log.ai_rate_limit(self._key_name(self._current_idx), int(wait_time))
+                    time.sleep(wait_time)
+                self._shared_state["last_request_time"] = time.time()
+                self._shared_state["request_count"] = int(self._shared_state.get("request_count") or 0) + 1
+                self.last_request_time = float(self._shared_state["last_request_time"])
+                self.request_count = int(self._shared_state["request_count"])
+            return
+
         elapsed = time.time() - self.last_request_time
         if elapsed < min_interval:
             wait_time = min_interval - elapsed
@@ -131,31 +171,44 @@ class GeminiHelper:
         error_msg = str(error).lower()
         return any(kw in error_msg for kw in self.TRANSIENT_ERROR_KEYWORDS)
 
-    def _build_generation_config(self, model_name: str, max_output_tokens: int):
+    def _build_generation_config(
+        self,
+        model_name: str,
+        max_output_tokens: int,
+        generation_config_overrides: dict | None = None,
+        system_instruction: str | None = None,
+    ):
         """Model nomiga qarab to'g'ri GenerateContentConfig yaratish."""
         requires_thinking = 'flash' not in model_name.lower()
-        if requires_thinking:
-            return types.GenerateContentConfig(max_output_tokens=max_output_tokens)
-        return types.GenerateContentConfig(
-            max_output_tokens=max_output_tokens,
-            thinking_config=types.ThinkingConfig(thinking_budget=0),
-        )
+        config_kwargs = {"max_output_tokens": max_output_tokens}
+        if not requires_thinking:
+            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+        if system_instruction:
+            config_kwargs["system_instruction"] = system_instruction
+        if generation_config_overrides:
+            config_kwargs.update(dict(generation_config_overrides))
+        return types.GenerateContentConfig(**config_kwargs)
 
     def _get_fallback_model(self) -> str | None:
-        """GEMINI_FALLBACK_MODEL .env dan olinadi. Asosiy model bilan bir xil bo'lsa None."""
-        fallback = os.getenv('GEMINI_FALLBACK_MODEL', '').strip()
+        """Per-helper fallback yoki GEMINI_FALLBACK_MODEL olinadi. Asosiy model bilan bir xil bo'lsa None."""
+        fallback = self.fallback_model_name or os.getenv('GEMINI_FALLBACK_MODEL', '').strip()
         if fallback and fallback != self.model_name:
             return fallback
         return None
 
-    def _request(self, prompt, generation_config, model_name: str = None):
-        """Bitta Gemini so'rov — transient xato bo'lsa backoff bilan N marta qayta urinish."""
+    def _request(self, prompt, generation_config, model_name: str = None, retry_delays: list[int] | None = None):
+        """Bitta Gemini so'rov — transient xato bo'lsa backoff bilan N marta qayta urinish.
+
+        retry_delays=None → default (5s, 10s, 20s)
+        retry_delays=[]   → retry yo'q (bitta urinish), pro modeli 503 da tezroq fallback uchun
+        """
         target_model = model_name or self.model_name
+        effective_delays = list(self.TRANSIENT_RETRY_DELAYS) if retry_delays is None else list(retry_delays)
         last_error = None
-        for attempt, delay in enumerate([0] + list(self.TRANSIENT_RETRY_DELAYS)):
+        for attempt, delay in enumerate([0] + effective_delays):
             if delay > 0:
                 log.warning(
-                    f"AI -> transient xato, retry {attempt}/{len(self.TRANSIENT_RETRY_DELAYS)} "
+                    f"AI -> transient xato, retry {attempt}/{len(effective_delays)} "
                     f"| {delay}s kutilmoqda | model={target_model} | key={self._key_name(self._current_idx)}"
                 )
                 time.sleep(delay)
@@ -166,6 +219,8 @@ class GeminiHelper:
                     contents=prompt,
                     config=generation_config,
                 )
+                usage = getattr(response, "usage_metadata", None)
+                self._set_last_usage_metadata(usage)
                 return response.text
             except Exception as e:
                 last_error = e
@@ -179,18 +234,85 @@ class GeminiHelper:
         """Pro modellar thinking_budget=0 qabul qilmaydi — faqat flash modellarda o'chirsa bo'ladi."""
         return 'flash' not in self.model_name.lower()
 
-    def analyze(self, prompt, max_output_tokens=GEMINI_HELPER_DEFAULT_MAX_OUTPUT_TOKENS):
+    def _reset_last_run_state(self):
+        self.last_primary_model_name = self.model_name
+        self.last_fallback_model_name = self._get_fallback_model() or ""
+        self.last_model_used = self.model_name
+        self.last_used_fallback = False
+        self.last_cached_content_token_count = 0
+        self.last_prompt_token_count = 0
+        self.last_candidates_token_count = 0
+        self.last_total_token_count = 0
+        self.last_usage_metadata = {}
+
+    def _set_last_usage_metadata(self, usage) -> None:
+        self.last_cached_content_token_count = int(getattr(usage, "cached_content_token_count", 0) or 0)
+        self.last_prompt_token_count = int(getattr(usage, "prompt_token_count", 0) or 0)
+        self.last_candidates_token_count = int(getattr(usage, "candidates_token_count", 0) or 0)
+        self.last_total_token_count = int(getattr(usage, "total_token_count", 0) or 0)
+        self.last_usage_metadata = {
+            "cached_content_token_count": self.last_cached_content_token_count,
+            "prompt_token_count": self.last_prompt_token_count,
+            "candidates_token_count": self.last_candidates_token_count,
+            "total_token_count": self.last_total_token_count,
+        }
+
+    def create_cache(
+        self,
+        content: str,
+        ttl_seconds: int = 600,
+        display_name: str = "",
+        model_name: str | None = None,
+    ) -> str:
+        """Gemini explicit context cache yaratadi va cache resource name qaytaradi."""
+        self._rate_limit()
+        response = self._client.caches.create(
+            model=model_name or self.model_name,
+            config={
+                "contents": str(content or ""),
+                "ttl": f"{max(60, int(ttl_seconds or 600))}s",
+                "display_name": display_name or "jira-ai-analyzer-cache",
+            },
+        )
+        return str(getattr(response, "name", "") or "")
+
+    def delete_cache(self, name: str) -> None:
+        cache_name = str(name or "").strip()
+        if not cache_name:
+            return
+        try:
+            self._client.caches.delete(name=cache_name)
+        except Exception as exc:
+            log.warning(f"Gemini cache delete failed: {exc}")
+
+    def analyze(
+        self,
+        prompt,
+        max_output_tokens=GEMINI_HELPER_DEFAULT_MAX_OUTPUT_TOKENS,
+        generation_config_overrides: dict | None = None,
+        system_instruction: str | None = None,
+        cached_content: str | None = None,
+        fallback_cached_content: str | None = None,
+    ):
         """
         Gemini bilan tahlil — transient retry + model fallback + key fallback bilan.
 
         Oqim:
-          1. Asosiy model (GEMINI_MODEL) bilan 3 marta retry (5s→10s→20s)
-          2. Transient xato (503) → GEMINI_FALLBACK_MODEL bilan 3 marta retry
+          1. Asosiy model bilan urinish; cached fallback mavjud bo'lsa 503 da tez fallback qiladi
+          2. Transient xato (503) → fallback model bilan retry
           3. Permanent xato (429/403) → keyingi API key bilan urinish
         """
+        self._reset_last_run_state()
         self._rate_limit()
 
-        generation_config = self._build_generation_config(self.model_name, max_output_tokens)
+        generation_config = self._build_generation_config(
+            self.model_name,
+            max_output_tokens,
+            generation_config_overrides=generation_config_overrides,
+            system_instruction=system_instruction,
+        )
+        if cached_content:
+            generation_config.cached_content = cached_content
 
         best_idx = self._get_best_available_idx()
         if best_idx is None:
@@ -213,28 +335,51 @@ class GeminiHelper:
             tried.add(current_idx)
 
             try:
-                return self._request(prompt, generation_config)
+                # Cached Pro call 503 bersa darhol fallback qilish uchun retry'siz urinish.
+                # Cache'siz chaqiruvlar avvalgidek default retry bilan ishlaydi.
+                fallback_available = bool(
+                    self._get_fallback_model()
+                    and cached_content
+                    and fallback_cached_content
+                )
+                primary_retry_delays = [] if fallback_available else None
+                result = self._request(prompt, generation_config, retry_delays=primary_retry_delays)
+                self.last_model_used = self.model_name
+                self.last_used_fallback = False
+                return result
 
             except Exception as e:
                 last_error = e
 
                 # Transient xato (503/unavailable): kalit yaxshi, server band —
-                # GEMINI_FALLBACK_MODEL bilan urinib ko'rish
+                # GEMINI_FALLBACK_MODEL bilan urinib ko'rish (flash default retry bilan)
                 if self._is_transient_error(e):
                     fallback_model = self._get_fallback_model()
+                    if cached_content and not fallback_cached_content:
+                        fallback_model = None
                     if fallback_model:
                         log.warning(
                             f"AI -> {self.model_name} unavailable (503), "
-                            f"fallback: {fallback_model} bilan urinilmoqda..."
+                            f"darhol fallback: {fallback_model} bilan urinilmoqda..."
                         )
-                        fallback_config = self._build_generation_config(fallback_model, max_output_tokens)
+                        fallback_config = self._build_generation_config(
+                            fallback_model,
+                            max_output_tokens,
+                            generation_config_overrides=generation_config_overrides,
+                            system_instruction=system_instruction,
+                        )
+                        if fallback_cached_content:
+                            fallback_config.cached_content = fallback_cached_content
                         try:
                             result = self._request(prompt, fallback_config, model_name=fallback_model)
+                            self.last_model_used = fallback_model
+                            self.last_fallback_model_name = fallback_model
+                            self.last_used_fallback = True
                             log.info(f"AI -> {fallback_model} muvaffaqiyatli javob berdi")
                             return result
                         except Exception as e_fb:
                             raise RuntimeError(
-                                f"Gemini API: {self.model_name} ham, {fallback_model} ham ishlamadi. "
+                                f"model_unavailable: Gemini API: {self.model_name} ham, {fallback_model} ham ishlamadi. "
                                 f"({str(e_fb)})"
                             ) from e_fb
                     raise RuntimeError(f"Gemini API xatosi ({current_name}): {str(e)}") from e

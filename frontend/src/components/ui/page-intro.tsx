@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { BaseCard } from "@/components/ui/card";
 import { cn } from "@/lib/cn";
 
 type PageIntroProps = {
@@ -20,11 +21,12 @@ export function PageIntro({
   title,
 }: PageIntroProps) {
   return (
-    <section
+    <BaseCard
       className={cn(
-        "rounded-[20px] border border-border bg-card px-6 py-6 shadow-sm",
+        "px-6 py-6",
         className,
       )}
+      padding="none"
     >
       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div className="space-y-3">
@@ -43,6 +45,6 @@ export function PageIntro({
         </div>
         {badge ? <div className="shrink-0">{badge}</div> : null}
       </div>
-    </section>
+    </BaseCard>
   );
 }

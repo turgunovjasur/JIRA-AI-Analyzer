@@ -10,6 +10,7 @@ import {
   BaseCheckGroup,
   BaseOrderPills,
   BaseInputField,
+  BaseSelectField,
   NumberField,
   SettingsBaseCard,
   SettingsCardItem,
@@ -24,6 +25,7 @@ import type {
   SharedSettingsView,
   UserRole,
 } from "@/lib/types";
+import { CHECKER_SECTION_LABELS } from "@/lib/tzpr-sections";
 
 type SettingsPanelProps = {
   companyName: string;
@@ -79,6 +81,14 @@ type WebhookFormState = {
   testcase_read_comments_enabled: boolean;
   testcase_max_comments_to_read: string;
   testcase_footer_text: string;
+  agent1_primary_model: string;
+  agent1_fallback_model: string;
+  agent2_batch_size: string;
+  agent2_extra_scan_enabled: boolean;
+  agent2_primary_model: string;
+  agent2_fallback_model: string;
+  agent3_primary_model: string;
+  agent3_fallback_model: string;
 };
 
 type SystemFormState = {
@@ -97,6 +107,15 @@ type ModuleFormState = {
     ai_data_section_order: string[];
     read_comments_enabled: boolean;
     max_comments_to_read: string;
+    trusted_scope_comment_authors: string;
+    agent2_batch_size: string;
+    agent2_extra_scan_enabled: boolean;
+    agent1_primary_model: string;
+    agent1_fallback_model: string;
+    agent2_primary_model: string;
+    agent2_fallback_model: string;
+    agent3_primary_model: string;
+    agent3_fallback_model: string;
   };
   testcase: {
     default_include_pr: boolean;
@@ -155,6 +174,14 @@ const EMPTY_WEBHOOK_FORM: WebhookFormState = {
   testcase_read_comments_enabled: true,
   testcase_max_comments_to_read: "0",
   testcase_footer_text: "🤖 Test case'lar AI (Gemini) tomonidan avtomatik yaratilgan. QA Team tomonidan tekshirilishi va to'ldirilishi kerak.",
+  agent1_primary_model: "",
+  agent1_fallback_model: "",
+  agent2_batch_size: "6",
+  agent2_extra_scan_enabled: true,
+  agent2_primary_model: "",
+  agent2_fallback_model: "",
+  agent3_primary_model: "",
+  agent3_fallback_model: "",
 };
 
 const EMPTY_SYSTEM_FORM: SystemFormState = {
@@ -180,6 +207,15 @@ const EMPTY_MODULE_FORM: ModuleFormState = {
     ai_data_section_order: ["tz", "comments", "figma", "code"],
     read_comments_enabled: true,
     max_comments_to_read: "0",
+    trusted_scope_comment_authors: "",
+    agent2_batch_size: "6",
+    agent2_extra_scan_enabled: true,
+    agent1_primary_model: "",
+    agent1_fallback_model: "",
+    agent2_primary_model: "",
+    agent2_fallback_model: "",
+    agent3_primary_model: "",
+    agent3_fallback_model: "",
   },
   testcase: {
     default_include_pr: true,
@@ -193,6 +229,10 @@ const EMPTY_MODULE_FORM: ModuleFormState = {
 };
 
 const SETTINGS_INPUT_CLASS = "settings-form-input";
+
+function modelOptions() {
+  return ["", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"];
+}
 
 export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsPanelProps) {
   const [loading, setLoading] = useState(true);
@@ -239,15 +279,19 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
 
   const checkerOrderError = !moduleForm.checker.ai_data_section_order.includes("tz")
     || !moduleForm.checker.ai_data_section_order.includes("code");
+  const checkerBatchError = Number(moduleForm.checker.agent2_batch_size || "0") < 1
+    || Number(moduleForm.checker.agent2_batch_size || "0") > 20;
   const testcaseOrderError = !moduleForm.testcase.ai_data_section_order.includes("tz");
   const testcaseCountError = Number(moduleForm.testcase.max_test_cases || "0") < 1
     || Number(moduleForm.testcase.max_test_cases || "0") > 50;
-  const moduleHasError = checkerOrderError || testcaseOrderError || testcaseCountError;
+  const moduleHasError = checkerOrderError || checkerBatchError || testcaseOrderError || testcaseCountError;
   const whThresholdError = webhookForm.auto_return_enabled
     && (Number(webhookForm.return_threshold || "0") < 0
       || Number(webhookForm.return_threshold || "0") > 100);
   const whCheckerOrderError = !webhookForm.ai_data_section_order.includes("tz")
     || !webhookForm.ai_data_section_order.includes("code");
+  const whAgent2BatchError = Number(webhookForm.agent2_batch_size || "0") < 1
+    || Number(webhookForm.agent2_batch_size || "0") > 20;
   const whMinTzError = Number(webhookForm.min_tz_description_chars || "0") < 0;
   const whMaxReadCommentsError = webhookForm.read_comments_enabled
     && Number(webhookForm.max_comments_to_read || "0") < 0;
@@ -260,6 +304,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
     && Number(webhookForm.testcase_max_comments_to_read || "0") < 0;
   const webhookHasError = whThresholdError
     || whCheckerOrderError
+    || whAgent2BatchError
     || whMinTzError
     || whMaxReadCommentsError
     || whMaxSkipError
@@ -289,6 +334,13 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
     "trigger_statuses",
     "tz_pr_footer_text",
     "recheck_comment_text",
+    "agent2_batch_size",
+    "agent1_primary_model",
+    "agent1_fallback_model",
+    "agent2_primary_model",
+    "agent2_fallback_model",
+    "agent3_primary_model",
+    "agent3_fallback_model",
   ];
   const WEBHOOK_SERVICE2_KEYS: Array<keyof WebhookFormState> = [
     "testcase_auto_comment_enabled",
@@ -332,14 +384,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
     || (systemForm.queue_enabled && sysGeminiIntervalError)
     || sysBlockedCheckError;
 
-  const checkerSectionLabels: Record<string, string> = {
-    completed: "Bajarildi",
-    partial: "Qisman bajarildi",
-    failed: "Bajarilmadi",
-    issues: "Muammolar",
-    figma: "Figma bo'limlari",
-    contradictory_comments: "Zid commentlar",
-  };
   const testcaseTypeLabels: Record<string, string> = {
     positive: "Ijobiy — to'g'ri ma'lumotlar bilan muvaffaqiyatli bajarilish",
     negative: "Salbiy — noto'g'ri ma'lumotlar bilan rad etilish",
@@ -430,6 +474,14 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                   testcase_read_comments_enabled?: boolean;
                   testcase_max_comments_to_read?: number;
                   testcase_footer_text?: string;
+                  agent1_primary_model?: string;
+                  agent1_fallback_model?: string;
+                  agent2_batch_size?: number;
+                  agent2_extra_scan_enabled?: boolean;
+                  agent2_primary_model?: string;
+                  agent2_fallback_model?: string;
+                  agent3_primary_model?: string;
+                  agent3_fallback_model?: string;
                 };
                 success?: boolean;
               }
@@ -477,6 +529,14 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
               testcase_read_comments_enabled: Boolean(data.testcase_read_comments_enabled ?? true),
               testcase_max_comments_to_read: String(data.testcase_max_comments_to_read ?? 0),
               testcase_footer_text: String(data.testcase_footer_text || EMPTY_WEBHOOK_FORM.testcase_footer_text),
+              agent1_primary_model: String(data.agent1_primary_model || ""),
+              agent1_fallback_model: String(data.agent1_fallback_model || ""),
+              agent2_batch_size: String(data.agent2_batch_size ?? 6),
+              agent2_extra_scan_enabled: Boolean(data.agent2_extra_scan_enabled ?? true),
+              agent2_primary_model: String(data.agent2_primary_model || ""),
+              agent2_fallback_model: String(data.agent2_fallback_model || ""),
+              agent3_primary_model: String(data.agent3_primary_model || ""),
+              agent3_fallback_model: String(data.agent3_fallback_model || ""),
             });
             setWebhookBaseline({
               auto_return_enabled: Boolean(data.auto_return_enabled),
@@ -511,6 +571,14 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
               testcase_read_comments_enabled: Boolean(data.testcase_read_comments_enabled ?? true),
               testcase_max_comments_to_read: String(data.testcase_max_comments_to_read ?? 0),
               testcase_footer_text: String(data.testcase_footer_text || EMPTY_WEBHOOK_FORM.testcase_footer_text),
+              agent1_primary_model: String(data.agent1_primary_model || ""),
+              agent1_fallback_model: String(data.agent1_fallback_model || ""),
+              agent2_batch_size: String(data.agent2_batch_size ?? 6),
+              agent2_extra_scan_enabled: Boolean(data.agent2_extra_scan_enabled ?? true),
+              agent2_primary_model: String(data.agent2_primary_model || ""),
+              agent2_fallback_model: String(data.agent2_fallback_model || ""),
+              agent3_primary_model: String(data.agent3_primary_model || ""),
+              agent3_fallback_model: String(data.agent3_fallback_model || ""),
             });
             setWhDirty(false);
           } else {
@@ -574,6 +642,15 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                     ai_data_section_order?: string[];
                     read_comments_enabled?: boolean;
                     max_comments_to_read?: number;
+                    trusted_scope_comment_authors?: string;
+                    agent2_batch_size?: number;
+                    agent2_extra_scan_enabled?: boolean;
+                    agent1_primary_model?: string;
+                    agent1_fallback_model?: string;
+                    agent2_primary_model?: string;
+                    agent2_fallback_model?: string;
+                    agent3_primary_model?: string;
+                    agent3_fallback_model?: string;
                   };
                   testcase?: {
                     default_include_pr?: boolean;
@@ -601,6 +678,15 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                 ai_data_section_order: Array.isArray(checker.ai_data_section_order) ? checker.ai_data_section_order : EMPTY_MODULE_FORM.checker.ai_data_section_order,
                 read_comments_enabled: Boolean(checker.read_comments_enabled),
                 max_comments_to_read: String(checker.max_comments_to_read ?? 0),
+                trusted_scope_comment_authors: String(checker.trusted_scope_comment_authors || ""),
+                agent2_batch_size: String(checker.agent2_batch_size ?? 6),
+                agent2_extra_scan_enabled: Boolean(checker.agent2_extra_scan_enabled ?? true),
+                agent1_primary_model: String(checker.agent1_primary_model || ""),
+                agent1_fallback_model: String(checker.agent1_fallback_model || ""),
+                agent2_primary_model: String(checker.agent2_primary_model || ""),
+                agent2_fallback_model: String(checker.agent2_fallback_model || ""),
+                agent3_primary_model: String(checker.agent3_primary_model || ""),
+                agent3_fallback_model: String(checker.agent3_fallback_model || ""),
               },
               testcase: {
                 default_include_pr: Boolean(testcase.default_include_pr),
@@ -836,6 +922,14 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
           testcase_ai_max_output_tokens: 16384,
           testcase_use_adf_format: true,
           testcase_footer_text: webhookForm.testcase_footer_text,
+          agent1_primary_model: webhookForm.agent1_primary_model,
+          agent1_fallback_model: webhookForm.agent1_fallback_model,
+          agent2_batch_size: Number(webhookForm.agent2_batch_size || 6),
+          agent2_extra_scan_enabled: webhookForm.agent2_extra_scan_enabled,
+          agent2_primary_model: webhookForm.agent2_primary_model,
+          agent2_fallback_model: webhookForm.agent2_fallback_model,
+          agent3_primary_model: webhookForm.agent3_primary_model,
+          agent3_fallback_model: webhookForm.agent3_fallback_model,
         }),
       });
 
@@ -911,6 +1005,15 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
           ai_data_section_order: moduleForm.checker.ai_data_section_order,
           read_comments_enabled: moduleForm.checker.read_comments_enabled,
           max_comments_to_read: Number(moduleForm.checker.max_comments_to_read || 0),
+          trusted_scope_comment_authors: moduleForm.checker.trusted_scope_comment_authors,
+          agent2_batch_size: Number(moduleForm.checker.agent2_batch_size || 6),
+          agent2_extra_scan_enabled: moduleForm.checker.agent2_extra_scan_enabled,
+          agent1_primary_model: moduleForm.checker.agent1_primary_model,
+          agent1_fallback_model: moduleForm.checker.agent1_fallback_model,
+          agent2_primary_model: moduleForm.checker.agent2_primary_model,
+          agent2_fallback_model: moduleForm.checker.agent2_fallback_model,
+          agent3_primary_model: moduleForm.checker.agent3_primary_model,
+          agent3_fallback_model: moduleForm.checker.agent3_fallback_model,
         },
         testcase: {
           default_include_pr: moduleForm.testcase.default_include_pr,
@@ -1013,7 +1116,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
               success={sharedSuccess}
             >
               <div className="mt-5 grid gap-4">
-                <div className="rounded-xl border border-border/60 bg-layer/30 p-4">
+                <SettingsInnerCard>
                   <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">JIRA</p>
                   <div className="mt-3 grid gap-4">
                     <BaseInputField
@@ -1055,9 +1158,9 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                       value={form.jira_token}
                     />
                   </div>
-                </div>
+                </SettingsInnerCard>
 
-                <div className="rounded-xl border border-border/60 bg-layer/30 p-4">
+                <SettingsInnerCard>
                   <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">GitHub</p>
                   <div className="mt-3 grid gap-4">
                     <BaseInputField
@@ -1092,9 +1195,9 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                       value={form.github_org}
                     />
                   </div>
-                </div>
+                </SettingsInnerCard>
 
-                <div className="rounded-xl border border-border/60 bg-layer/30 p-4">
+                <SettingsInnerCard>
                   <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Figma</p>
                   <div className="mt-3 grid gap-4">
                     <BaseInputField
@@ -1122,9 +1225,9 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                       value={form.figma_token}
                     />
                   </div>
-                </div>
+                </SettingsInnerCard>
 
-                <div className="rounded-xl border border-border/60 bg-layer/30 p-4">
+                <SettingsInnerCard>
                   <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Gemini</p>
                   <div className="mt-3 grid gap-4">
                     <BaseInputField
@@ -1153,7 +1256,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                       value={form.gemini_api_key_2}
                     />
                   </div>
-                </div>
+                </SettingsInnerCard>
               </div>
 
               <Notice className="mt-4" tone="info">
@@ -1168,7 +1271,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
               {webhookLoading ? <p className="mt-3 text-sm text-muted-foreground">Webhook sozlamalari yuklanmoqda...</p> : null}
               {webhookHasError ? (
                 <Notice className="mt-3" tone="warning">
-                  {[whThresholdError ? "Return threshold 0-100 oralig'ida bo'lishi kerak." : null, whCheckerOrderError ? "Checker AI order ichida 'tz' va 'code' bo'lishi shart." : null, whMinTzError ? "Min TZ belgilari 0 yoki undan katta bo'lishi kerak." : null, whMaxReadCommentsError ? "Max izohlar 0 yoki undan katta bo'lishi kerak." : null, whMaxSkipError ? "Max skip comment soni 1 yoki undan katta bo'lishi kerak." : null]
+                  {[whThresholdError ? "Return threshold 0-100 oralig'ida bo'lishi kerak." : null, whCheckerOrderError ? "Checker AI order ichida 'tz' va 'code' bo'lishi shart." : null, whAgent2BatchError ? "Agent2 batch size 1-20 bo'lishi shart." : null, whMinTzError ? "Min TZ belgilari 0 yoki undan katta bo'lishi kerak." : null, whMaxReadCommentsError ? "Max izohlar 0 yoki undan katta bo'lishi kerak." : null, whMaxSkipError ? "Max skip comment soni 1 yoki undan katta bo'lishi kerak." : null]
                     .filter(Boolean)
                     .join(" ")}
                 </Notice>
@@ -1176,7 +1279,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
 
               <div className="g2 mt-4 items-start webhook-cards-grid">
                 <SettingsBaseCard
-                  className="card webhook-shared-card"
+                  className="webhook-shared-card"
                   customizerId="settings-webhook-shared"
                   description="Checker va Testcase uchun bir xil qo'llanadigan filtr va istisnolar."
                   dirty={webhookSharedDirty}
@@ -1232,7 +1335,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                 </SettingsBaseCard>
 
                 <SettingsBaseCard
-                  className="card webhook-service-card webhook-service-card--main"
+                  className="webhook-service-card webhook-service-card--main"
                   customizerId="settings-webhook-service1"
                   description="Trigger, return va checker comment sozlamalari."
                   dirty={webhookService1Dirty}
@@ -1417,13 +1520,11 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                           options={[
                             ...moduleAllowed.checker_visible_sections.map((sectionKey) => ({
                               key: sectionKey,
-                              label: checkerSectionLabels[sectionKey] || sectionKey,
-                              badge: sectionKey,
+                              label: CHECKER_SECTION_LABELS[sectionKey as keyof typeof CHECKER_SECTION_LABELS] || sectionKey,
                             })),
                             {
                               key: "contradictory_comments",
-                              label: checkerSectionLabels.contradictory_comments,
-                              badge: "contradictory_comments",
+                              label: CHECKER_SECTION_LABELS.contradictory_comments,
                             },
                           ]}
                           value={webhookForm.visible_sections}
@@ -1440,10 +1541,63 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                           📊 AI ga ma'lumotlar darajasi (tartibi)
                         </div>
                         <BaseOrderPills
+                          available={["tz", "comments", "figma", "code"]}
                           onChange={(nextValue) => updateWebhookField("ai_data_section_order", nextValue)}
+                          required={["tz", "code"]}
                           value={webhookForm.ai_data_section_order}
                         />
+                        {!webhookForm.ai_data_section_order.includes("figma") ? (
+                          <p className="mt-1 text-xs text-muted-foreground">Figma o'chirilgan: Agent1 Figma signalni requirementga aylantirmaydi.</p>
+                        ) : null}
                         {whCheckerOrderError ? <p className="err-text mt-1">tz va code bo'lishi shart</p> : null}
+                      </div>
+                    </SettingsInnerCard>
+
+                    <SettingsInnerCard>
+                      <div className="ssec mt-0 border-none pt-0">
+                        <div className="ssec-label">Agent modellari</div>
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <NumberField
+                            hint="1 = har talab alohida call, 6 = default batch."
+                            label="Agent2 batch size"
+                            max={20}
+                            min={1}
+                            onChange={(value) => updateWebhookField("agent2_batch_size", value)}
+                            value={webhookForm.agent2_batch_size}
+                          />
+                          <div className="md:col-span-2">
+                            <ToggleRow
+                              desc="TZ da yo'q qo'shimcha kod o'zgarishlarni aniqlash."
+                              label="Agent2 Extra scan"
+                              onChange={(value) => updateWebhookField("agent2_extra_scan_enabled", value)}
+                              value={Boolean(webhookForm.agent2_extra_scan_enabled)}
+                            />
+                          </div>
+                          {[
+                            ["agent1_primary_model", "Agent1 primary"],
+                            ["agent1_fallback_model", "Agent1 fallback"],
+                            ["agent2_primary_model", "Agent2 primary"],
+                            ["agent2_fallback_model", "Agent2 fallback"],
+                            ["agent3_primary_model", "Agent3 primary"],
+                            ["agent3_fallback_model", "Agent3 fallback"],
+                          ].map(([field, label]) => (
+                            <BaseSelectField
+                              className="settings-form-select"
+                              key={field}
+                              label={label}
+                              onChange={(value) =>
+                                updateWebhookField(field as keyof WebhookFormState, value)
+                              }
+                              value={String(webhookForm[field as keyof WebhookFormState] || "")}
+                            >
+                              {modelOptions().map((model) => (
+                                <option key={model || "inherit"} value={model}>
+                                  {model || "Global default"}
+                                </option>
+                              ))}
+                            </BaseSelectField>
+                          ))}
+                        </div>
                       </div>
                     </SettingsInnerCard>
 
@@ -1483,7 +1637,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                 </SettingsBaseCard>
 
                 <SettingsBaseCard
-                  className="card webhook-service-card webhook-service-card--main"
+                  className="webhook-service-card webhook-service-card--main"
                   customizerId="settings-webhook-service2"
                   description="Auto-comment va testcase generation sozlamalari."
                   dirty={webhookService2Dirty}
@@ -1587,7 +1741,9 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                               <div className="grid gap-3">
                                 <SettingsCardItem>
                                   <BaseOrderPills
+                                    available={["tz", "comments", "custom_context", "code"]}
                                     onChange={(nextValue) => updateWebhookField("testcase_ai_data_section_order", nextValue)}
+                                    required={["tz"]}
                                     value={webhookForm.testcase_ai_data_section_order}
                                   />
                                 </SettingsCardItem>
@@ -1728,14 +1884,17 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
               {modulesLoading ? <p className="mt-3 text-sm text-muted-foreground">Module sozlamalari yuklanmoqda...</p> : null}
               {moduleHasError ? (
                 <Notice className="mt-3" tone="warning">
-                  {[testcaseCountError ? "Max test cases 1-50 bo'lishi shart." : null, checkerOrderError ? "Checker order ichida tz va code bo'lishi shart." : null, testcaseOrderError ? "Testcase order ichida tz bo'lishi shart." : null]
+                  {[testcaseCountError ? "Max test cases 1-50 bo'lishi shart." : null, checkerOrderError ? "Checker order ichida tz va code bo'lishi shart." : null, checkerBatchError ? "Agent2 batch size 1-20 bo'lishi shart." : null, testcaseOrderError ? "Testcase order ichida tz bo'lishi shart." : null]
                     .filter(Boolean)
                     .join(" ")}
                 </Notice>
               ) : null}
 
-              <div className="g2 mt-4 items-start">
+              <div className="webhook-cards-grid mt-4">
                 <SettingsBaseCard
+                  className="webhook-service-card webhook-service-card--main"
+                  collapsible
+                  customizerId="settings-module-checker"
                   description="Spec va pull request mosligini tekshirish sozlamalari."
                   dirty={checkerDirty}
                   error={modulesCheckerError}
@@ -1748,76 +1907,163 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                   )}
                   onSave={() => saveModules("checker")}
                   saveDisabled={savingModules || moduleHasError}
-                  saveLabel="Saqlash"
+                  saveLabel="Checker ni saqlash"
                   saving={savingModules}
                   success={modulesCheckerSuccess}
                   title="TZ-PR Checker"
                 >
+                  <div className="webhook-family-stack">
+                    <SettingsInnerCard>
+                      <div className="ssec mt-0 border-none pt-0">
+                        <div className="ssec-label">Default ishga tushirish</div>
+                        <div className="grid gap-3">
+                          <SettingsCardItem>
+                            <ToggleRow
+                              desc="AI faqat o'zgargan kod qismlarini tahlil qiladi — tezroq va tejamkor."
+                              label="Smart Patch (default)"
+                              onChange={(value) => updateCheckerField("default_use_smart_patch", value)}
+                              value={Boolean(moduleForm.checker.default_use_smart_patch)}
+                            />
+                          </SettingsCardItem>
+                          <SettingsCardItem>
+                            <NumberField
+                              hint="1 = har talab alohida call, 6 = default batch."
+                              label="Agent2 batch size"
+                              max={20}
+                              min={1}
+                              onChange={(value) => updateCheckerField("agent2_batch_size", value)}
+                              value={moduleForm.checker.agent2_batch_size}
+                            />
+                          </SettingsCardItem>
+                          <SettingsCardItem>
+                            <ToggleRow
+                              desc="TZ da yo'q qo'shimcha kod o'zgarishlarni aniqlash."
+                              label="Agent2 Extra scan"
+                              onChange={(value) => updateCheckerField("agent2_extra_scan_enabled", value)}
+                              value={Boolean(moduleForm.checker.agent2_extra_scan_enabled)}
+                            />
+                          </SettingsCardItem>
+                        </div>
+                      </div>
+                    </SettingsInnerCard>
 
-                  <div className="grid gap-2.5">
-                    <ToggleRow
-                      desc="AI faqat o'zgargan kod qismlarini tahlil qiladi — tezroq va tejamkor."
-                      label="Smart Patch (default)"
-                      onChange={(value) => updateCheckerField("default_use_smart_patch", value)}
-                      value={Boolean(moduleForm.checker.default_use_smart_patch)}
-                    />
-                    <ToggleRow
-                      desc="JIRA task izohlarini AI tahlilga qo'shadi."
-                      label="Izohlarni o'qish"
-                      onChange={(value) => updateCheckerField("read_comments_enabled", value)}
-                      value={Boolean(moduleForm.checker.read_comments_enabled)}
-                    />
+                    <SettingsInnerCard>
+                      <div className="ssec mt-0 border-none pt-0">
+                        <div className="ssec-label">Comment o'qish oilasi</div>
+                        <div className="grid gap-3">
+                          <SettingsCardItem>
+                            <ToggleRow
+                              desc="JIRA task izohlarini AI tahlilga qo'shadi."
+                              label="Izohlarni o'qish"
+                              onChange={(value) => updateCheckerField("read_comments_enabled", value)}
+                              value={Boolean(moduleForm.checker.read_comments_enabled)}
+                            />
+                          </SettingsCardItem>
+                          {moduleForm.checker.read_comments_enabled ? (
+                            <>
+                              <SettingsCardItem>
+                                <NumberField
+                                  hint="0 = barchasi o'qiladi, boshqa son = shu miqdor bilan cheklanadi."
+                                  label="Max izohlar"
+                                  min={0}
+                                  onChange={(value) => updateCheckerField("max_comments_to_read", value)}
+                                  value={moduleForm.checker.max_comments_to_read}
+                                />
+                              </SettingsCardItem>
+                              <SettingsCardItem>
+                                <BaseInputField
+                                  className={SETTINGS_INPUT_CLASS}
+                                  hint="Vergul bilan ajrating. Faqat shu authorlar comment orqali scope o'zgartira oladi."
+                                  label="Trusted scope comment authorlar"
+                                  onChange={(value) => updateCheckerField("trusted_scope_comment_authors", value)}
+                                  placeholder="QA Lead, Product Owner"
+                                  value={moduleForm.checker.trusted_scope_comment_authors}
+                                />
+                              </SettingsCardItem>
+                            </>
+                          ) : null}
+                        </div>
+                      </div>
+                    </SettingsInnerCard>
+
+                    <SettingsInnerCard>
+                      <div className="ssec mt-0 border-none pt-0">
+                        <div className="ssec-label">
+                          <svg fill="none" height="13" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" width="13">
+                            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                          </svg>
+                          Comment bo'limlari
+                        </div>
+                        <BaseCheckGroup
+                          onChange={(nextValues) => updateCheckerField("visible_sections", nextValues)}
+                          options={moduleAllowed.checker_visible_sections.map((sectionKey) => ({
+                            key: sectionKey,
+                            label: CHECKER_SECTION_LABELS[sectionKey as keyof typeof CHECKER_SECTION_LABELS] || sectionKey,
+                          }))}
+                          value={moduleForm.checker.visible_sections}
+                        />
+                      </div>
+                    </SettingsInnerCard>
+
+                    <SettingsInnerCard>
+                      <div className="ssec mt-0 border-none pt-0">
+                        <div className="ssec-label">
+                          <svg fill="none" height="13" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" width="13">
+                            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+                          </svg>
+                          AI ga ma'lumotlar darajasi (tartibi)
+                        </div>
+                        <BaseOrderPills
+                          available={["tz", "comments", "figma", "code"]}
+                          onChange={(nextValue) => updateModuleOrderField("checker", "ai_data_section_order", nextValue)}
+                          required={["tz", "code"]}
+                          value={moduleForm.checker.ai_data_section_order}
+                        />
+                        {!moduleForm.checker.ai_data_section_order.includes("figma") ? (
+                          <p className="mt-1 text-xs text-muted-foreground">Figma o'chirilgan: Agent1 Figma signalni requirementga aylantirmaydi.</p>
+                        ) : null}
+                        {checkerOrderError ? <p className="err-text mt-1">tz va code bo'lishi shart</p> : null}
+                      </div>
+                    </SettingsInnerCard>
+
+                    <SettingsInnerCard>
+                      <div className="ssec mt-0 border-none pt-0">
+                        <div className="ssec-label">Agent modellari</div>
+                        <div className="grid gap-3 md:grid-cols-2">
+                          {[
+                            ["agent1_primary_model", "Agent1 primary"],
+                            ["agent1_fallback_model", "Agent1 fallback"],
+                            ["agent2_primary_model", "Agent2 primary"],
+                            ["agent2_fallback_model", "Agent2 fallback"],
+                            ["agent3_primary_model", "Agent3 primary"],
+                            ["agent3_fallback_model", "Agent3 fallback"],
+                          ].map(([field, label]) => (
+                            <BaseSelectField
+                              className="settings-form-select"
+                              key={field}
+                              label={label}
+                              onChange={(value) =>
+                                updateCheckerField(field as keyof ModuleFormState["checker"], value)
+                              }
+                              value={String(moduleForm.checker[field as keyof ModuleFormState["checker"]] || "")}
+                            >
+                              {modelOptions().map((model) => (
+                                <option key={model || "inherit"} value={model}>
+                                  {model || "Global default"}
+                                </option>
+                              ))}
+                            </BaseSelectField>
+                          ))}
+                        </div>
+                      </div>
+                    </SettingsInnerCard>
                   </div>
-
-                  <SettingsCardSection
-                    icon={(
-                      <svg fill="none" height="13" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" width="13">
-                        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-                      </svg>
-                    )}
-                    label="Ko'rinadigan bo'limlar"
-                  >
-                    <BaseCheckGroup
-                      onChange={(nextValues) => updateCheckerField("visible_sections", nextValues)}
-                      options={moduleAllowed.checker_visible_sections.map((sectionKey) => ({
-                        key: sectionKey,
-                        label: checkerSectionLabels[sectionKey] || sectionKey,
-                        badge: sectionKey,
-                      }))}
-                      value={moduleForm.checker.visible_sections}
-                    />
-                  </SettingsCardSection>
-
-                  <SettingsCardSection
-                    icon={(
-                      <svg fill="none" height="13" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" width="13">
-                        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-                      </svg>
-                    )}
-                    label="AI ma'lumotlar tartibi"
-                  >
-                    <BaseOrderPills
-                      onChange={(nextValue) => updateModuleOrderField("checker", "ai_data_section_order", nextValue)}
-                      value={moduleForm.checker.ai_data_section_order}
-                    />
-                    {checkerOrderError ? <p className="err-text mt-1">tz va code bo'lishi shart</p> : null}
-                  </SettingsCardSection>
-
-                  {moduleForm.checker.read_comments_enabled ? (
-                    <SettingsCardSection>
-                      <NumberField
-                        hint="0 = barchasi o'qiladi, boshqa son = shu miqdor bilan cheklanadi."
-                        label="Max izohlar"
-                        min={0}
-                        onChange={(value) => updateCheckerField("max_comments_to_read", value)}
-                        value={moduleForm.checker.max_comments_to_read}
-                      />
-                    </SettingsCardSection>
-                  ) : null}
-
                 </SettingsBaseCard>
 
                 <SettingsBaseCard
+                  className="webhook-service-card webhook-service-card--main"
+                  collapsible
+                  customizerId="settings-module-testcase"
                   description="AI orqali QA test scenariylarini yaratish sozlamalari."
                   dirty={testcaseDirty}
                   error={modulesTestcaseError}
@@ -1831,93 +2077,114 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                   )}
                   onSave={() => saveModules("testcase")}
                   saveDisabled={savingModules || moduleHasError}
-                  saveLabel="Saqlash"
+                  saveLabel="Testcase ni saqlash"
                   saving={savingModules}
                   success={modulesTestcaseSuccess}
                   title="Test Case Generator"
                 >
+                  <div className="webhook-family-stack">
+                    <SettingsInnerCard>
+                      <div className="ssec mt-0 border-none pt-0">
+                        <div className="ssec-label">Default ishga tushirish</div>
+                        <div className="grid gap-3">
+                          <SettingsCardItem>
+                            <ToggleRow
+                              desc="Defolt ravishda PR tahlilini test case generatsiyaga qo'shadi."
+                              label="PR biriktirish (default)"
+                              onChange={(value) => updateTestcaseField("default_include_pr", value)}
+                              value={Boolean(moduleForm.testcase.default_include_pr)}
+                            />
+                          </SettingsCardItem>
+                          <SettingsCardItem>
+                            <ToggleRow
+                              desc="AI faqat o'zgargan kod qismlarini tahlil qiladi."
+                              label="Smart Patch (default)"
+                              onChange={(value) => updateTestcaseField("default_use_smart_patch", value)}
+                              value={Boolean(moduleForm.testcase.default_use_smart_patch)}
+                            />
+                          </SettingsCardItem>
+                        </div>
+                      </div>
+                    </SettingsInnerCard>
 
-                  <div className="grid gap-2.5">
-                    <ToggleRow
-                      desc="Defolt ravishda PR tahlilini test case generatsiyaga qo'shadi."
-                      label="PR biriktirish (default)"
-                      onChange={(value) => updateTestcaseField("default_include_pr", value)}
-                      value={Boolean(moduleForm.testcase.default_include_pr)}
-                    />
-                    <ToggleRow
-                      desc="AI faqat o'zgargan kod qismlarini tahlil qiladi."
-                      label="Smart Patch (default)"
-                      onChange={(value) => updateTestcaseField("default_use_smart_patch", value)}
-                      value={Boolean(moduleForm.testcase.default_use_smart_patch)}
-                    />
-                    <ToggleRow
-                      desc="JIRA task izohlarini generatsiyaga qo'shadi."
-                      label="Izohlarni o'qish"
-                      onChange={(value) => updateTestcaseField("read_comments_enabled", value)}
-                      value={Boolean(moduleForm.testcase.read_comments_enabled)}
-                    />
-                  </div>
+                    <SettingsInnerCard>
+                      <div className="ssec mt-0 border-none pt-0">
+                        <div className="ssec-label">Comment o'qish oilasi</div>
+                        <div className="grid gap-3">
+                          <SettingsCardItem>
+                            <ToggleRow
+                              desc="JIRA task izohlarini generatsiyaga qo'shadi."
+                              label="Izohlarni o'qish"
+                              onChange={(value) => updateTestcaseField("read_comments_enabled", value)}
+                              value={Boolean(moduleForm.testcase.read_comments_enabled)}
+                            />
+                          </SettingsCardItem>
+                          {moduleForm.testcase.read_comments_enabled ? (
+                            <SettingsCardItem>
+                              <NumberField
+                                hint="0 = barchasi."
+                                label="Max izohlar"
+                                min={0}
+                                onChange={(value) => updateTestcaseField("max_comments_to_read", value)}
+                                value={moduleForm.testcase.max_comments_to_read}
+                              />
+                            </SettingsCardItem>
+                          ) : null}
+                        </div>
+                      </div>
+                    </SettingsInnerCard>
 
-                  <SettingsCardSection
-                    icon={(
-                      <svg fill="none" height="13" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" width="13">
-                        <rect height="7" width="7" x="3" y="3" />
-                        <rect height="7" width="7" x="14" y="3" />
-                        <rect height="7" width="7" x="14" y="14" />
-                        <rect height="7" width="7" x="3" y="14" />
-                      </svg>
-                    )}
-                    label="Default test turlari"
-                  >
-                    <BaseCheckGroup
-                      onChange={(nextValues) => updateTestcaseField("default_test_types", nextValues)}
-                      options={moduleAllowed.testcase_types.map((typeKey) => ({
-                        key: typeKey,
-                        label: testcaseTypeLabels[typeKey] || typeKey,
-                        badge: typeKey,
-                      }))}
-                      value={moduleForm.testcase.default_test_types}
-                    />
-                  </SettingsCardSection>
-
-                  <SettingsCardSection>
-                    <div className="g2">
-                      <NumberField
-                        hint="Har bir generatsiyada maksimum shu qadar test case yaratiladi."
-                        label="Max test cases"
-                        max={50}
-                        min={1}
-                        onChange={(value) => updateTestcaseField("max_test_cases", value)}
-                        required
-                        value={moduleForm.testcase.max_test_cases}
-                      />
-                      {moduleForm.testcase.read_comments_enabled ? (
-                        <NumberField
-                          hint="0 = barchasi"
-                          label="Max izohlar"
-                          min={0}
-                          onChange={(value) => updateTestcaseField("max_comments_to_read", value)}
-                          value={moduleForm.testcase.max_comments_to_read}
+                    <SettingsInnerCard>
+                      <div className="ssec mt-0 border-none pt-0">
+                        <div className="ssec-label">
+                          <svg fill="none" height="13" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" width="13">
+                            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+                          </svg>
+                          AI ga ma'lumotlar darajasi (tartibi)
+                        </div>
+                        <BaseOrderPills
+                          available={["tz", "comments", "custom_context", "code"]}
+                          onChange={(nextValue) => updateModuleOrderField("testcase", "ai_data_section_order", nextValue)}
+                          required={["tz"]}
+                          value={moduleForm.testcase.ai_data_section_order}
                         />
-                      ) : null}
-                    </div>
-                  </SettingsCardSection>
+                        {testcaseOrderError ? <p className="err-text mt-1">tz bo'lishi shart</p> : null}
+                      </div>
+                    </SettingsInnerCard>
 
-                  <SettingsCardSection
-                    icon={(
-                      <svg fill="none" height="13" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" width="13">
-                        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-                      </svg>
-                    )}
-                    label="AI ma'lumotlar tartibi"
-                  >
-                    <BaseOrderPills
-                      onChange={(nextValue) => updateModuleOrderField("testcase", "ai_data_section_order", nextValue)}
-                      value={moduleForm.testcase.ai_data_section_order}
-                    />
-                    {testcaseOrderError ? <p className="err-text mt-1">tz bo'lishi shart</p> : null}
-                  </SettingsCardSection>
-
+                    <SettingsInnerCard>
+                      <div className="ssec mt-0 border-none pt-0">
+                        <div className="ssec-label">Mustaqil settinglar</div>
+                        <div className="grid gap-3">
+                          <SettingsCardItem>
+                            <div className="ssec mt-0 border-none pt-0">
+                              <div className="ssec-label">Default test turlari</div>
+                              <BaseCheckGroup
+                                onChange={(nextValues) => updateTestcaseField("default_test_types", nextValues)}
+                                options={moduleAllowed.testcase_types.map((typeKey) => ({
+                                  key: typeKey,
+                                  label: testcaseTypeLabels[typeKey] || typeKey,
+                                  badge: typeKey,
+                                }))}
+                                value={moduleForm.testcase.default_test_types}
+                              />
+                            </div>
+                          </SettingsCardItem>
+                          <SettingsCardItem>
+                            <NumberField
+                              hint="Har bir generatsiyada maksimum shu qadar test case yaratiladi."
+                              label="Max test cases"
+                              max={50}
+                              min={1}
+                              onChange={(value) => updateTestcaseField("max_test_cases", value)}
+                              required
+                              value={moduleForm.testcase.max_test_cases}
+                            />
+                          </SettingsCardItem>
+                        </div>
+                      </div>
+                    </SettingsInnerCard>
+                  </div>
                 </SettingsBaseCard>
               </div>
             </>

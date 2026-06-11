@@ -38,6 +38,20 @@ class PRHelper:
         self.github = github_client
 
     @staticmethod
+    def _summarize_pr_for_selection(pr: Dict, reason: str = "") -> Dict:
+        return {
+            "number": pr.get("number"),
+            "title": pr.get("title", ""),
+            "url": pr.get("url", ""),
+            "state": pr.get("state", ""),
+            "merged": bool(pr.get("merged", False)),
+            "additions": pr.get("additions", 0),
+            "deletions": pr.get("deletions", 0),
+            "files_count": pr.get("files_count", 0),
+            "reason": reason,
+        }
+
+    @staticmethod
     def _make_updater(status_callback: Optional[Callable[[str, str], None]]) -> Callable[[str, str], None]:
         """
         Status callback uchun wrapper yaratish.
@@ -196,6 +210,7 @@ class PRHelper:
             # Faqat MERGED PR'larni qabul qilamiz.
             # Open yoki closed (merge qilinmagan) PR'lar rad etiladi.
             merged_prs = [pr for pr in pr_details if pr.get('merged')]
+            skipped_prs = [pr for pr in pr_details if not pr.get('merged')]
             if not merged_prs:
                 # Hech qaysi PR merged emas — xato
                 statuses = ", ".join(
@@ -211,8 +226,21 @@ class PRHelper:
                 raise PRNotMergedError(error_msg)
 
             if len(merged_prs) < len(pr_details):
-                skipped = [f"#{pr['number']}" for pr in pr_details if not pr.get('merged')]
+                skipped = [f"#{pr['number']}" for pr in skipped_prs]
                 update_status("info", f"Merged PR topildi → merged bo'lmagan PR'lar o'tkazib yuborildi: {skipped}")
+
+            pr_selection = {
+                "found_count": len(pr_urls),
+                "fetched_count": len(pr_details),
+                "merged_count": len(merged_prs),
+                "skipped_count": len(skipped_prs),
+                "analyzed_count": len(merged_prs),
+                "merged": [self._summarize_pr_for_selection(pr) for pr in merged_prs],
+                "skipped": [
+                    self._summarize_pr_for_selection(pr, "PR merged emas")
+                    for pr in skipped_prs
+                ],
+            }
 
             pr_details = merged_prs
             total_files = sum(len(pr['files']) for pr in pr_details)
@@ -232,7 +260,8 @@ class PRHelper:
                 'total_additions': total_additions,
                 'total_deletions': total_deletions,
                 'pr_details': pr_details,
-                'all_files': all_files
+                'all_files': all_files,
+                'pr_selection': pr_selection,
             }
 
         except PRNotMergedError:

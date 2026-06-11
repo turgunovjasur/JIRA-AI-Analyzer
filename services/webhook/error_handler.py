@@ -70,7 +70,9 @@ def _classify_error(error_msg: str) -> str:
         'overloaded', 'quota', 'resource exhausted',
         'resource_exhausted', 'too many requests',
         'ikkala key ham ishlamadi', 'both keys failed',
-        'gemini api xatosi',
+        'gemini api xatosi', 'token limit',
+        'context length', 'prompt too large',
+        'full_blocked_overload', 'ai limitidan oshdi',
         'freeze holatida', 'barcha api keylar', 'all keys frozen'
     ]
     if any(kw in msg_lower for kw in ai_timeout_keywords):
@@ -143,7 +145,11 @@ async def _write_success_comment(
         if not success:
             # Fallback — oddiy format
             log.warning(f"[{task_key}] ADF failed, falling back to simple format")
-            simple_comment = adf_formatter.build_simple_comment(result, new_status)
+            simple_comment = adf_formatter.build_simple_comment(
+                result,
+                new_status,
+                visible_sections=settings.visible_sections,
+            )
             comment_writer.add_comment(task_key, simple_comment)
 
     except Exception as e:
@@ -171,7 +177,6 @@ def _build_warning_adf(
         "version": 1,
         "type": "doc",
         "content": [
-            adf_formatter._paragraph([adf_formatter._text_node(marker)]),
             adf_formatter._panel([
                 adf_formatter._paragraph([
                     adf_formatter._bold_text(f"⚠️ {service} | Warning"),
@@ -182,7 +187,8 @@ def _build_warning_adf(
                         f"{task_key} | {timestamp} | Manual tekshirish tavsiya etiladi"
                     )
                 ])
-            ], panel_type)
+            ], panel_type),
+            adf_formatter._paragraph([adf_formatter._text_node(marker)])
         ]
     }
 
@@ -323,4 +329,3 @@ async def _write_skip_notification(
 
     except Exception as e:
         log.error(f"[{task_key}] Skip notification xato: {e}")
-

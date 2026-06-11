@@ -114,7 +114,8 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str, company_id: in
 
         if not result.success:
             error_msg = result.error_message
-            error_type = _classify_error(error_msg)
+            status_banner_code = str((result.status_banner or {}).get("code") or "").upper()
+            error_type = 'ai_timeout' if status_banner_code == "FULL_BLOCKED_OVERLOAD" else _classify_error(error_msg)
             log.service_error(task_key, "service_1", error_msg)
 
             reason_code = _error_type_to_reason_code(error_type)
@@ -129,14 +130,21 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str, company_id: in
                     reason_code=reason_code
                 )
             elif error_type in ('pr_not_found', 'pr_not_merged', 'tz_too_short'):
-                # PR yo'q / merged emas / TZ qisqa → JIRA error, task qaytariladi, DB returned
+                # PR yo'q / merged emas / TZ qisqa → return uriniladi; DB faqat transition muvaffaqiyatli bo'lsa yangilanadi
                 log.warning(f"[{task_key}] [{error_type}] → task qaytarilmoqda [{reason_code}]")
                 await _write_error_comment(
                     task_key, error_msg, comment_writer, adf_formatter,
                     reason_code=reason_code
                 )
-                await _handle_pr_not_merged_return(task_key, settings, company_id=company_id)
-                mark_returned_pr_not_merged(task_key)
+                returned = await _handle_pr_not_merged_return(task_key, settings, company_id=company_id)
+                if returned:
+                    mark_returned_pr_not_merged(task_key)
+                else:
+                    set_service1_error(
+                        task_key,
+                        error_msg,
+                        keep_service2_pending=(error_type == 'pr_not_found'),
+                    )
                 set_return_reason(task_key, reason_code)
             else:
                 # Boshqa xatolik — Service2 ham to'xtatiladi
@@ -166,9 +174,12 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str, company_id: in
         if settings.auto_return_enabled and compliance_score is not None:
             threshold = settings.return_threshold
             if compliance_score < threshold:
-                await _handle_auto_return(task_key, result, settings, company_id=company_id)
-                mark_returned(task_key)
-                set_return_reason(task_key, WARN_LOW_SCORE)
+                returned = await _handle_auto_return(task_key, result, settings, company_id=company_id)
+                if returned:
+                    mark_returned(task_key)
+                    set_return_reason(task_key, WARN_LOW_SCORE)
+                else:
+                    log.warning(f"[{task_key}] Auto-return requested but JIRA transition bajarilmadi")
 
     except Exception as e:
         error_msg = str(e)
@@ -313,10 +324,13 @@ async def _run_testcase_generation(task_key: str, new_status: str, company_id: i
                 set_return_reason(task_key, reason_code_s2)
                 log.info(f"[{task_key}] Service2 BLOCKED: {retry_minutes} min [{reason_code_s2}]")
             elif error_type in ('pr_not_found', 'pr_not_merged', 'tz_too_short'):
-                # PR yo'q / merged emas / TZ qisqa → task qaytariladi (comment testcase_webhook_handler da yoziladi)
+                # PR yo'q / merged emas / TZ qisqa → return uriniladi (comment testcase_webhook_handler da yoziladi)
                 log.warning(f"[{task_key}] Servis-2 [{error_type}] → task qaytarilmoqda [{reason_code_s2}]")
-                await _handle_pr_not_merged_return(task_key, app_settings.webhook_tz_pr, company_id=company_id)
-                mark_returned_pr_not_merged(task_key)
+                returned = await _handle_pr_not_merged_return(task_key, app_settings.webhook_tz_pr, company_id=company_id)
+                if returned:
+                    mark_returned_pr_not_merged(task_key)
+                else:
+                    set_service2_error(task_key, error_msg)
                 set_return_reason(task_key, reason_code_s2)
             else:
                 set_service2_error(task_key, error_msg)
@@ -355,7 +369,7 @@ async def _handle_auto_return(
         result: Any,
         settings: "TZPRCheckerSettings",
         company_id: int = None,
-) -> None:
+) -> bool:
     """
     Compliance score threshold'dan past bo'lganda JIRA task'ni avtomatik qaytarish.
 
@@ -378,6 +392,8 @@ async def _handle_auto_return(
         - JIRA task statusini return_status'ga o'zgartiradi
         - JIRA'ga return notification comment yozadi
         - mark_returned() bu funksiyadan TASHQARIDA chaqiriladi (caller tomonidan)
+    Returns:
+        bool: JIRA status transition muvaffaqiyatli bo'lsa ``True``.
     """
     try:
         score = result.compliance_score
@@ -385,6 +401,10 @@ async def _handle_auto_return(
 
         if score < threshold:
             status_manager = _get_status_manager(company_id)
+            can_return, validation_msg = status_manager.can_transition_to(task_key, settings.return_status)
+            if not can_return:
+                log.warning(f"[{task_key}] Auto-return transition yo'q: {validation_msg}")
+                return False
 
             success, msg = status_manager.auto_return_if_needed(
                 task_key=task_key,
@@ -423,18 +443,23 @@ async def _handle_auto_return(
 
                 except Exception as notif_e:
                     log.error(f"[{task_key}] Return notification xato: {notif_e}")
+                return True
             else:
                 log.warning(f"[{task_key}] Auto-return FAILED: {msg}")
+                return False
 
     except Exception as e:
         log.error(f"[{task_key}] Auto-return xato: {e}")
+        return False
+
+    return False
 
 
 async def _handle_pr_not_merged_return(
         task_key: str,
         settings: "TZPRCheckerSettings",
         company_id: int = None,
-) -> None:
+) -> bool:
     """
     PR merged emas bo'lganda JIRA task statusini return_status ga o'zgartirish.
 
@@ -444,23 +469,32 @@ async def _handle_pr_not_merged_return(
     Ishlash tartibi:
         1. JiraStatusManager.change_status() orqali return_status ga o'tkazish
         2. Muvaffaqiyatli bo'lsa — warning log
-        3. Muvaffaqiyatsiz bo'lsa — log (DB yangilanishi caller tomonidan baribir bo'ladi)
+        3. Muvaffaqiyatsiz bo'lsa — log va caller DB statusni `returned` ga o'tkazmaydi
 
     Args:
         task_key: JIRA task identifikatori
         settings: TZPRCheckerSettings — return_status olish uchun
+    Returns:
+        bool: JIRA status transition muvaffaqiyatli bo'lsa ``True``.
     """
     try:
         status_manager = _get_status_manager(company_id)
         return_status = settings.return_status
+        can_return, validation_msg = status_manager.can_transition_to(task_key, return_status)
+        if not can_return:
+            log.warning(f"[{task_key}] Return transition yo'q: {validation_msg}")
+            return False
 
         success, msg = status_manager.change_status(task_key, return_status)
         if success:
             log.warning(
                 f"[{task_key}] RETURNED (PR not merged) → {return_status}"
             )
+            return True
         else:
             log.warning(f"[{task_key}] PR not merged return FAILED: {msg}")
+            return False
 
     except Exception as e:
         log.error(f"[{task_key}] PR not merged return xato: {e}")
+        return False

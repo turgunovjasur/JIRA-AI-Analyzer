@@ -10,6 +10,7 @@ TZ tarkibi:
 - Comments (qo'shimcha talablar, o'zgarishlar)
 """
 
+import re
 from typing import Dict, List, Optional
 
 
@@ -23,10 +24,34 @@ class CommentSeparator:
 
     S1_MARKER = "[AI_S1]"
     S2_MARKER = "[AI_S2]"
+    AUTO_GENERATED_HINTS = (
+        "avtomatik tz-pr moslik tekshiruvi",
+        "avtomatik test case",
+        "bu komment ai tomonidan avtomatik yaratilgan",
+        "test case'lar ai (gemini) tomonidan avtomatik yaratilgan",
+        "savollar bo'lsa qa team ga murojaat qiling",
+    )
+
+    @classmethod
+    def _normalize_body(cls, body: str) -> str:
+        text = str(body or "").replace("’", "'").replace("`", "'")
+        return re.sub(r"\s+", " ", text).strip().casefold()
+
+    @classmethod
+    def _looks_like_generated_report(cls, body: str) -> bool:
+        normalized = cls._normalize_body(body)
+        if not normalized:
+            return False
+        return any(hint in normalized for hint in cls.AUTO_GENERATED_HINTS)
+
     @classmethod
     def is_ai_comment(cls, comment: Dict) -> bool:
         body = comment.get('body', '')
-        return cls.S1_MARKER in body[:30] or cls.S2_MARKER in body[:30]
+        return (
+            cls.S1_MARKER in body[:30]
+            or cls.S2_MARKER in body[:30]
+            or cls._looks_like_generated_report(body)
+        )
 
     @classmethod
     def get_ai_type(cls, comment: Dict) -> Optional[str]:

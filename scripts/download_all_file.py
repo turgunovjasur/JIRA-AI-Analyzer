@@ -29,7 +29,8 @@ load_dotenv()
 # ============================================================================
 class Config:
     # Sprint va Project
-    SPRINT_IDS = [4472] # DEV + QA
+    SPRINT_IDS = [4742, 5007]
+    # SPRINT_IDS = [4472] # DEV + QA
     # SPRINT_IDS = [2842, 3014, 2775, 2379, 2352, 2351, 2148, 2843, 3081] # 4-kvartal
     # SPRINT_IDS = [2049, 1918, 1686, 1653, 1589, 1587] # 3-kvartal
     # SPRINT_IDS = [1455, 1159, 1158, 1059, 927, 829, 663] # 2-kvartal

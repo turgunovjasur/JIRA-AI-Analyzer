@@ -33,6 +33,7 @@ class JiraADFFormatter(BaseADFFormatter):
     """Jira ADF formatda comment yaratish"""
 
     _contradictory_action_text = "ishlov bering!"
+    _default_visible_sections = ['completed', 'partial', 'failed', 'issues', 'figma']
 
     def __init__(self):
         """Initialize formatter"""
@@ -124,6 +125,67 @@ class JiraADFFormatter(BaseADFFormatter):
             return int(match.group(1))
 
         return None
+
+    def _normalize_visible_sections(self, visible_sections: Optional[List[str]]) -> List[str]:
+        allowed = set(self._default_visible_sections)
+        values = [section for section in (visible_sections or self._default_visible_sections) if section in allowed]
+        return values or list(self._default_visible_sections)
+
+    def _coerce_section_items(self, section: Any) -> List[str]:
+        items = getattr(section, "items", None)
+        if isinstance(section, dict):
+            items = section.get("items")
+        if items:
+            return [str(item).strip() for item in items if str(item).strip()]
+
+        lines = getattr(section, "lines", None)
+        if isinstance(section, dict):
+            lines = section.get("lines")
+        if lines:
+            return [str(line).strip() for line in lines if str(line).strip()]
+        return []
+
+    def _sections_from_result(self, result: Any) -> Dict[str, AnalysisSection]:
+        sections: Dict[str, AnalysisSection] = {}
+        structured_sections = getattr(result, "analysis_sections", None) or []
+
+        for raw_section in structured_sections:
+            key = getattr(raw_section, "key", None)
+            if isinstance(raw_section, dict):
+                key = raw_section.get("key")
+            if key not in self.section_titles:
+                continue
+
+            items = self._coerce_section_items(raw_section)
+            if not items:
+                continue
+
+            title = getattr(raw_section, "title", None)
+            if isinstance(raw_section, dict):
+                title = raw_section.get("title")
+            fallback_title, emoji = self.section_titles[key]
+            sections[key] = AnalysisSection(
+                title=title or fallback_title,
+                emoji=emoji,
+                items=items,
+                section_type=key,
+            )
+
+        if sections:
+            return sections
+
+        ai_analysis = getattr(result, "ai_analysis", None)
+        return self.parse_ai_analysis(ai_analysis or "")
+
+    def _summary_lines_from_result(self, result: Any) -> List[str]:
+        overview = getattr(result, "analysis_overview", None)
+        if isinstance(overview, dict):
+            lines = overview.get("summary_lines")
+        else:
+            lines = getattr(overview, "summary_lines", None)
+        if lines:
+            return [str(line).strip() for line in lines if str(line).strip()]
+        return []
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # COMMENT DOCUMENT BUILDER
@@ -255,11 +317,8 @@ class JiraADFFormatter(BaseADFFormatter):
         content.append(self._rule())
 
         # ━━━ AI TAHLIL BO'LIMLARI (EXPAND PANELS) ━━━
-        sections = self.parse_ai_analysis(result.ai_analysis)
-
-        _visible = visible_sections if visible_sections else [
-            'completed', 'partial', 'failed', 'issues', 'figma'
-        ]
+        sections = self._sections_from_result(result)
+        _visible = self._normalize_visible_sections(visible_sections)
 
         for section_key in ['completed', 'partial', 'failed', 'issues', 'figma']:
             if section_key not in _visible:
@@ -384,7 +443,8 @@ class JiraADFFormatter(BaseADFFormatter):
     def build_simple_comment(
             self,
             result: Any,
-            new_status: str = "Ready to Test"
+            new_status: str = "Ready to Test",
+            visible_sections: Optional[List[str]] = None,
     ) -> str:
         """
         Oddiy Jira Markup formatda comment (ADF ishlamasa)
@@ -411,6 +471,12 @@ class JiraADFFormatter(BaseADFFormatter):
         if result.compliance_score is not None:
             comment += f"\n*📊 Moslik Bali:* *{result.compliance_score}%*\n"
 
+        summary_lines = self._summary_lines_from_result(result)
+        if summary_lines:
+            comment += "\n*🧭 Xulosa:*\n"
+            for line in summary_lines:
+                comment += f"• {line}\n"
+
         comment += f"""
 ----
 
@@ -421,15 +487,18 @@ class JiraADFFormatter(BaseADFFormatter):
 • O'chirilgan qatorlar: {{color:red}}-{result.total_deletions}{{color}}
 
 ----
-
-*AI Tahlili (Gemini 2.5 Flash):*
-
-{result.ai_analysis}
-
-----
-
-_Bu komment AI tomonidan avtomatik yaratilgan. Savollar bo'lsa QA Team ga murojaat qiling._
 """
+
+        sections = self._sections_from_result(result)
+        for section_key in self._normalize_visible_sections(visible_sections):
+            section = sections.get(section_key)
+            if not section or not section.items:
+                continue
+            comment += f"\n*{section.title}:*\n"
+            for item in section.items:
+                comment += f"• {item}\n"
+
+        comment += "\n----\n\n_Bu komment AI tomonidan avtomatik yaratilgan. Savollar bo'lsa QA Team ga murojaat qiling._\n"
         return comment
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

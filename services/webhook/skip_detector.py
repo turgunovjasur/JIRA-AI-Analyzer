@@ -9,6 +9,8 @@ Stateless — faqat JIRA'dan ma'lumot o'qiydi, hech narsa yozmaydi.
 """
 from typing import TYPE_CHECKING
 
+import requests
+
 from core.logger import get_logger
 
 if TYPE_CHECKING:
@@ -54,11 +56,21 @@ async def _check_skip_code(
             return False
 
         issue = comment_writer.jira.issue(task_key)
-        comments = sorted(issue.fields.comment.comments, key=lambda c: c.created, reverse=True)
+        comments = list(issue.fields.comment.comments or [])
 
         # Webhook checker scope'dan berilgan qiymat ustuvor.
-        # Fallback sifatida default 5 ishlatiladi.
-        comments_to_check = max_comments if isinstance(max_comments, int) and max_comments > 0 else 5
+        # Berilmasa settings.max_skip_check_comments, oxirgi fallback 5.
+        if isinstance(max_comments, int) and max_comments > 0:
+            comments_to_check = max_comments
+        else:
+            try:
+                from config.app_settings import get_app_settings
+
+                comments_to_check = int(get_app_settings().tz_pr_checker.max_skip_check_comments)
+            except Exception:
+                comments_to_check = 5
+            if comments_to_check <= 0:
+                comments_to_check = 5
 
         # Faqat so'nggi N ta comment tekshiriladi (performance uchun)
         for comment in comments[:comments_to_check]:
@@ -75,3 +87,51 @@ async def _check_skip_code(
     except Exception as e:
         log.error(f"[{task_key}] Skip code check xato: {e}")
         return False  # Xato bo'lsa AI davom etadi
+
+
+async def _detect_recheck(
+        task_key: str,
+        settings: "TZPRCheckerSettings",
+        comment_writer: "JiraCommentWriter",
+) -> bool:
+    """
+    JIRA changelog'da task return statusdan trigger statusga qaytganini aniqlash.
+
+    Bu yordamchi eski webhook testlari va re-check oqimi uchun saqlangan:
+    changelog ichida ``field=status`` va ``fromString=settings.return_status``
+    bo'lsa, task qayta tekshiruvga qaytgan hisoblanadi.
+    """
+    try:
+        if not comment_writer.jira:
+            log.warning(f"[{task_key}] JIRA client yo'q, re-check aniqlanmadi")
+            return False
+
+        server = ""
+        try:
+            server = str(comment_writer.jira._options.get("server") or "").rstrip("/")
+        except Exception:
+            server = ""
+
+        url = f"{server}/rest/api/2/issue/{task_key}?expand=changelog" if server else task_key
+        response = requests.get(url)
+        if response.status_code != 200:
+            log.warning(f"[{task_key}] Re-check changelog API status={response.status_code}")
+            return False
+
+        return_status = str(getattr(settings, "return_status", "") or "").strip().lower()
+        if not return_status:
+            return False
+
+        data = response.json() or {}
+        histories = data.get("changelog", {}).get("histories", []) or []
+        for history in histories:
+            for item in history.get("items", []) or []:
+                if str(item.get("field", "")).lower() != "status":
+                    continue
+                from_status = str(item.get("fromString", "") or "").strip().lower()
+                if from_status == return_status:
+                    return True
+        return False
+    except Exception as e:
+        log.error(f"[{task_key}] Re-check detection xato: {e}")
+        return False

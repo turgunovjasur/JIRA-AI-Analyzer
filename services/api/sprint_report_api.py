@@ -12,7 +12,7 @@ from datetime import datetime
 import os
 
 from services.api.session_scope import get_session_company_id, get_session_role, load_api_session
-from utils.database.runtime import get_processing_db_path, connect_processing_db, get_db_backend, is_sqlite_backend
+from utils.database.runtime import connect_processing_db, get_db_backend
 from utils.database.sprint_report_repository import (
     fetch_total_tasks,
     fetch_task_type_stats,
@@ -22,9 +22,6 @@ from utils.database.sprint_report_repository import (
 )
 
 router = APIRouter(prefix="/api", tags=["sprint-report"])
-
-DB_FILE = get_processing_db_path()
-
 
 def _require_api_token(x_api_token: Optional[str]) -> None:
     """Sprint report API uchun oddiy token himoyasi."""
@@ -116,9 +113,6 @@ async def get_sprint_report(
     - Developer workload statistics
     """
     scoped_company_id = _resolve_company_scope(company_id, x_session_id, x_api_token)
-
-    if is_sqlite_backend() and not os.path.exists(DB_FILE):
-        raise HTTPException(status_code=404, detail="Database not found")
 
     try:
         conn = connect_processing_db(row_factory=True)

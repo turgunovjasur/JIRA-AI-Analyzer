@@ -5,6 +5,7 @@ import { Eye, EyeOff } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { BaseCard } from "@/components/ui/card";
 import { MetricCard } from "@/components/ui/metric-card";
 import { Notice } from "@/components/ui/notice";
 import { PageIntro } from "@/components/ui/page-intro";
@@ -47,6 +48,12 @@ type CompanyCreateForm = {
 };
 
 type AiDefaultsForm = {
+  agent1_fallback_model: string;
+  agent1_primary_model: string;
+  agent2_fallback_model: string;
+  agent2_primary_model: string;
+  agent3_fallback_model: string;
+  agent3_primary_model: string;
   api_key_1: string;
   api_key_2: string;
   fallback_model: string;
@@ -87,14 +94,56 @@ function formatDate(value: string | null | undefined) {
   return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" }).format(date);
 }
 
+function formatDateInputValue(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function addMonths(date: Date, months: number) {
+  const next = new Date(date);
+  const originalDay = next.getDate();
+  next.setMonth(next.getMonth() + months);
+  if (next.getDate() < originalDay) {
+    next.setDate(0);
+  }
+  return next;
+}
+
+function normalizeDateInputValue(value: string | null | undefined) {
+  const rawValue = String(value || "").trim();
+  if (!rawValue) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(rawValue)) return rawValue;
+  const parsed = new Date(rawValue);
+  return Number.isNaN(parsed.getTime()) ? "" : formatDateInputValue(parsed);
+}
+
 function billingTone(company: SuperAdminCompany): "success" | "warning" | "danger" {
   if (company.billing_health.severity === "danger") return "danger";
   if (company.billing_health.severity === "warning") return "warning";
   return "success";
 }
 
+function billingPriority(company: SuperAdminCompany) {
+  if (company.billing_health.severity === "danger") return 0;
+  if (company.billing_health.severity === "warning") return 1;
+  return 2;
+}
+
+function billingAlertLabel(company: SuperAdminCompany) {
+  const status = (company.subscription.subscription_status || "").trim().toLowerCase();
+  const message = company.billing_health.message.toLowerCase();
+  if (message.includes("obuna muddati tugagan")) return "MUDDATI TUGAGAN";
+  if (status === "past_due") return "TO'LOV KECHIKKAN";
+  if (status === "suspended" || status === "cancelled") return "BLOKLANGAN";
+  if (company.billing_health.severity === "danger") return "LOGIN BLOK";
+  if (company.billing_health.severity === "warning") return "TEKSHIRISH KERAK";
+  return "SOG'LOM";
+}
+
 function modelOptions() {
-  return ["gemini-2.5-pro", "gemini-2.5-flash"];
+  return ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"];
 }
 
 const ADDON_MODULE_OPTIONS = PAID_ADDON_MODULE_KEYS.map((moduleKey) => ({
@@ -127,6 +176,12 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
   const [createOpen, setCreateOpen] = useState(false);
   const [createForm, setCreateForm] = useState<CompanyCreateForm>(buildCreateForm);
   const [aiForm, setAiForm] = useState<AiDefaultsForm>({
+    agent1_fallback_model: "gemini-2.5-flash",
+    agent1_primary_model: "gemini-2.5-flash",
+    agent2_fallback_model: "gemini-2.5-flash",
+    agent2_primary_model: "gemini-2.5-pro",
+    agent3_fallback_model: "gemini-2.5-flash",
+    agent3_primary_model: "gemini-2.5-flash",
     api_key_1: "",
     api_key_2: "",
     fallback_model: "gemini-2.5-flash",
@@ -164,6 +219,15 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
     return { activeRate, totalUsers };
   }, [overview]);
 
+  const orderedCompanies = useMemo(() => {
+    if (!overview) return [];
+    return [...overview.companies].sort((left, right) => {
+      const priorityDiff = billingPriority(left) - billingPriority(right);
+      if (priorityDiff !== 0) return priorityDiff;
+      return left.company_code.localeCompare(right.company_code);
+    });
+  }, [overview]);
+
   async function loadOverview() {
     setLoading(true);
     setError(null);
@@ -195,6 +259,12 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
         ),
       );
       setAiForm((current) => ({
+        agent1_fallback_model: payload.global_ai_defaults.agent1_fallback_model || "gemini-2.5-flash",
+        agent1_primary_model: payload.global_ai_defaults.agent1_primary_model || "gemini-2.5-flash",
+        agent2_fallback_model: payload.global_ai_defaults.agent2_fallback_model || "gemini-2.5-flash",
+        agent2_primary_model: payload.global_ai_defaults.agent2_primary_model || "gemini-2.5-pro",
+        agent3_fallback_model: payload.global_ai_defaults.agent3_fallback_model || "gemini-2.5-flash",
+        agent3_primary_model: payload.global_ai_defaults.agent3_primary_model || "gemini-2.5-flash",
         api_key_1: current.api_key_1,
         api_key_2: current.api_key_2,
         fallback_model: payload.global_ai_defaults.fallback_model || "gemini-2.5-flash",
@@ -321,6 +391,30 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
     );
   }
 
+  function activateSubscriptionDraft(company: SuperAdminCompany, months: number) {
+    const today = new Date();
+    const billingStartDate = formatDateInputValue(today);
+    const billingEndDate = formatDateInputValue(addMonths(today, months));
+
+    setSubscriptionDrafts((current) => {
+      const currentDraft = current[company.id] || {};
+      return {
+        ...current,
+        [company.id]: {
+          ...(company.subscription || {}),
+          ...currentDraft,
+          billing_end_date: billingEndDate,
+          billing_mode: currentDraft.billing_mode || company.subscription.billing_mode || "manual",
+          billing_start_date: billingStartDate,
+          last_payment_date: billingStartDate,
+          next_payment_date: billingEndDate,
+          plan_name: currentDraft.plan_name || company.subscription.plan_name || "base",
+          subscription_status: "active",
+        },
+      };
+    });
+  }
+
   async function saveSubscription(company: SuperAdminCompany) {
     await updateCompanyAction(
       company,
@@ -429,10 +523,11 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
 
           {tab === "companies" ? (
             <>
-              <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                 <MetricCard helper="Tenantlar" label="Jami" value={overview.metrics.total} />
                 <MetricCard helper="Ishlayotgan" label="Faol" value={overview.metrics.active} />
                 <MetricCard helper="Barcha kompaniya" label="Jami users" value={companyMetrics.totalUsers} />
+                <MetricCard helper="Login bloklanadigan tenantlar" label="Obuna blok" value={overview.metrics.blocked} />
                 <MetricCard helper="Faol tenantlar ulushi" label="Faollik foizi" value={`${companyMetrics.activeRate}%`} />
               </section>
 
@@ -449,20 +544,40 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                   />
                 )}
               >
+                <p className="mt-4 text-sm leading-6 text-muted-foreground">
+                  Obuna muammosi bor kompaniyalar ro'yxat tepasida chiqadi. Qizil kartalar login bloklangan tenantlarni bildiradi.
+                </p>
                 <div className="mt-4 grid gap-3">
-                  {overview.companies.length ? (
-                    overview.companies.map((company) => {
+                  {orderedCompanies.length ? (
+                    orderedCompanies.map((company) => {
                       const moduleDraft = moduleDrafts[company.id] || company.modules || {};
                       const subscriptionDraft = subscriptionDrafts[company.id] || company.subscription;
+                      const billingSeverity = company.billing_health.severity;
                       const deleteMatch =
                         (deleteDrafts[company.id] || "").trim().toLowerCase() ===
                         company.company_code.toLowerCase();
 
                       return (
-                        <details
+                        <BaseCard
+                          as="details"
                           key={company.id}
                           className="co-card"
                           open={openCompanyId === company.id}
+                          padding="none"
+                          style={
+                            billingSeverity === "danger"
+                              ? {
+                                  background: "var(--error-soft)",
+                                  borderColor: "var(--error)",
+                                  boxShadow: "0 0 0 1px var(--error-border)",
+                                }
+                              : billingSeverity === "warning"
+                                ? {
+                                    borderColor: "var(--warning)",
+                                    boxShadow: "0 0 0 1px var(--warn-border)",
+                                  }
+                                : undefined
+                          }
                         >
                           <summary
                             className="co-summary"
@@ -472,13 +587,35 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                             }}
                           >
                             <div>
-                              <div style={{ fontWeight: 700, fontSize: 14.5 }}>
-                                {company.company_code.toUpperCase()} - {company.company_name}
+                              <div style={{ alignItems: "center", display: "flex", flexWrap: "wrap", gap: 8 }}>
+                                <span style={{ fontWeight: 700, fontSize: 14.5 }}>
+                                  {company.company_code.toUpperCase()} - {company.company_name}
+                                </span>
+                                {billingSeverity !== "ok" ? (
+                                  <Badge tone={billingTone(company)}>
+                                    {billingAlertLabel(company)}
+                                  </Badge>
+                                ) : null}
                               </div>
                               <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
                                 {company.total_accounts}/{company.seat_limit} user · Plan:{" "}
                                 {company.subscription.plan_name || "base"} ·{" "}
                                 {formatDate(company.subscription.billing_end_date || company.created_at)}
+                              </div>
+                              <div
+                                style={{
+                                  color:
+                                    billingSeverity === "danger"
+                                      ? "var(--error)"
+                                      : billingSeverity === "warning"
+                                        ? "var(--warning)"
+                                        : "var(--muted)",
+                                  fontSize: 12,
+                                  fontWeight: billingSeverity === "danger" ? 700 : 500,
+                                  marginTop: 4,
+                                }}
+                              >
+                                {company.billing_health.message}
                               </div>
                             </div>
                             <div className="flex-c gap-2">
@@ -564,6 +701,26 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
 
                               <div className="sbox">
                                 <h4>💳 Billing</h4>
+                                <div className="flex flex-wrap gap-2" style={{ marginBottom: 12 }}>
+                                  <Button
+                                    disabled={busy}
+                                    onClick={() => activateSubscriptionDraft(company, 1)}
+                                    size="sm"
+                                    type="button"
+                                    variant="soft"
+                                  >
+                                    1 oyga aktivlash
+                                  </Button>
+                                  <Button
+                                    disabled={busy}
+                                    onClick={() => activateSubscriptionDraft(company, 12)}
+                                    size="sm"
+                                    type="button"
+                                    variant="soft"
+                                  >
+                                    1 yilga aktivlash
+                                  </Button>
+                                </div>
                                 <div className="g2">
                                   <BaseInputField
                                     className={SETTINGS_INPUT_CLASS}
@@ -601,6 +758,21 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                                   </BaseSelectField>
                                   <BaseInputField
                                     className={SETTINGS_INPUT_CLASS}
+                                    label="Boshlanish sanasi"
+                                    onChange={(value) =>
+                                      setSubscriptionDrafts((current) => ({
+                                        ...current,
+                                        [company.id]: {
+                                          ...(current[company.id] || {}),
+                                          billing_start_date: value,
+                                        },
+                                      }))
+                                    }
+                                    type="date"
+                                    value={normalizeDateInputValue(subscriptionDraft.billing_start_date)}
+                                  />
+                                  <BaseInputField
+                                    className={SETTINGS_INPUT_CLASS}
                                     label="Muddat tugashi"
                                     onChange={(value) =>
                                       setSubscriptionDrafts((current) => ({
@@ -611,7 +783,23 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                                         },
                                       }))
                                     }
-                                    value={subscriptionDraft.billing_end_date || ""}
+                                    type="date"
+                                    value={normalizeDateInputValue(subscriptionDraft.billing_end_date)}
+                                  />
+                                  <BaseInputField
+                                    className={SETTINGS_INPUT_CLASS}
+                                    label="Keyingi to'lov sanasi"
+                                    onChange={(value) =>
+                                      setSubscriptionDrafts((current) => ({
+                                        ...current,
+                                        [company.id]: {
+                                          ...(current[company.id] || {}),
+                                          next_payment_date: value,
+                                        },
+                                      }))
+                                    }
+                                    type="date"
+                                    value={normalizeDateInputValue(subscriptionDraft.next_payment_date)}
                                   />
                                 </div>
                                 <Button
@@ -687,13 +875,13 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                               </div>
                             </div>
                           ) : null}
-                        </details>
+                        </BaseCard>
                       );
                     })
                   ) : (
-                    <p className="rounded-[14px] border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
+                    <BaseCard as="p" className="border-dashed px-4 py-6 text-sm text-muted-foreground" padding="none" tone="soft">
                       Hali kompaniyalar yaratilmagan.
-                    </p>
+                    </BaseCard>
                   )}
                 </div>
               </SettingsBaseCard>
@@ -802,6 +990,36 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                     }
                     value={String(aiForm.key_freeze_minutes)}
                   />
+                </div>
+
+                <div className="grid gap-3">
+                  <div className="text-sm font-semibold text-foreground">TZ-PR agent modellari</div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {[
+                      ["agent1_primary_model", "Agent1 primary"],
+                      ["agent1_fallback_model", "Agent1 fallback"],
+                      ["agent2_primary_model", "Agent2 primary"],
+                      ["agent2_fallback_model", "Agent2 fallback"],
+                      ["agent3_primary_model", "Agent3 primary"],
+                      ["agent3_fallback_model", "Agent3 fallback"],
+                    ].map(([field, label]) => (
+                      <BaseSelectField
+                        className={SETTINGS_SELECT_CLASS}
+                        key={field}
+                        label={label}
+                        onChange={(value) =>
+                          setAiForm((current) => ({ ...current, [field]: value }))
+                        }
+                        value={String(aiForm[field as keyof AiDefaultsForm] || "")}
+                      >
+                        {modelOptions().map((model) => (
+                          <option key={model} value={model}>
+                            {model}
+                          </option>
+                        ))}
+                      </BaseSelectField>
+                    ))}
+                  </div>
                 </div>
 
                 <div>
@@ -967,7 +1185,7 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
             type="button"
           />
           <div className="absolute left-1/2 top-1/2 z-50 w-[min(92vw,760px)] -translate-x-1/2 -translate-y-1/2">
-            <SettingsBaseCard className="card p-6" header={<SectionHeader eyebrow="Create Company" title="Yangi kompaniya yaratish" />}>
+            <SettingsBaseCard header={<SectionHeader eyebrow="Create Company" title="Yangi kompaniya yaratish" />}>
               <form className="mt-4 grid gap-4" onSubmit={createCompany}>
                 <div className="grid gap-4 md:grid-cols-2">
                   <BaseInputField

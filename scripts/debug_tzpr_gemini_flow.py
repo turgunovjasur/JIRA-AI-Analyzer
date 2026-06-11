@@ -20,7 +20,6 @@ import argparse
 import json
 import os
 import re
-import sqlite3
 import time
 from dataclasses import asdict
 from datetime import datetime
@@ -28,7 +27,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from services.checkers.tz_pr_checker import TZPRService
-from utils.database.runtime import get_db_backend
+from utils.database.runtime import connect_auth_db, connect_processing_db, get_db_backend
 from utils.auth.auth_db import (
     get_company_webhook_credentials,
     get_user_by_id,
@@ -38,8 +37,6 @@ from utils.ai import gemini_helper
 
 
 ROOT = Path(__file__).resolve().parents[1]
-AUTH_DB = ROOT / "data" / "auth.db"
-PROC_DB = ROOT / "data" / "processing.db"
 OUT_DIR = ROOT / "data" / "debug"
 
 
@@ -127,11 +124,9 @@ def _build_ai_accordion_sections(ai_analysis: str) -> List[Dict[str, Any]]:
 
 
 def _get_task_company_id(task_key: str) -> Optional[int]:
-    if not PROC_DB.exists():
-        return None
-    conn = sqlite3.connect(PROC_DB)
+    conn = connect_processing_db(row_factory=True)
     try:
-        row = conn.execute(
+        row = conn.cursor().execute(
             "SELECT company_id FROM task_processing WHERE task_id = ? ORDER BY updated_at DESC LIMIT 1",
             [task_key],
         ).fetchone()
@@ -144,17 +139,14 @@ def _get_task_company_id(task_key: str) -> Optional[int]:
 
 
 def _list_active_users(company_id: Optional[int] = None) -> List[Dict[str, Any]]:
-    if not AUTH_DB.exists():
-        return []
-    conn = sqlite3.connect(AUTH_DB)
-    conn.row_factory = sqlite3.Row
+    conn = connect_auth_db()
     try:
         if company_id is None:
-            rows = conn.execute(
+            rows = conn.cursor().execute(
                 "SELECT id, username, company_id, role, is_active FROM users WHERE is_active = 1 ORDER BY company_id, id"
             ).fetchall()
         else:
-            rows = conn.execute(
+            rows = conn.cursor().execute(
                 "SELECT id, username, company_id, role, is_active FROM users WHERE is_active = 1 AND company_id = ? ORDER BY id",
                 [company_id],
             ).fetchall()

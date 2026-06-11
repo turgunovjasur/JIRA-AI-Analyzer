@@ -1,23 +1,21 @@
 """
 Shared helpers for database repositories.
 
-SQLite va PostgreSQL placeholder/row farqlarini monitoring, sprint report va
-task repositorylarida bitta joyda ushlash uchun.
+Repositorylarda PostgreSQL placeholder va row konversiyasini bitta joyda
+ushlash uchun.
 """
 from __future__ import annotations
 
+from datetime import date, datetime
 from typing import Any, Optional
 
 
 def uses_postgres_params(conn_or_cursor) -> bool:
-    module_name = conn_or_cursor.__class__.__module__
-    return module_name.startswith("psycopg")
+    return True
 
 
 def prepare_query(conn_or_cursor, query: str) -> str:
-    if uses_postgres_params(conn_or_cursor):
-        return query.replace("?", "%s")
-    return query
+    return query.replace("?", "%s")
 
 
 def execute(conn_or_cursor, query: str, params: Optional[list[Any] | tuple[Any, ...]] = None):
@@ -33,5 +31,10 @@ def row_to_dict(row) -> dict[str, Any]:
     if row is None:
         return {}
     if isinstance(row, dict):
-        return row
-    return dict(row)
+        data = dict(row)
+    else:
+        data = dict(row)
+    return {
+        key: value.isoformat() if isinstance(value, (datetime, date)) else value
+        for key, value in data.items()
+    }

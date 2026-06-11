@@ -47,7 +47,7 @@ JIRA webhook → jira_webhook_handler.py (orchestrator)
 | `core/base_service.py` | Servislar uchun umumiy asos (lazy loading) |
 | `core/pr_helper.py` | GitHub PR qidirish va olish |
 | `core/constants.py` | Return reason kodlari |
-| `utils/database/task_db.py` | SQLite holat boshqaruvi |
+| `utils/database/task_db.py` | PostgreSQL holat boshqaruvi |
 | `utils/auth/auth_db.py` | Multi-tenant kompaniya/foydalanuvchi DB |
 | `utils/auth/auth_manager.py` | Streamlit session boshqaruvi |
 | `utils/jira/jira_client.py` | JIRA API (task, PR link, Figma link) |

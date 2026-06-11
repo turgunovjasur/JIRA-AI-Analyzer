@@ -2,8 +2,7 @@
 Background job queue repository helpers.
 
 API process webhook/manual triggerlarni DB navbatga yozadi, worker esa shu
-navbatdan olib bajaradi. Queue storage `sqlite` va `postgres` ikkalasida ham
-ishlaydi, lekin productionda `postgres` primary yo'l hisoblanadi.
+navbatdan olib bajaradi.
 """
 from __future__ import annotations
 
@@ -14,7 +13,6 @@ from typing import Any, Optional
 from utils.database.repository_common import (
     execute as _execute,
     row_to_dict as _row_to_dict,
-    uses_postgres_params as _uses_postgres_params,
 )
 
 
@@ -24,88 +22,46 @@ def _now_iso() -> str:
 
 def ensure_job_queue_tables(conn) -> None:
     cursor = conn.cursor()
-    if _uses_postgres_params(conn):
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS job_queue (
-                id BIGSERIAL PRIMARY KEY,
-                job_type TEXT NOT NULL,
-                task_key TEXT NOT NULL,
-                company_id BIGINT NULL,
-                payload_json TEXT NOT NULL DEFAULT '{}',
-                dedupe_key TEXT NULL,
-                status TEXT NOT NULL DEFAULT 'queued',
-                attempts INTEGER NOT NULL DEFAULT 0,
-                max_attempts INTEGER NOT NULL DEFAULT 3,
-                worker_name TEXT NULL,
-                scheduled_at TIMESTAMPTZ NOT NULL,
-                started_at TIMESTAMPTZ NULL,
-                finished_at TIMESTAMPTZ NULL,
-                last_error TEXT NULL,
-                created_at TIMESTAMPTZ NOT NULL,
-                updated_at TIMESTAMPTZ NOT NULL
-            )
-            """
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS job_queue (
+            id BIGSERIAL PRIMARY KEY,
+            job_type TEXT NOT NULL,
+            task_key TEXT NOT NULL,
+            company_id BIGINT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            dedupe_key TEXT NULL,
+            status TEXT NOT NULL DEFAULT 'queued',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            max_attempts INTEGER NOT NULL DEFAULT 3,
+            worker_name TEXT NULL,
+            scheduled_at TIMESTAMPTZ NOT NULL,
+            started_at TIMESTAMPTZ NULL,
+            finished_at TIMESTAMPTZ NULL,
+            last_error TEXT NULL,
+            created_at TIMESTAMPTZ NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL
         )
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS job_runs (
-                id BIGSERIAL PRIMARY KEY,
-                job_id BIGINT NOT NULL REFERENCES job_queue(id) ON DELETE CASCADE,
-                job_type TEXT NOT NULL,
-                task_key TEXT NOT NULL,
-                company_id BIGINT NULL,
-                worker_name TEXT NULL,
-                attempt_number INTEGER NOT NULL DEFAULT 1,
-                status TEXT NOT NULL,
-                error_message TEXT NULL,
-                started_at TIMESTAMPTZ NULL,
-                finished_at TIMESTAMPTZ NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL
-            )
-            """
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS job_queue_runs (
+            id BIGSERIAL PRIMARY KEY,
+            job_id BIGINT NOT NULL REFERENCES job_queue(id) ON DELETE CASCADE,
+            job_type TEXT NOT NULL,
+            task_key TEXT NOT NULL,
+            company_id BIGINT NULL,
+            worker_name TEXT NULL,
+            attempt_number INTEGER NOT NULL DEFAULT 1,
+            status TEXT NOT NULL,
+            error_message TEXT NULL,
+            started_at TIMESTAMPTZ NULL,
+            finished_at TIMESTAMPTZ NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL
         )
-    else:
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS job_queue (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                job_type TEXT NOT NULL,
-                task_key TEXT NOT NULL,
-                company_id INTEGER NULL,
-                payload_json TEXT NOT NULL DEFAULT '{}',
-                dedupe_key TEXT NULL,
-                status TEXT NOT NULL DEFAULT 'queued',
-                attempts INTEGER NOT NULL DEFAULT 0,
-                max_attempts INTEGER NOT NULL DEFAULT 3,
-                worker_name TEXT NULL,
-                scheduled_at DATETIME NOT NULL,
-                started_at DATETIME NULL,
-                finished_at DATETIME NULL,
-                last_error TEXT NULL,
-                created_at DATETIME NOT NULL,
-                updated_at DATETIME NOT NULL
-            )
-            """
-        )
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS job_runs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                job_id INTEGER NOT NULL REFERENCES job_queue(id) ON DELETE CASCADE,
-                job_type TEXT NOT NULL,
-                task_key TEXT NOT NULL,
-                company_id INTEGER NULL,
-                worker_name TEXT NULL,
-                attempt_number INTEGER NOT NULL DEFAULT 1,
-                status TEXT NOT NULL,
-                error_message TEXT NULL,
-                started_at DATETIME NULL,
-                finished_at DATETIME NOT NULL,
-                created_at DATETIME NOT NULL
-            )
-            """
-        )
+        """
+    )
 
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_job_queue_status_scheduled ON job_queue(status, scheduled_at)"
@@ -114,7 +70,7 @@ def ensure_job_queue_tables(conn) -> None:
         "CREATE INDEX IF NOT EXISTS idx_job_queue_dedupe ON job_queue(dedupe_key)"
     )
     cursor.execute(
-        "CREATE INDEX IF NOT EXISTS idx_job_runs_job_id ON job_runs(job_id)"
+        "CREATE INDEX IF NOT EXISTS idx_job_queue_runs_job_id ON job_queue_runs(job_id)"
     )
     conn.commit()
 
@@ -149,35 +105,7 @@ def enqueue_job(
         if existing:
             return _row_to_dict(existing)
 
-    if _uses_postgres_params(conn):
-        row = _execute(
-            conn,
-            """
-            INSERT INTO job_queue (
-                job_type, task_key, company_id, payload_json, dedupe_key,
-                status, attempts, max_attempts, worker_name,
-                scheduled_at, started_at, finished_at, last_error,
-                created_at, updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, 'queued', 0, ?, NULL, ?, NULL, NULL, NULL, ?, ?)
-            RETURNING *
-            """,
-            [
-                job_type,
-                task_key,
-                company_id,
-                payload_json,
-                dedupe_key,
-                max(1, int(max_attempts)),
-                scheduled_value,
-                now,
-                now,
-            ],
-        ).fetchone()
-        conn.commit()
-        return _row_to_dict(row)
-
-    cursor = _execute(
+    row = _execute(
         conn,
         """
         INSERT INTO job_queue (
@@ -187,6 +115,7 @@ def enqueue_job(
             created_at, updated_at
         )
         VALUES (?, ?, ?, ?, ?, 'queued', 0, ?, NULL, ?, NULL, NULL, NULL, ?, ?)
+        RETURNING *
         """,
         [
             job_type,
@@ -199,8 +128,7 @@ def enqueue_job(
             now,
             now,
         ],
-    )
-    row = _execute(conn, "SELECT * FROM job_queue WHERE id = ?", [cursor.lastrowid]).fetchone()
+    ).fetchone()
     conn.commit()
     return _row_to_dict(row)
 
@@ -208,69 +136,33 @@ def enqueue_job(
 def claim_next_job(conn, *, worker_name: str) -> dict[str, Any] | None:
     now = _now_iso()
 
-    if _uses_postgres_params(conn):
-        row = _execute(
-            conn,
-            """
-            WITH next_job AS (
-                SELECT id
-                FROM job_queue
-                WHERE status = 'queued'
-                  AND scheduled_at <= ?
-                ORDER BY scheduled_at ASC, id ASC
-                LIMIT 1
-                FOR UPDATE SKIP LOCKED
-            )
-            UPDATE job_queue jq
-            SET status = 'running',
-                attempts = jq.attempts + 1,
-                worker_name = ?,
-                started_at = ?,
-                updated_at = ?,
-                finished_at = NULL
-            FROM next_job
-            WHERE jq.id = next_job.id
-            RETURNING jq.*
-            """,
-            [now, worker_name, now, now],
-        ).fetchone()
-        conn.commit()
-        return _row_to_dict(row) if row else None
-
-    cursor = conn.cursor()
-    cursor.execute("BEGIN IMMEDIATE")
     row = _execute(
-        cursor,
+        conn,
         """
-        SELECT * FROM job_queue
-        WHERE status = 'queued'
-          AND scheduled_at <= ?
-        ORDER BY scheduled_at ASC, id ASC
-        LIMIT 1
-        """,
-        [now],
-    ).fetchone()
-    if not row:
-        conn.commit()
-        return None
-    claimed = _row_to_dict(row)
-    _execute(
-        cursor,
-        """
-        UPDATE job_queue
+        WITH next_job AS (
+            SELECT id
+            FROM job_queue
+            WHERE status = 'queued'
+              AND scheduled_at <= ?
+            ORDER BY scheduled_at ASC, id ASC
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED
+        )
+        UPDATE job_queue jq
         SET status = 'running',
-            attempts = attempts + 1,
+            attempts = jq.attempts + 1,
             worker_name = ?,
             started_at = ?,
             updated_at = ?,
             finished_at = NULL
-        WHERE id = ?
+        FROM next_job
+        WHERE jq.id = next_job.id
+        RETURNING jq.*
         """,
-        [worker_name, now, now, claimed["id"]],
-    )
-    refreshed = _execute(cursor, "SELECT * FROM job_queue WHERE id = ?", [claimed["id"]]).fetchone()
+        [now, worker_name, now, now],
+    ).fetchone()
     conn.commit()
-    return _row_to_dict(refreshed)
+    return _row_to_dict(row) if row else None
 
 
 def _record_job_run(conn, job: dict[str, Any], status: str, error_message: str = "") -> None:
@@ -278,7 +170,7 @@ def _record_job_run(conn, job: dict[str, Any], status: str, error_message: str =
     _execute(
         conn,
         """
-        INSERT INTO job_runs (
+        INSERT INTO job_queue_runs (
             job_id, job_type, task_key, company_id, worker_name,
             attempt_number, status, error_message, started_at, finished_at, created_at
         )

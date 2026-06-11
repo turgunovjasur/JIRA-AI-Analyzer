@@ -10,45 +10,31 @@ Bu papka production-ready `PostgreSQL` schema artefaktlarini saqlaydi.
 
 ## Maqsad
 
-Bu SQL hozirgi `SQLite`dan `PostgreSQL`ga o'tishdagi source-of-truth schema bo'lib xizmat qiladi.
+Bu SQL production runtime uchun PostgreSQL source-of-truth schema bo'lib xizmat qiladi.
 
 ## Eslatma
 
 - Hozircha bu schema migration artifact sifatida qo'shildi
 - keyingi bosqichda shu fayl `Alembic` yoki shunga o'xshash migration tool bilan boshqariladigan formatga o'tkaziladi
 
-## Data Migration
+## Runtime va Tekshiruv
 
-- SQLite export script:
-  - [utils/tools/export_sqlite_for_postgres.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/utils/tools/export_sqlite_for_postgres.py)
-- default export manzili:
-  - `data/postgres_export`
-- PostgreSQL import SQL generator:
-  - [utils/tools/generate_postgres_import_sql.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/utils/tools/generate_postgres_import_sql.py)
-- default import SQL manzili:
-  - `data/postgres_import/import.sql`
-- generator ichida:
-  - load order
-  - `TRUNCATE ... CASCADE`
-  - sequence reset SQL
-  avtomatik qo'shiladi
-- migration bundle validator:
-  - [utils/tools/validate_postgres_migration_bundle.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/utils/tools/validate_postgres_migration_bundle.py)
+- schema validator:
+  - [utils/tools/validate_postgres_schema.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/utils/tools/validate_postgres_schema.py)
 - migration runner:
   - [utils/tools/run_postgres_migration_bundle.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/utils/tools/run_postgres_migration_bundle.py)
 - readiness checker:
   - [utils/tools/check_postgres_ready.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/utils/tools/check_postgres_ready.py)
 - `runtime.py` ichida:
   - postgres driver availability check
-  - postgres connect skeleton
-  - backend-aware `connect_auth_db()` va `connect_processing_db()`
+  - postgres connect helperlar
+  - `connect_auth_db()` va `connect_processing_db()`
 
 ## Minimal Setup
 
 - Python driver:
   - `psycopg[binary]`
 - kerakli env:
-  - `APP_DB_BACKEND=postgres`
   - `APP_POSTGRES_DSN=postgresql://USER:PASSWORD@HOST:5432/DBNAME`
 - preflight checker:
   - [utils/tools/check_postgres_ready.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/utils/tools/check_postgres_ready.py)
@@ -62,5 +48,3 @@ Bu SQL hozirgi `SQLite`dan `PostgreSQL`ga o'tishdagi source-of-truth schema bo'l
   - `subscriptions`: 5
   - `task_processing`: 38
   - `task_status_history`: 382
-- `SQLite`dagi tenantga ulanmagan legacy task uchun generator avtomatik `legacy-import` company yaratadi
-- orphan tasklar boshqa tenantga noto'g'ri bog'lanmasligi uchun ular shu alohida company scope'iga backfill qilinadi

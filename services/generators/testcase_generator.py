@@ -190,7 +190,11 @@ class TestCaseGeneratorService(BaseService):
             # 1. JIRA dan task olish
             log.info(f"[{task_key}] Testcase ▶ JIRA task olinmoqda...")
             update_status("progress", "JIRA task ma'lumotlari olinmoqda...")
-            task_details = self.jira.get_task_details(task_key)
+            task_details = self.jira.get_task_details(
+                task_key,
+                include_pr_urls=bool(include_pr),
+                include_figma_links=False,
+            )
             if not task_details:
                 return TestCaseGenerationResult(
                     task_key=task_key,

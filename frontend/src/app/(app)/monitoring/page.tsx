@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
-import { Card } from "@/components/ui/card";
+import { BaseCard, Card } from "@/components/ui/card";
 import { MetricCard } from "@/components/ui/metric-card";
 import { Notice } from "@/components/ui/notice";
 import { SectionHeader } from "@/components/ui/section-header";
@@ -93,7 +93,7 @@ function ProgressStat({
 function RecentTasksTable({ rows }: { rows: MonitoringRecentTaskRow[] }) {
   if (!rows.length) return <p className="text-sm text-muted-foreground">Tasklar topilmadi.</p>;
   return (
-    <div className="overflow-x-auto rounded-[18px] border border-border">
+    <BaseCard as="div" className="overflow-x-auto" padding="none">
       <table className="w-full min-w-[720px] border-collapse text-sm">
         <thead>
           <tr className="border-b border-border bg-muted/40 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -129,7 +129,7 @@ function RecentTasksTable({ rows }: { rows: MonitoringRecentTaskRow[] }) {
           ))}
         </tbody>
       </table>
-    </div>
+    </BaseCard>
   );
 }
 
@@ -138,9 +138,12 @@ function ErrorList({ rows }: { rows: MonitoringErrorRow[] }) {
   return (
     <div className="grid gap-3">
       {rows.slice(0, 6).map((row) => (
-        <div
+        <BaseCard
+          as="div"
           key={`${row.task_id}-${row.updated_at}`}
-          className="rounded-[18px] border border-border bg-muted/30 p-4"
+          className="p-4"
+          padding="none"
+          tone="soft"
         >
           <div className="flex items-start justify-between gap-2">
             <strong className="font-mono text-sm">{row.task_id || "Unknown"}</strong>
@@ -150,7 +153,7 @@ function ErrorList({ rows }: { rows: MonitoringErrorRow[] }) {
           {row.error_message ? <p className="mt-2 text-sm text-muted-foreground">{row.error_message}</p> : null}
           {row.service1_error ? <p className="mt-1 text-xs text-muted-foreground">S1: {row.service1_error}</p> : null}
           {row.service2_error ? <p className="mt-1 text-xs text-muted-foreground">S2: {row.service2_error}</p> : null}
-        </div>
+        </BaseCard>
       ))}
     </div>
   );
@@ -161,9 +164,12 @@ function BlockedList({ rows }: { rows: MonitoringBlockedTaskRow[] }) {
   return (
     <div className="grid gap-3">
       {rows.slice(0, 6).map((row) => (
-        <div
+        <BaseCard
+          as="div"
           key={`${row.task_id}-${row.blocked_retry_at}`}
-          className="rounded-[18px] border border-border bg-muted/30 p-4"
+          className="p-4"
+          padding="none"
+          tone="soft"
         >
           <div className="flex items-start justify-between gap-2">
             <strong className="font-mono text-sm">{row.task_id || "Unknown"}</strong>
@@ -174,7 +180,7 @@ function BlockedList({ rows }: { rows: MonitoringBlockedTaskRow[] }) {
             <StatusPill tone={statusTone(row.service2_status)} value={row.service2_status || "—"} />
           </div>
           <p className="mt-2 text-sm text-muted-foreground">{row.block_reason || "Sabab noma&apos;lum."}</p>
-        </div>
+        </BaseCard>
       ))}
     </div>
   );
@@ -298,10 +304,10 @@ export default async function MonitoringPage({
             <SectionHeader eyebrow="Service 1" title="TZ-PR tahlil" />
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               {service1.map(([status, count]) => (
-                <div key={`s1-${status}`} className="rounded-[14px] border border-border bg-muted/30 p-3">
+                <BaseCard as="div" className="p-3" key={`s1-${status}`} padding="none" tone="soft">
                   <StatusPill tone={statusTone(status)} value={status} />
                   <strong className="mt-2 block text-xl font-bold">{count}</strong>
-                </div>
+                </BaseCard>
               ))}
             </div>
           </Card>
@@ -309,10 +315,10 @@ export default async function MonitoringPage({
             <SectionHeader eyebrow="Service 2" title="Test case" />
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               {service2.map(([status, count]) => (
-                <div key={`s2-${status}`} className="rounded-[14px] border border-border bg-muted/30 p-3">
+                <BaseCard as="div" className="p-3" key={`s2-${status}`} padding="none" tone="soft">
                   <StatusPill tone={statusTone(status)} value={status} />
                   <strong className="mt-2 block text-xl font-bold">{count}</strong>
-                </div>
+                </BaseCard>
               ))}
             </div>
           </Card>

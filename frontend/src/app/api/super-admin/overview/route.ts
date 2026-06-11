@@ -35,15 +35,34 @@ export async function GET() {
   }
 
   try {
-    const [companies, securityStatus, auditLogs, globalDefaults, fallbackModel, keyFreezeMinutes] =
+    const [
+      companies,
+      securityStatus,
+      auditLogs,
+      globalDefaults,
+      fallbackModel,
+      keyFreezeMinutes,
+      agent1PrimaryModel,
+      agent1FallbackModel,
+      agent2PrimaryModel,
+      agent2FallbackModel,
+      agent3PrimaryModel,
+      agent3FallbackModel,
+    ] =
       await Promise.all([
-      callInternalRpc<RawCompany[]>("get_all_companies"),
-      callInternalRpc<SecurityStatus>("get_credential_security_status"),
-      callInternalRpc<LoginAuditLog[]>("get_recent_login_audit_logs", [], { limit: 20 }),
-      callInternalRpc<Record<string, string>>("get_global_gemini_defaults"),
-      callInternalRpc<string>("get_global_setting", ["gemini_default_fallback_model", "gemini-2.5-flash"]),
-      callInternalRpc<string>("get_global_setting", ["gemini_key_freeze_minutes", "10"]),
-    ]);
+        callInternalRpc<RawCompany[]>("get_all_companies"),
+        callInternalRpc<SecurityStatus>("get_credential_security_status"),
+        callInternalRpc<LoginAuditLog[]>("get_recent_login_audit_logs", [], { limit: 20 }),
+        callInternalRpc<Record<string, string>>("get_global_gemini_defaults"),
+        callInternalRpc<string>("get_global_setting", ["gemini_default_fallback_model", "gemini-2.5-flash"]),
+        callInternalRpc<string>("get_global_setting", ["gemini_key_freeze_minutes", "10"]),
+        callInternalRpc<string>("get_global_setting", ["checker_agent1_primary_model", "gemini-2.5-flash"]),
+        callInternalRpc<string>("get_global_setting", ["checker_agent1_fallback_model", "gemini-2.5-flash"]),
+        callInternalRpc<string>("get_global_setting", ["checker_agent2_primary_model", "gemini-2.5-pro"]),
+        callInternalRpc<string>("get_global_setting", ["checker_agent2_fallback_model", "gemini-2.5-flash"]),
+        callInternalRpc<string>("get_global_setting", ["checker_agent3_primary_model", "gemini-2.5-flash"]),
+        callInternalRpc<string>("get_global_setting", ["checker_agent3_fallback_model", "gemini-2.5-flash"]),
+      ]);
 
     const companyPayload = await Promise.all(
       (companies || []).map(async (company) => {
@@ -105,6 +124,12 @@ export async function GET() {
       fallback_model: (fallbackModel || "gemini-2.5-flash").trim(),
       key_freeze_minutes: Number.parseInt((keyFreezeMinutes || "10").trim(), 10) || 10,
       model: globalDefaults?.model || "",
+      agent1_primary_model: (agent1PrimaryModel || "gemini-2.5-flash").trim(),
+      agent1_fallback_model: (agent1FallbackModel || "gemini-2.5-flash").trim(),
+      agent2_primary_model: (agent2PrimaryModel || "gemini-2.5-pro").trim(),
+      agent2_fallback_model: (agent2FallbackModel || "gemini-2.5-flash").trim(),
+      agent3_primary_model: (agent3PrimaryModel || "gemini-2.5-flash").trim(),
+      agent3_fallback_model: (agent3FallbackModel || "gemini-2.5-flash").trim(),
     } satisfies GlobalAiDefaults;
 
     const payload = {

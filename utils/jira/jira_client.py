@@ -10,6 +10,12 @@ from jira import JIRA
 from typing import Dict, List, Optional, Any
 import requests
 from core.logger import get_logger
+from utils.jira.task_details_cache import (
+    get_cached_task_details,
+    get_cached_task_details_state,
+    make_task_details_cache_key,
+    set_cached_task_details,
+)
 
 _log = get_logger("jira.client")
 
@@ -40,6 +46,83 @@ class JiraClient:
         self.pr_field = settings.PR_FIELD
 
         self._client = None
+
+    @staticmethod
+    def _normalize_user_name_candidate(value: Any) -> str:
+        """User nomi uchun yaroqli bo'lgan text qiymatni tozalash."""
+        if value is None:
+            return ""
+
+        text = str(value).strip()
+        if not text:
+            return ""
+
+        lowered = text.lower()
+        if lowered in {"none", "null", "n/a"}:
+            return ""
+        if " object at 0x" in text:
+            return ""
+        if text.startswith(("namespace(", "SimpleNamespace(")):
+            return ""
+        if text.startswith("<") and text.endswith(">"):
+            return ""
+        return text
+
+    @classmethod
+    def _resolve_user_name(cls, user: Any, fallback: str) -> str:
+        """JIRA user object'dan ko'rinadigan ismni xavfsiz olish."""
+        if not user:
+            return fallback
+
+        candidate_keys = ("displayName", "name", "emailAddress", "accountId")
+        nested_keys = ("raw", "user", "assignee", "author")
+        queue = [user]
+        seen: set[int] = set()
+
+        while queue:
+            current = queue.pop(0)
+            if current is None:
+                continue
+
+            marker = id(current)
+            if marker in seen:
+                continue
+            seen.add(marker)
+
+            if isinstance(current, dict):
+                for key in candidate_keys:
+                    value = cls._normalize_user_name_candidate(current.get(key))
+                    if value:
+                        return value
+
+                for key in nested_keys:
+                    nested = current.get(key)
+                    if nested is not None:
+                        queue.append(nested)
+                continue
+
+            for key in candidate_keys:
+                try:
+                    raw_value = getattr(current, key, None)
+                except Exception:
+                    raw_value = None
+                value = cls._normalize_user_name_candidate(raw_value)
+                if value:
+                    return value
+
+            for key in nested_keys:
+                try:
+                    nested = getattr(current, key, None)
+                except Exception:
+                    nested = None
+                if nested is not None:
+                    queue.append(nested)
+
+            value = cls._normalize_user_name_candidate(current)
+            if value:
+                return value
+
+        return fallback
 
     @property
     def client(self) -> JIRA:
@@ -85,12 +168,54 @@ class JiraClient:
                 ) from e
             return None
 
-    def get_task_details(self, issue_key: str) -> Optional[Dict]:
+    def get_task_details(
+            self,
+            issue_key: str,
+            *,
+            include_pr_urls: bool = True,
+            include_figma_links: bool = True,
+            use_cache: bool = True,
+    ) -> Optional[Dict]:
         """
         Task ning asosiy ma'lumotlarini olish (TZ uchun)
 
         ✅ YANGI: figma_links field qo'shildi!
         """
+        cache_key = make_task_details_cache_key(self.server, self.email, issue_key)
+        if use_cache:
+            cached = get_cached_task_details(
+                cache_key,
+                need_pr_urls=include_pr_urls,
+                need_figma_links=include_figma_links,
+            )
+            if cached is not None:
+                return cached
+            cached_state = get_cached_task_details_state(cache_key)
+            if cached_state is not None:
+                cached_task, has_pr_urls, has_figma_links = cached_state
+                changed = False
+                if include_pr_urls and not has_pr_urls:
+                    pr_urls = self.extract_pr_urls_dev_status(issue_key, issue_id=cached_task.get('issue_id'))
+                    if not pr_urls:
+                        issue = self.get_issue(issue_key)
+                        if issue:
+                            pr_urls = self.extract_pr_urls_legacy(issue)
+                    cached_task['pr_urls'] = pr_urls
+                    has_pr_urls = True
+                    changed = True
+                if include_figma_links and not has_figma_links:
+                    cached_task['figma_links'] = self.extract_figma_links_from_task_details(cached_task)
+                    has_figma_links = True
+                    changed = True
+                if changed:
+                    set_cached_task_details(
+                        cache_key,
+                        cached_task,
+                        include_pr_urls=has_pr_urls,
+                        include_figma_links=has_figma_links,
+                    )
+                return cached_task
+
         issue = self.get_issue(issue_key)
         if not issue:
             return None
@@ -102,37 +227,72 @@ class JiraClient:
         if hasattr(fields, 'comment') and hasattr(fields.comment, 'comments'):
             for c in fields.comment.comments:
                 comments.append({
-                    'author': getattr(c.author, 'displayName', 'Unknown'),
+                    'author': self._resolve_user_name(c.author, 'Unknown'),
                     'body': c.body,
                     'created': c.created[:16].replace('T', ' ')
                 })
 
-        # PR URLs olish
-        pr_urls = self.extract_pr_urls_dev_status(issue_key)
-        if not pr_urls:
-            pr_urls = self.extract_pr_urls_legacy(issue)
-
-        # ✅ FIGMA INTEGRATION
-        figma_links = self.get_figma_links(issue_key)
-
-        return {
+        task_details = {
+            'issue_id': str(getattr(issue, 'id', '') or ''),
             'key': issue.key,
             'summary': fields.summary or '',
             'description': fields.description or '',
             'type': getattr(fields.issuetype, 'name', '') if fields.issuetype else '',
             'status': getattr(fields.status, 'name', '') if fields.status else '',
-            'assignee': getattr(fields.assignee, 'displayName', 'Unassigned') if fields.assignee else 'Unassigned',
-            'reporter': getattr(fields.reporter, 'displayName', 'Unknown') if fields.reporter else 'Unknown',
+            'assignee': self._resolve_user_name(fields.assignee, 'Unassigned'),
+            'reporter': self._resolve_user_name(fields.reporter, 'Unknown'),
             'priority': getattr(fields.priority, 'name', 'None') if fields.priority else 'None',
             'story_points': getattr(fields, self.story_points_field, 0) or 0,
             'comments': comments,
-            'pr_urls': pr_urls,
-            'figma_links': figma_links,  # ✅ YANGI!
+            'pr_urls': [],
+            'figma_links': [],
             'created': fields.created[:10] if fields.created else '',
             'resolved': fields.resolutiondate[:10] if fields.resolutiondate else '',
             'labels': list(fields.labels) if fields.labels else [],
             'components': [c.name for c in fields.components] if fields.components else []
         }
+
+        # PR URLs olish. issue.id allaqachon bor, shuning uchun Jira issue qayta olinmaydi.
+        if include_pr_urls:
+            pr_urls = self.extract_pr_urls_dev_status(issue_key, issue_id=task_details.get('issue_id'))
+            if not pr_urls:
+                pr_urls = self.extract_pr_urls_legacy(issue)
+            task_details['pr_urls'] = pr_urls
+
+        # Figma link'lar description/comments ichidan olinadi, Jira qayta chaqirilmaydi.
+        if include_figma_links:
+            task_details['figma_links'] = self.extract_figma_links_from_task_details(task_details)
+
+        if use_cache:
+            set_cached_task_details(
+                cache_key,
+                task_details,
+                include_pr_urls=include_pr_urls,
+                include_figma_links=include_figma_links,
+            )
+
+        return task_details
+
+    def extract_figma_links_from_task_details(self, task_details: Dict) -> List[Dict]:
+        """Task details ichidagi description/comments dan Figma link'larni olish."""
+        try:
+            from utils.jira.jira_figma_helper import JiraFigmaHelper
+
+            figma_links_objs = JiraFigmaHelper.extract_figma_urls(task_details)
+            return [
+                {
+                    'url': link.url,
+                    'file_key': link.file_key,
+                    'name': link.name,
+                    'source': link.source,
+                    'author': link.author,
+                    'node_id': link.node_id
+                }
+                for link in figma_links_objs
+            ]
+        except Exception as e:
+            print(f"⚠️  Figma links error: {str(e)}")
+            return []
 
     def get_figma_links(self, issue_key: str) -> List[Dict]:
         """
@@ -144,7 +304,15 @@ class JiraClient:
         try:
             from utils.jira.jira_figma_helper import JiraFigmaHelper
 
-            # Get minimal task data
+            cached = get_cached_task_details(
+                make_task_details_cache_key(self.server, self.email, issue_key),
+                need_pr_urls=False,
+                need_figma_links=False,
+            )
+            if cached is not None:
+                return self.extract_figma_links_from_task_details(cached)
+
+            # Backward-compatible fallback for direct callers.
             issue = self.get_issue(issue_key)
             if not issue:
                 return []
@@ -157,38 +325,27 @@ class JiraClient:
             if hasattr(issue.fields, 'comment') and hasattr(issue.fields.comment, 'comments'):
                 for c in issue.fields.comment.comments:
                     task_details['comments'].append({
-                        'author': getattr(c.author, 'displayName', 'Unknown'),
+                        'author': self._resolve_user_name(c.author, 'Unknown'),
                         'body': c.body
                     })
 
-            # Extract Figma links
-            figma_links_objs = JiraFigmaHelper.extract_figma_urls(task_details)
-
-            # Convert to dict
-            return [
-                {
-                    'url': link.url,
-                    'file_key': link.file_key,
-                    'name': link.name,
-                    'source': link.source,
-                    'author': link.author,
-                    'node_id': link.node_id
-                }
-                for link in figma_links_objs
-            ]
+            return self.extract_figma_links_from_task_details(task_details)
 
         except Exception as e:
             print(f"⚠️  Figma links error: {str(e)}")
             return []
 
-    def extract_pr_urls_dev_status(self, issue_key: str) -> List[Dict]:
+    def extract_pr_urls_dev_status(self, issue_key: str, issue_id: str | None = None) -> List[Dict]:
         """Development Status API dan PR URL olish"""
         pr_urls = []
 
         try:
-            # Dev Status API raqamli issueId talab qiladi, matn key emas
-            issue = self.client.issue(issue_key)
-            numeric_id = issue.id
+            numeric_id = str(issue_id or "").strip()
+            if not numeric_id:
+                # Dev Status API raqamli issueId talab qiladi, matn key emas.
+                # Fallback faqat eski direct callerlar uchun qoldirilgan.
+                issue = self.client.issue(issue_key)
+                numeric_id = issue.id
 
             url = f"{self.server}/rest/dev-status/1.0/issue/detail"
             params = {
@@ -271,8 +428,7 @@ class JiraClient:
                     'summary': issue.fields.summary,
                     'type': getattr(issue.fields.issuetype, 'name', ''),
                     'status': getattr(issue.fields.status, 'name', ''),
-                    'assignee': getattr(issue.fields.assignee, 'displayName',
-                                        'Unassigned') if issue.fields.assignee else 'Unassigned'
+                    'assignee': self._resolve_user_name(issue.fields.assignee, 'Unassigned')
                 })
 
             return results
@@ -298,8 +454,7 @@ class JiraClient:
                     'summary': issue.fields.summary,
                     'status': getattr(issue.fields.status, 'name', ''),
                     'priority': getattr(issue.fields.priority, 'name', 'None'),
-                    'assignee': getattr(issue.fields.assignee, 'displayName',
-                                        'Unassigned') if issue.fields.assignee else 'Unassigned'
+                    'assignee': self._resolve_user_name(issue.fields.assignee, 'Unassigned')
                 })
 
             return results
@@ -320,8 +475,7 @@ class JiraClient:
                     'summary': issue.fields.summary,
                     'type': getattr(issue.fields.issuetype, 'name', ''),
                     'status': getattr(issue.fields.status, 'name', ''),
-                    'assignee': getattr(issue.fields.assignee, 'displayName',
-                                        'Unassigned') if issue.fields.assignee else 'Unassigned'
+                    'assignee': self._resolve_user_name(issue.fields.assignee, 'Unassigned')
                 })
 
             return results
@@ -415,7 +569,7 @@ class JiraClient:
                                     'from_status': item.fromString or '',
                                     'to_status': item.toString or '',
                                     'timestamp': history.created,
-                                    'author': getattr(history.author, 'displayName', 'Unknown'),
+                                    'author': self._resolve_user_name(history.author, 'Unknown'),
                                 })
 
                 results.append({
@@ -423,7 +577,7 @@ class JiraClient:
                     'summary': fields.summary or '',
                     'type': getattr(fields.issuetype, 'name', '') if fields.issuetype else '',
                     'status': getattr(fields.status, 'name', '') if fields.status else '',
-                    'assignee': getattr(fields.assignee, 'displayName', 'Unassigned') if fields.assignee else 'Unassigned',
+                    'assignee': self._resolve_user_name(fields.assignee, 'Unassigned'),
                     'story_points': getattr(fields, self.story_points_field, None) or 0,
                     'created': fields.created[:19] if fields.created else '',
                     'updated': fields.updated[:19] if fields.updated else '',

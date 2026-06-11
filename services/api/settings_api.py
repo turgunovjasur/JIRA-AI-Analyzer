@@ -360,6 +360,13 @@ async def read_webhook_config(
             "return_notification_text": webhook_settings.return_notification_text,
             "skip_comment_text": webhook_settings.skip_comment_text,
             "auto_return_enabled": bool(webhook_settings.auto_return_enabled),
+            "agent2_batch_size": int(getattr(webhook_settings, "agent2_batch_size", 6) or 6),
+            "agent1_primary_model": str(getattr(webhook_settings, "agent1_primary_model", "") or ""),
+            "agent1_fallback_model": str(getattr(webhook_settings, "agent1_fallback_model", "") or ""),
+            "agent2_primary_model": str(getattr(webhook_settings, "agent2_primary_model", "") or ""),
+            "agent2_fallback_model": str(getattr(webhook_settings, "agent2_fallback_model", "") or ""),
+            "agent3_primary_model": str(getattr(webhook_settings, "agent3_primary_model", "") or ""),
+            "agent3_fallback_model": str(getattr(webhook_settings, "agent3_fallback_model", "") or ""),
             "trigger_statuses": webhook_settings.get_trigger_statuses(),
             "testcase_auto_comment_enabled": bool(webhook_testcase.auto_comment_enabled),
             "testcase_auto_comment_trigger_status": webhook_testcase.auto_comment_trigger_status,
@@ -518,6 +525,18 @@ async def save_webhook_config(
             "return_notification_text": raw_return_notification_text or updated_wh.get("return_notification_text", ""),
             "skip_comment_text": raw_skip_comment_text or updated_wh.get("skip_comment_text", ""),
             "auto_return_enabled": raw_auto_return,
+            "agent2_batch_size": _parse_positive_int(
+                raw.get("agent2_batch_size", updated_wh.get("agent2_batch_size", 6)),
+                "agent2_batch_size",
+                min_value=1,
+                max_value=20,
+            ),
+            "agent1_primary_model": str(raw.get("agent1_primary_model", updated_wh.get("agent1_primary_model", "")) or "").strip(),
+            "agent1_fallback_model": str(raw.get("agent1_fallback_model", updated_wh.get("agent1_fallback_model", "")) or "").strip(),
+            "agent2_primary_model": str(raw.get("agent2_primary_model", updated_wh.get("agent2_primary_model", "")) or "").strip(),
+            "agent2_fallback_model": str(raw.get("agent2_fallback_model", updated_wh.get("agent2_fallback_model", "")) or "").strip(),
+            "agent3_primary_model": str(raw.get("agent3_primary_model", updated_wh.get("agent3_primary_model", "")) or "").strip(),
+            "agent3_fallback_model": str(raw.get("agent3_fallback_model", updated_wh.get("agent3_fallback_model", "")) or "").strip(),
         }
     )
 
@@ -777,11 +796,20 @@ async def read_module_config(
         "success": True,
         "data": {
             "checker": {
+                "agent2_parallelism": int(getattr(checker, "agent2_parallelism", 5) or 5),
+                "agent2_batch_size": int(getattr(checker, "agent2_batch_size", 6) or 6),
                 "default_use_smart_patch": bool(checker.default_use_smart_patch),
                 "visible_sections": list(checker.visible_sections or []),
                 "ai_data_section_order": list(checker.ai_data_section_order or []),
                 "read_comments_enabled": bool(checker.read_comments_enabled),
                 "max_comments_to_read": int(checker.max_comments_to_read),
+                "trusted_scope_comment_authors": str(checker.trusted_scope_comment_authors or ""),
+                "agent1_primary_model": str(getattr(checker, "agent1_primary_model", "") or ""),
+                "agent1_fallback_model": str(getattr(checker, "agent1_fallback_model", "") or ""),
+                "agent2_primary_model": str(getattr(checker, "agent2_primary_model", "") or ""),
+                "agent2_fallback_model": str(getattr(checker, "agent2_fallback_model", "") or ""),
+                "agent3_primary_model": str(getattr(checker, "agent3_primary_model", "") or ""),
+                "agent3_fallback_model": str(getattr(checker, "agent3_fallback_model", "") or ""),
             },
             "testcase": {
                 "default_include_pr": bool(testcase.default_include_pr),
@@ -840,6 +868,21 @@ async def save_module_config(
             checker_raw.get("max_comments_to_read"),
             "checker.max_comments_to_read",
         ),
+        "trusted_scope_comment_authors": str(
+            checker_raw.get("trusted_scope_comment_authors") or ""
+        ).strip(),
+        "agent2_batch_size": _parse_positive_int(
+            checker_raw.get("agent2_batch_size", 6),
+            "checker.agent2_batch_size",
+            min_value=1,
+            max_value=20,
+        ),
+        "agent1_primary_model": str(checker_raw.get("agent1_primary_model") or "").strip(),
+        "agent1_fallback_model": str(checker_raw.get("agent1_fallback_model") or "").strip(),
+        "agent2_primary_model": str(checker_raw.get("agent2_primary_model") or "").strip(),
+        "agent2_fallback_model": str(checker_raw.get("agent2_fallback_model") or "").strip(),
+        "agent3_primary_model": str(checker_raw.get("agent3_primary_model") or "").strip(),
+        "agent3_fallback_model": str(checker_raw.get("agent3_fallback_model") or "").strip(),
     }
 
     testcase_update = {
