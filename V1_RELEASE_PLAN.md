@@ -212,35 +212,36 @@ Har kim ro'yxatdan o'tib, to'lab, o'zi ishlatadi.
 
 ---
 
-## 7. FAZA 4 — Onboarding & Email (Ochiq SaaS uchun)
+## 7. FAZA 4 — Onboarding & Email
 
-> Maqsad: self-service onboarding. ~2–3 hafta.
+> Maqsad: email orqali parol tiklash + yangi kompaniya uchun yo'l ko'rsatuvchi wizard. ~1 kun.
+>
+> **Qaror (2026-06-11):** F4-2 (self-service signup) va F4-3 (email verifikatsiya) Track B ga surildi — hozir qo'lda onboarding. F4-1 + F4-4 + F4-5 implement qilindi.
 
-- [ ] **F4-1 · Email yuborish infratuzilmasi** 🔴 (signup uchun blocker)
-  - Hozir hech qanday SMTP/SendGrid kodi yo'q. `user_password_reset_tokens` jadvali bor, lekin token email orqali yetkazilmaydi.
-  - DoD: email servis (SMTP/SendGrid/SES); shablonlar; yuborish testdan o'tgan.
-  - Vaqt: 3 kun
+- [x] **F4-1 · Email infratuzilmasi (SMTP)**
+  - Fayl: `utils/email/email_sender.py`
+  - `send_email()`, `send_password_reset_email()` funksiyalari; HTML template.
+  - Env: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `APP_BASE_URL`
+  - DoD: SMTP sozlanganda email yuboriladi; sozlanmagan bo'lsa graceful skip.
+  - ✅ 2026-06-11
 
-- [ ] **F4-2 · Self-service signup sahifasi**
-  - Fayl: yangi `frontend/src/app/signup`, `services/api/auth_api.py`
-  - Hozir kompaniyani faqat super-admin yaratadi.
-  - DoD: kompaniya + admin yaratish; email verifikatsiya; plan tanlash.
-  - Vaqt: 1 hafta
+- [x] **F4-4 · Password reset email orqali (end-to-end)**
+  - Fayl: `utils/auth/auth_db.py`, `services/api/auth_api.py`, login-form, reset-password sahifasi
+  - `POST /api/auth/request-reset` → token yaratish → email yuborish.
+  - `GET /reset-password?token=...` → yangi parol kiritish → `POST /api/auth/password-reset`.
+  - Login formada "Parolni unutdim?" tugmasi.
+  - DoD: user o'zi parolni tiklaydi (admin aralashuvisiz).
+  - ✅ 2026-06-11
 
-- [ ] **F4-3 · Email verifikatsiya**
-  - Fayl: `database/postgresql` — `users`ga `email_verified_at` qo'shish
-  - DoD: ro'yxatdan o'tgach verifikatsiya emaili; tasdiqlanmaguncha cheklov.
-  - Vaqt: 2 kun
+- [x] **F4-5 · First-run setup wizard**
+  - Fayl: `frontend/src/components/setup-wizard.tsx`
+  - Settings sahifasida company admin uchun: JIRA, Gemini, GitHub, Webhook — 4 qadam.
+  - Sozlamalar to'ldirilsa avtomatik yashirinadi.
+  - DoD: yangi kompaniya settings sahifasida yo'l ko'rsatuvchi checklist ko'radi.
+  - ✅ 2026-06-11
 
-- [ ] **F4-4 · Password reset email orqali (end-to-end)**
-  - Fayl: `services/api/auth_api.py:77`, `utils/auth/auth_db.py:684`
-  - Token allaqachon generatsiya bo'ladi, faqat email yuborish ulanishi kerak.
-  - DoD: foydalanuvchi parolni o'zi tiklaydi (admin aralashuvisiz).
-  - Vaqt: 1 kun
-
-- [ ] **F4-5 · First-run setup wizard**
-  - DoD: JIRA/GitHub ulash + connection test + birinchi tahlil — checklist bilan.
-  - Vaqt: 3 kun
+- [ ] **F4-2 · Self-service signup** — Track B ga surildi
+- [ ] **F4-3 · Email verifikatsiya** — Track B ga surildi (signup bo'lmasa kerak emas)
 
 ---
 

@@ -16,6 +16,7 @@ from utils.auth.auth_db import (
     create_web_session,
     get_effective_company_modules,
     get_web_session,
+    request_password_reset_email,
     revoke_web_session_token,
 )
 from utils.auth.auth_manager import authenticate_credentials
@@ -35,6 +36,10 @@ class PasswordResetRequest(BaseModel):
 
 class CompanyModulesRequest(BaseModel):
     company_id: int
+
+
+class RequestResetRequest(BaseModel):
+    username: str
 
 
 class SessionLogoutRequest(BaseModel):
@@ -71,6 +76,18 @@ async def login(payload: LoginRequest, request: Request, _rl: None = Depends(che
         "session_token": session.get("session_token"),
         "expires_at": session.get("expires_at"),
     }
+
+
+@router.post("/request-reset")
+async def request_reset(payload: RequestResetRequest, request: Request, _rl: None = Depends(check_rate_limit)):
+    """Userga parol tiklash emaili yuboradi. Har doim 200 qaytaradi (timing attack himoyasi)."""
+    username = payload.username.strip()
+    if username:
+        try:
+            request_password_reset_email(username)
+        except Exception:
+            pass
+    return {"success": True}
 
 
 @router.post("/password-reset")

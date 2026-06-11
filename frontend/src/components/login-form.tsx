@@ -11,12 +11,76 @@ import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
 
+function ForgotPasswordForm({ onBack }: { onBack: () => void }) {
+  const [username, setUsername] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    try {
+      await fetch("/api/auth/request-reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: username.trim() }),
+      });
+      setSent(true);
+    } catch {
+      setError("Xato yuz berdi. Qaytadan urinib ko'ring.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (sent) {
+    return (
+      <div className="flex flex-col gap-4">
+        <Notice tone="success">
+          Agar bu username mavjud bo'lsa va emaili bo'lsa, tiklash havolasi yuborildi.
+        </Notice>
+        <button className="text-sm text-muted-foreground hover:text-foreground" onClick={onBack} type="button">
+          ← Loginga qaytish
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <form className="flex flex-col gap-4" onSubmit={onSubmit}>
+      <div className="space-y-1">
+        <h2 className="text-lg font-semibold">Parolni tiklash</h2>
+        <p className="text-sm text-muted-foreground">Username kiriting — emailga havola yuboramiz.</p>
+      </div>
+      <Field label="Username">
+        <Input
+          autoComplete="username"
+          onChange={(e) => setUsername(e.target.value)}
+          placeholder="username@company"
+          required
+          value={username}
+        />
+      </Field>
+      {error ? <Notice tone="error">{error}</Notice> : null}
+      <Button disabled={submitting} fullWidth type="submit">
+        {submitting ? "Yuborilmoqda..." : "Havola yuborish"}
+      </Button>
+      <button className="text-center text-sm text-muted-foreground hover:text-foreground" onClick={onBack} type="button">
+        ← Orqaga
+      </button>
+    </form>
+  );
+}
+
 export function LoginForm() {
   const router = useRouter();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showForgot, setShowForgot] = useState(false);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -56,6 +120,18 @@ export function LoginForm() {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  if (showForgot) {
+    return (
+      <Card
+        className="mx-auto flex w-full max-w-[460px] flex-col gap-6 rounded-[28px] px-7 py-7"
+        tone="soft"
+      >
+        <Badge tone="soft">Web Portal</Badge>
+        <ForgotPasswordForm onBack={() => setShowForgot(false)} />
+      </Card>
+    );
   }
 
   return (
@@ -108,6 +184,14 @@ export function LoginForm() {
         <LockKeyhole size={16} />
         {submitting ? "Kirilmoqda..." : "Kirish"}
       </Button>
+
+      <button
+        className="text-center text-sm text-muted-foreground hover:text-foreground"
+        onClick={() => setShowForgot(true)}
+        type="button"
+      >
+        Parolni unutdim?
+      </button>
 
       <div className="grid gap-3 pt-1 sm:grid-cols-2">
         <BaseCard as="div" className="px-4 py-4" padding="none" tone="soft">

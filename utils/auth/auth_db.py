@@ -727,6 +727,26 @@ def create_password_reset_token_for_username(full_username: str, *, ttl_minutes:
     return create_password_reset_token(user["id"], ttl_minutes=ttl_minutes)
 
 
+def request_password_reset_email(username: str) -> bool:
+    """Username bo'yicha reset token yaratib, user emailiga yuboradi.
+    Email topilmasa yoki SMTP sozlanmagan bo'lsa False qaytaradi.
+    Xavfsizlik: user mavjud emas bo'lsa ham True qaytaradi (timing attack himoyasi).
+    """
+    from utils.email.email_sender import send_password_reset_email, is_email_configured
+    if not is_email_configured():
+        return False
+    user = get_user_by_full_username(username)
+    if not user or not user.get("is_active"):
+        return True  # timing attack himoyasi — xato xabar bermaydi
+    email = (user.get("email") or "").strip()
+    if not email:
+        return False
+    token_data = create_password_reset_token(user["id"], ttl_minutes=30)
+    if not token_data:
+        return False
+    return send_password_reset_email(email, username, token_data["token"])
+
+
 def consume_password_reset_token(raw_token: str, new_password: str) -> bool:
     """Password reset token orqali user parolini yangilash."""
     if not raw_token or not new_password:

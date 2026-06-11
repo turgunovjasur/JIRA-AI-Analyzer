@@ -18,6 +18,7 @@ import {
   SettingsInnerCard,
   ToggleRow,
 } from "@/components/settings/base-card-system";
+import { SetupWizard } from "@/components/setup-wizard";
 import type {
   ModuleSettingsAllowed,
   ModuleSettingsSaveRequest,
@@ -1062,6 +1063,10 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
           </div>
         )}
       />
+
+      {!loading && view && view.mode === "company" ? (
+        <SetupWizard settings={view} />
+      ) : null}
 
       {loading ? <PageIntro eyebrow="Loading" title="Settings yuklanmoqda..." /> : null}
       {error ? <Notice tone="error">{error}</Notice> : null}
