@@ -2122,25 +2122,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                       <div className="ssec mt-0 border-none pt-0">
                         <div className="ssec-label">
                           <svg fill="none" height="13" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" width="13">
-                            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-                          </svg>
-                          Comment bo'limlari
-                        </div>
-                        <BaseCheckGroup
-                          onChange={(nextValues) => updateCheckerField("visible_sections", nextValues)}
-                          options={moduleAllowed.checker_visible_sections.map((sectionKey) => ({
-                            key: sectionKey,
-                            label: CHECKER_SECTION_LABELS[sectionKey as keyof typeof CHECKER_SECTION_LABELS] || sectionKey,
-                          }))}
-                          value={moduleForm.checker.visible_sections}
-                        />
-                      </div>
-                    </SettingsInnerCard>
-
-                    <SettingsInnerCard>
-                      <div className="ssec mt-0 border-none pt-0">
-                        <div className="ssec-label">
-                          <svg fill="none" height="13" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" width="13">
                             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
                           </svg>
                           AI ga ma'lumotlar darajasi (tartibi)
