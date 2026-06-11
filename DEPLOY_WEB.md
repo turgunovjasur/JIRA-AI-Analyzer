@@ -71,11 +71,27 @@ Agar `.env` ichida `APP_WEBHOOK_EXECUTION_MODE=queue` bo'lsa, `start.sh` backend
 
 ## Production Checklist
 
-1. `POSTGRES_PASSWORD` ni kuchli parolga almashtiring
-2. `.env` va frontend env'larini production qiymatlar bilan to'ldiring
-3. `docker compose up --build -d` bilan servislarni ko'taring
-4. `backend /health` endpointida `queue` snapshot kelayotganini tekshiring
-5. reverse proxy orqali:
-   - `frontend` uchun `3000`
-   - `backend` uchun ichki `8000`
+1. `.env.example` dan `.env` yarating va **barcha `CHANGE_THIS_*` qiymatlarni** almashtiring
+2. `APP_STRICT_MODE=true` va kuchli `APP_CREDENTIALS_MASTER_KEY` o'rnating
+3. `ALLOWED_ORIGINS` ni production domeniga o'rnating
+4. `docker compose up --build -d` bilan servislarni ko'taring
+5. `curl https://yourdomain.com/health` → `{"status":"healthy"}` kelishi kerak (HTTP 200)
+6. Nginx reverse proxy: `deploy/nginx.conf` ni moslashtiring
+   - `example.com` ni o'z domeningizga almashtiring
+   - `certbot --nginx -d yourdomain.com` bilan TLS qo'shing
+
+## DB Backup
+
+```bash
+# Qo'lda backup
+make backup
+
+# Restore
+make restore FILE=backups/jira_ai_20260611_120000.sql.gz
+
+# Kunlik avtomatik backup (crontab -e):
+# 0 2 * * * cd /opt/jira-ai && bash scripts/backup_db.sh >> logs/backup.log 2>&1
+```
+
+Backuplar `./backups/` papkasida saqlanadi, 7 kundan eski fayllar avtomatik o'chiriladi.
 6. SSL, backup va log rotation qo'shing

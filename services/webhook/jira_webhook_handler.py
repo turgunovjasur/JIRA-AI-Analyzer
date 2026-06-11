@@ -773,6 +773,9 @@ async def health_check():
     if _worker_queue_enabled():
         health["queue"] = get_background_queue_snapshot()
 
+    if health["status"] == "unhealthy":
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=503, content=health)
     return health
 
 

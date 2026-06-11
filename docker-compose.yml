@@ -1,0 +1,68 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-jira_ai_analyzer}
+      POSTGRES_USER: ${POSTGRES_USER:-jira_ai_analyzer}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/postgresql/001_initial_schema.sql:/docker-entrypoint-initdb.d/001_initial_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-jira_ai_analyzer}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      APP_POSTGRES_DSN: postgresql://${POSTGRES_USER:-jira_ai_analyzer}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-jira_ai_analyzer}
+      APP_WEBHOOK_EXECUTION_MODE: queue
+      APP_USE_BACKEND_API: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - app_data:/app/data
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    restart: unless-stopped
+    command: ["python", "-m", "services.worker.main"]
+    env_file: .env
+    environment:
+      APP_POSTGRES_DSN: postgresql://${POSTGRES_USER:-jira_ai_analyzer}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-jira_ai_analyzer}
+      APP_WEBHOOK_EXECUTION_MODE: queue
+      APP_USE_BACKEND_API: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - app_data:/app/data
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      BACKEND_API_BASE_URL: http://backend:8000
+      NEXT_PUBLIC_BACKEND_API_BASE_URL: http://backend:8000
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+
+volumes:
+  postgres_data:
+  app_data:

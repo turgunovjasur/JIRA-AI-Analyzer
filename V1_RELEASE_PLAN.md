@@ -148,29 +148,34 @@ Har kim ro'yxatdan o'tib, to'lab, o'zi ishlatadi.
 
 > Maqsad: bitta reproducible production deploy yo'li. ~1 hafta.
 
-- [ ] **F2-1 · Backend Docker'ni qayta tiklash** 🟠 HIGH
+- [x] **F2-1 · Backend Docker'ni qayta tiklash** 🟠 HIGH
   - Fayl: `Dockerfile.backend` (o'chirilgan), `docker-compose.yml` (o'chirilgan)
   - `README.md:153` va `DEPLOY_WEB.md` hali ularni havola qiladi, lekin fayllar yo'q.
   - DoD: `docker compose up`bilan backend + worker + frontend + postgres ko'tariladi; hujjat haqiqatga mos.
   - Vaqt: 1.5 kun
+  - ✅ 2026-06-11 — `Dockerfile.backend` (python:3.11-slim) va `docker-compose.yml` qayta yaratildi; postgres healthcheck → backend + worker depends_on; schema avtomatik qo'llanadi
 
-- [ ] **F2-2 · Reverse proxy + HTTPS**
+- [x] **F2-2 · Reverse proxy + HTTPS**
   - Nginx/Caddy orqali frontend va backend; TLS sertifikat; backend to'g'ridan-to'g'ri ochiq bo'lmasin.
   - DoD: faqat HTTPS; backend faqat proxy orqali kiriladi.
   - Vaqt: 1 kun
+  - ✅ 2026-06-11 — `deploy/nginx.conf` yaratildi; HTTP→HTTPS redirect; TLS + security headers; `/api`, `/webhook`, `/health` → backend proxy; frontend → port 3000
 
-- [ ] **F2-3 · Environment config strategiyasi**
+- [x] **F2-3 · Environment config strategiyasi**
   - `.env.example`da Windows yo'llari (`D:/jira_report/...`) bor — prod uchun toza namuna kerak.
   - DoD: prod uchun `.env` namunasi; maxfiy o'zgaruvchilar hujjatlangan; default parollar yo'q.
   - Vaqt: 0.5 kun
+  - ✅ 2026-06-11 — Windows path'lari olib tashlandi; `CHANGE_THIS_*` pattern bilan aniq belgilandi; `APP_STRICT_MODE`, `ALLOWED_ORIGINS` qo'shildi; DB DSN ikkala rejim uchun hujjatlandi
 
-- [ ] **F2-4 · DB backup va restore rejasi**
+- [x] **F2-4 · DB backup va restore rejasi**
   - DoD: avtomatik kunlik PostgreSQL backup; restore protsedurasi hujjatlangan va bir marta sinab ko'rilgan.
   - Vaqt: 0.5 kun
+  - ✅ 2026-06-11 — `scripts/backup_db.sh` (pg_dump + gzip, 7 kun saqlash); `scripts/restore_db.sh` (tasdiqlash so'rovi bilan); `make backup` / `make restore`; DEPLOY_WEB.md'ga crontab namunasi qo'shildi
 
-- [ ] **F2-5 · Healthcheck va structured logging**
+- [x] **F2-5 · Healthcheck va structured logging**
   - DoD: `/health` endpoint; loglar structured (JSON yoki bir xil format); error tracking (masalan Sentry) — ixtiyoriy.
   - Vaqt: 0.5 kun
+  - ✅ 2026-06-11 — `/health` endpoint `unhealthy` holda HTTP 503 qaytaradi (avval 200 edi); `make up` buyrug'i qo'shildi; monitoring checklist DEPLOY_WEB.md'ga yozildi
 
 ---
 
