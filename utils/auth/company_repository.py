@@ -418,6 +418,31 @@ def upsert_company_subscription(get_conn: Callable, company_id: int, normalized:
         return False
 
 
+def expire_overdue_subscriptions(get_conn: Callable) -> int:
+    """billing_end_date o'tgan trial/active obunalarni suspended ga o'tkazadi."""
+    today = datetime.now().date().isoformat()
+    try:
+        conn = get_conn()
+        table_name = "company_subscriptions" if _table_exists(conn, "company_subscriptions") else "subscriptions"
+        result = execute(
+            conn,
+            f"""
+            UPDATE {table_name}
+            SET subscription_status = 'suspended', updated_at = %s
+            WHERE subscription_status IN ('trial', 'active')
+              AND billing_end_date IS NOT NULL
+              AND billing_end_date < %s
+            """,
+            [datetime.now().isoformat(), today],
+        )
+        count = result.rowcount if hasattr(result, "rowcount") else 0
+        conn.commit()
+        conn.close()
+        return count
+    except Exception:
+        return 0
+
+
 def fetch_company_settings(get_conn: Callable, company_id: int) -> Dict:
     try:
         conn = get_conn()

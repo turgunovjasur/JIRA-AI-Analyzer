@@ -157,7 +157,9 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
     poll_interval = _poll_interval_seconds()
     last_retry_scan: datetime | None = None
     last_session_cleanup: datetime | None = None
-    _SESSION_CLEANUP_INTERVAL = 3600  # har soatda bir marta
+    last_subscription_expire: datetime | None = None
+    _SESSION_CLEANUP_INTERVAL = 3600
+    _SUBSCRIPTION_EXPIRE_INTERVAL = 3600
 
     while not stop_event.is_set():
         settings = get_app_settings(force_reload=False)
@@ -179,6 +181,17 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
             except Exception:
                 pass
             last_session_cleanup = now
+
+        now = datetime.now()
+        if last_subscription_expire is None or (now - last_subscription_expire).total_seconds() >= _SUBSCRIPTION_EXPIRE_INTERVAL:
+            try:
+                from utils.auth.auth_db import expire_overdue_company_subscriptions
+                expired = expire_overdue_company_subscriptions()
+                if expired:
+                    log.info(f"WORKER -> subscription expire: {expired} ta muddati o'tgan obuna suspended qilindi")
+            except Exception:
+                pass
+            last_subscription_expire = now
 
         job = claim_next_background_job(worker_name)
         if not job:

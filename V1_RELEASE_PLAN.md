@@ -179,37 +179,36 @@ Har kim ro'yxatdan o'tib, to'lab, o'zi ishlatadi.
 
 ---
 
-## 6. FAZA 3 — Billing & Subscription (Ochiq SaaS uchun)
+## 6. FAZA 3 — Manual Billing Admin (Pilot uchun yetarli)
 
-> Maqsad: avtomatik monetizatsiya. ~3–4 hafta.
+> Maqsad: super admin orqali obunalarni qo'lda boshqarish. To'lov integratsiyasi (Payme/Click) hozircha kerak emas — real mijozlar ko'payganda qo'shiladi. ~1 kun.
+>
+> **Qaror (2026-06-11):** Hozir real foydalanuvchilar yo'q. Super admin har kompaniyani qo'lda qabul qilib, obunani manuel boshqaradi. Payme/Click integratsiyasi Track B (Ochiq SaaS) bosqichiga surildi.
 
-- [ ] **F3-1 · To'lov provayderini tanlash**
-  - Variant: Stripe (xalqaro), Payme/Click (O'zbekiston). ICP ga qarab.
-  - DoD: qaror hujjatlangan; test akkaunt ochilgan.
-  - Vaqt: 0.5 kun (qaror)
+- [x] **F3-1 · Super admin billing UI — trial va tezkor tugmalar**
+  - Fayl: `frontend/src/components/super-admin-panel.tsx`
+  - Mavjud: 1 oy, 1 yil aktivlash. Qo'shildi: "14 kun trial" tugmasi + `last_payment_note` maydoni.
+  - DoD: admin bir tugma bilan trial/obuna beradi; izoh yoza oladi.
+  - Vaqt: 1 soat
+  - ✅ 2026-06-11 — Trial button + payment note textarea qo'shildi
 
-- [ ] **F3-2 · Checkout va subscription activation**
-  - Fayl: yangi `services/api/billing_api.py`, `company_subscriptions` jadvali (mavjud)
-  - DoD: checkout flow; muvaffaqiyatli to'lovda obuna avtomatik faollashadi.
-  - Vaqt: 1 hafta
+- [x] **F3-2 · Auto-expire cron (worker)**
+  - Fayl: `services/worker/main.py`, `utils/auth/company_repository.py`, `utils/auth/auth_db.py`
+  - `billing_end_date` o'tgan `trial`/`active` obunalar har soatda avtomatik `suspended` qilinadi.
+  - DoD: muddati o'tgan kompaniya keyingi webhook da bloklanadi; worker logda xabar ko'rinadi.
+  - Vaqt: 2 soat
+  - ✅ 2026-06-11 — `expire_overdue_subscriptions` + worker cron qo'shildi
 
-- [ ] **F3-3 · Provider webhook (to'lov hodisalari)**
-  - DoD: to'lov muvaffaqiyatli/muvaffaqiyatsiz → obuna statusi avtomatik yangilanadi (imzo tekshirilgan).
-  - Vaqt: 3 kun
+- [x] **F3-3 · Webhook feature gating** 🟠 HIGH
+  - Fayl: `services/webhook/jira_webhook_handler.py`
+  - Hozir webhook secret tekshiriladi, lekin obuna statusi tekshirilmaydi.
+  - DoD: obunasi `suspended`/`cancelled`/muddati o'tgan kompaniya webhook'i `402` yoki `ignored` qaytaradi.
+  - Vaqt: 1 soat
+  - ✅ 2026-06-11 — Webhook secret tekshiruvidan keyin `is_company_subscription_active` qo'shildi
 
-- [ ] **F3-4 · Trial, grace period, failed payment, cancel/upgrade**
-  - DoD: trial flow; to'lov tushmasa grace period; bekor qilish; plan o'zgartirish.
-  - Vaqt: 1 hafta
-
-- [ ] **F3-5 · Server-side feature gating (revenue leakage)** 🟠 HIGH
-  - Fayl: `utils/auth/auth_subscription_helpers.py:108`
-  - Hozir obuna tugaganda **login bloklanadi** (yaxshi), lekin login ichida modul gating faqat sessiya flagiga tayanadi — API darajasida emas.
-  - DoD: har himoyalangan API endpoint obuna statusini server tomonda tekshiradi.
-  - Vaqt: 2 kun
-
-- [ ] **F3-6 · Invoice tarixi va billing dashboard**
-  - DoD: mijoz o'z to'lovlar tarixini ko'radi; admin billingni boshqaradi.
-  - Vaqt: 3 kun
+- [ ] **F3-4 · To'lov integratsiyasi (Payme/Click)** — Track B uchun, hozircha shart emas
+  - Real mijozlar ko'payganda va qo'lda boshqarish og'irlashganda implement qilinadi.
+  - Vaqt: ~2 hafta (keyinroq)
 
 ---
 

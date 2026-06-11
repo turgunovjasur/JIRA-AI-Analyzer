@@ -41,6 +41,7 @@ from utils.auth.company_repository import (
     delete_company_by_id,
     fetch_company_subscription,
     upsert_company_subscription,
+    expire_overdue_subscriptions,
     fetch_company_settings,
     fetch_company_modules,
     upsert_company_modules,
@@ -567,6 +568,11 @@ def save_company_subscription(company_id: int, data: Dict) -> bool:
 def is_company_subscription_active(company_id: int) -> tuple[bool, str]:
     """Subscription holati bo'yicha login ruxsatini tekshirish."""
     return helper_is_company_subscription_active(get_company_subscription(company_id))
+
+
+def expire_overdue_company_subscriptions() -> int:
+    """billing_end_date o'tgan trial/active obunalarni suspended ga o'tkazadi. Worker cron uchun."""
+    return expire_overdue_subscriptions(_get_conn)
 
 
 def update_company_status(company_id: int, is_active: bool) -> bool:

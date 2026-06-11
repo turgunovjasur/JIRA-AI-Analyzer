@@ -453,6 +453,13 @@ async def _jira_webhook_impl(
                 from fastapi.responses import JSONResponse
                 return JSONResponse(status_code=401, content={"status": "unauthorized", "reason": "invalid webhook secret"})
 
+        # Obuna tekshiruvi — muddati o'tgan yoki bloklangan kompaniya ignore
+        from utils.auth.auth_db import is_company_subscription_active
+        sub_active, sub_reason = is_company_subscription_active(company_id)
+        if not sub_active:
+            log.warning(f"[{task_key}] Subscription inactive (company_id={company_id}): {sub_reason}")
+            return {"status": "ignored", "reason": "subscription_inactive"}
+
         # Yangi status trigger status'lardan birimi?
         settings = app_settings.webhook_tz_pr
         target_statuses = settings.get_trigger_statuses()

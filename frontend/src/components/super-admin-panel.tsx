@@ -415,6 +415,30 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
     });
   }
 
+  function activateTrialDraft(company: SuperAdminCompany, days: number) {
+    const today = new Date();
+    const trialEnd = new Date(today);
+    trialEnd.setDate(trialEnd.getDate() + days);
+    const billingStartDate = formatDateInputValue(today);
+    const billingEndDate = formatDateInputValue(trialEnd);
+
+    setSubscriptionDrafts((current) => ({
+      ...current,
+      [company.id]: {
+        ...(company.subscription || {}),
+        ...(current[company.id] || {}),
+        billing_end_date: billingEndDate,
+        billing_mode: "manual",
+        billing_start_date: billingStartDate,
+        last_payment_date: "",
+        last_payment_note: `${days} kunlik trial`,
+        next_payment_date: billingEndDate,
+        plan_name: (current[company.id] || {}).plan_name || company.subscription.plan_name || "base",
+        subscription_status: "trial",
+      },
+    }));
+  }
+
   async function saveSubscription(company: SuperAdminCompany) {
     await updateCompanyAction(
       company,
@@ -704,6 +728,15 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                                 <div className="flex flex-wrap gap-2" style={{ marginBottom: 12 }}>
                                   <Button
                                     disabled={busy}
+                                    onClick={() => activateTrialDraft(company, 14)}
+                                    size="sm"
+                                    type="button"
+                                    variant="soft"
+                                  >
+                                    14 kun trial
+                                  </Button>
+                                  <Button
+                                    disabled={busy}
                                     onClick={() => activateSubscriptionDraft(company, 1)}
                                     size="sm"
                                     type="button"
@@ -802,6 +835,21 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                                     value={normalizeDateInputValue(subscriptionDraft.next_payment_date)}
                                   />
                                 </div>
+                                <BaseInputField
+                                  className={SETTINGS_INPUT_CLASS}
+                                  label="To'lov izohi (ichki eslatma)"
+                                  onChange={(value) =>
+                                    setSubscriptionDrafts((current) => ({
+                                      ...current,
+                                      [company.id]: {
+                                        ...(current[company.id] || {}),
+                                        last_payment_note: value,
+                                      },
+                                    }))
+                                  }
+                                  style={{ marginTop: 8 }}
+                                  value={subscriptionDraft.last_payment_note || ""}
+                                />
                                 <Button
                                   className="mt-3 tenant-action-btn tenant-action-btn--save"
                                   disabled={busy}
