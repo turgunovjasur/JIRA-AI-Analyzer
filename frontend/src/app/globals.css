@@ -2835,6 +2835,16 @@ textarea.input { height: auto; padding: 11px 13px; resize: vertical; min-height:
   color: var(--ink-2);
 }
 
+/* Top-level sub-card sarlavhasi base card header kabi ko'rinadi */
+.settings-subsection > .ssec > .ssec-label {
+  display: flex;
+  width: 100%;
+  font-size: 13.5px;
+  color: var(--ink);
+  padding-bottom: 11px;
+  border-bottom: 1px solid var(--line);
+}
+
 .webhook-cards-grid {
   display: grid;
   grid-template-columns: 1fr;

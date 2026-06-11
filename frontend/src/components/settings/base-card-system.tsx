@@ -202,7 +202,7 @@ export function SettingsCardItem({ children, className }: { children: ReactNode;
 
 export function SettingsInnerCard({
   children,
-  collapsible = true,
+  collapsible = false,
   defaultCollapsed = false,
 }: {
   children: ReactNode;
