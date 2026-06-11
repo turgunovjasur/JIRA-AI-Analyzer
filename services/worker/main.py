@@ -156,6 +156,8 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
     log.info(f"WORKER -> started | name={worker_name}")
     poll_interval = _poll_interval_seconds()
     last_retry_scan: datetime | None = None
+    last_session_cleanup: datetime | None = None
+    _SESSION_CLEANUP_INTERVAL = 3600  # har soatda bir marta
 
     while not stop_event.is_set():
         settings = get_app_settings(force_reload=False)
@@ -166,6 +168,17 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
             if queued_retries:
                 log.info(f"WORKER -> enqueued {queued_retries} retry job(s)")
             last_retry_scan = now
+
+        now = datetime.now()
+        if last_session_cleanup is None or (now - last_session_cleanup).total_seconds() >= _SESSION_CLEANUP_INTERVAL:
+            try:
+                from utils.auth.auth_db import cleanup_expired_sessions
+                removed = cleanup_expired_sessions()
+                if removed:
+                    log.info(f"WORKER -> session cleanup: {removed} ta muddati o'tgan sessiya o'chirildi")
+            except Exception:
+                pass
+            last_session_cleanup = now
 
         job = claim_next_background_job(worker_name)
         if not job:

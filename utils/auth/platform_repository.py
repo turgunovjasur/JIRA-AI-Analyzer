@@ -347,3 +347,85 @@ def revoke_web_session(
         return True
     except Exception:
         return False
+
+
+def revoke_all_user_sessions(get_conn: Callable, user_id: int) -> int:
+    """Foydalanuvchining barcha aktiv sessiyalarini bekor qilish. O'chirilgan soni qaytaradi."""
+    try:
+        now = datetime.now().isoformat()
+        conn = get_conn()
+        execute(
+            conn,
+            "UPDATE web_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
+            [now, user_id],
+        )
+        conn.commit()
+        count = conn.execute(
+            "SELECT changes()" if not hasattr(conn, "rowcount") else "SELECT 1"
+        ).fetchone()
+        conn.close()
+        return count[0] if count else 0
+    except Exception:
+        return 0
+
+
+def cleanup_expired_web_sessions(get_conn: Callable) -> int:
+    """Muddati o'tgan va revoke qilingan sessiyalarni o'chirish. O'chirilgan soni qaytaradi."""
+    try:
+        now = datetime.now().isoformat()
+        conn = get_conn()
+        execute(
+            conn,
+            """
+            DELETE FROM web_sessions
+            WHERE expires_at < ?
+               OR revoked_at IS NOT NULL
+            """,
+            [now],
+        )
+        conn.commit()
+        count = conn.execute("SELECT changes()").fetchone()
+        conn.close()
+        return count[0] if count else 0
+    except Exception:
+        return 0
+
+
+def insert_audit_log(
+    get_conn: Callable,
+    *,
+    event_type: str,
+    entity_type: str,
+    entity_id: str = "",
+    company_id: int | None = None,
+    actor_user_id: int | None = None,
+    actor_role: str = "",
+    event_payload: dict | None = None,
+) -> bool:
+    """audit_logs jadvaliga yozuv qo'shish."""
+    import json as _json
+    try:
+        conn = get_conn()
+        execute(
+            conn,
+            """
+            INSERT INTO audit_logs
+                (company_id, actor_user_id, actor_role, event_type, entity_type, entity_id, event_payload, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                company_id,
+                actor_user_id,
+                actor_role or "",
+                event_type,
+                entity_type,
+                entity_id or "",
+                _json.dumps(event_payload or {}),
+                datetime.now().isoformat(),
+            ],
+        )
+        conn.commit()
+        conn.close()
+        return True
+    except Exception:
+        return False

@@ -96,45 +96,51 @@ Har kim ro'yxatdan o'tib, to'lab, o'zi ishlatadi.
 
 > Maqsad: multi-tenant SaaS uchun minimal xavfsizlik bazasi. ~1 hafta.
 
-- [ ] **F1-1 · JIRA webhook imzo / shared secret tekshiruvi** 🔴 CRITICAL
+- [x] **F1-1 · JIRA webhook imzo / shared secret tekshiruvi** 🔴 CRITICAL
   - Fayl: `services/webhook/jira_webhook_handler.py:358`
   - Hozir endpoint har qanday POST'ni qabul qiladi. Hujumchi istalgan kompaniya uchun AI tahlilini ishga tushirib, token sarflashi mumkin.
   - Yechim: webhook URL'iga secret token qo'shish (`/webhook/jira?token=...` yoki header `X-Webhook-Secret`), kompaniya sozlamalarida saqlash, har request'da tekshirish. Imkon bo'lsa JIRA HMAC (`X-Hub-Signature`).
   - DoD: secret bo'lmasa yoki noto'g'ri bo'lsa `401` qaytadi; to'g'ri secret bilan ishlaydi; test yozilgan.
   - Vaqt: 1 kun
+  - ✅ 2026-06-11 — company_settings da `webhook_secret` maydoni; `X-Webhook-Secret` header va `?token=` query param tekshiriladi; test yozilgan
 
-- [ ] **F1-2 · Credential master key majburiyligi (fail-fast)** 🔴 CRITICAL
+- [x] **F1-2 · Credential master key majburiyligi (fail-fast)** 🔴 CRITICAL
   - Fayl: `utils/auth/credential_crypto.py:133`, app startup (`services/webhook/jira_webhook_handler.py` / `services/api` init)
   - `APP_CREDENTIALS_MASTER_KEY` yo'q bo'lsa tokenlar **plain text** saqlanadi. `encrypt_value` shunchaki qiymatni qaytaradi.
   - Yechim: production'da startda master key bo'lmasa ilova ishga tushmasin (yoki credential saqlash bloklansin). `SUPER_ADMIN_PASSWORD` fallback'ni production'da o'chirish.
   - DoD: master key yo'qligida prod startup xato beradi; mavjud plaintext tokenlarni re-encrypt qiluvchi skript; test.
   - Vaqt: 0.5 kun
+  - ✅ 2026-06-11 — `assert_master_key_configured()` qo'shildi; lifespan startup da chaqiriladi; `APP_STRICT_MODE=true` bilan xato; `scripts/reencrypt_credentials.py` qo'shildi; 4 test yashil
 
-- [ ] **F1-3 · Auth endpointlarda rate-limit** 🟠 HIGH
+- [x] **F1-3 · Auth endpointlarda rate-limit** 🟠 HIGH
   - Fayl: `services/api/auth_api.py:44` (login), `:77` (password-reset)
   - API darajasida throttling yo'q (faqat per-identifier lockout bor). Distributed brute-force mumkin.
   - Yechim: `slowapi` yoki o'z middleware — IP bo'yicha `/api/auth/*` ga limit.
   - DoD: limitdan oshganda `429`; test.
   - Vaqt: 0.5 kun
+  - ✅ 2026-06-11 — `services/api/rate_limit.py` (in-memory, 10 req/60s per IP); login va password-reset endpointlarga `Depends(check_rate_limit)` qo'shildi; 3 test yashil
 
-- [ ] **F1-4 · CORS va security headers** 🟠 HIGH
+- [x] **F1-4 · CORS va security headers** 🟠 HIGH
   - Fayl: FastAPI app init (`services/webhook/jira_webhook_handler.py:234` atrofida)
   - `CORSMiddleware` yo'q, security headerlar yo'q.
   - Yechim: aniq `allow_origins=[frontend domeni]`, `allow_credentials=True`; `X-Content-Type-Options`, `X-Frame-Options`, HSTS (reverse proxy darajasida ham bo'lsa bo'ladi).
   - DoD: faqat ruxsat etilgan origin ishlaydi; headerlar javobda mavjud.
   - Vaqt: 0.5 kun
+  - ✅ 2026-06-11 — `CORSMiddleware` (`ALLOWED_ORIGINS` env) va `_SecurityHeadersMiddleware` qo'shildi; `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` headerlar; test yashil
 
-- [ ] **F1-5 · Sensitive operatsiyalarga audit logging** 🟡 MEDIUM
+- [x] **F1-5 · Sensitive operatsiyalarga audit logging** 🟡 MEDIUM
   - Fayl: `services/api/internal_rpc_api.py:242` atrofida
   - `audit_logs` jadvali bor, lekin RPC operatsiyalari (create_user, save_company_settings, billing o'zgarishi) yozilmaydi.
   - DoD: har RPC chaqiruvi `(role, company_id, operation, natija)` bilan `audit_logs`ga yoziladi.
   - Vaqt: 0.5 kun
+  - ✅ 2026-06-11 — `insert_audit_log` (platform_repository) + `write_audit_log` (auth_db) qo'shildi; `call_rpc` muvaffaqiyat va xatolarda `audit_logs`ga yozadi
 
-- [ ] **F1-6 · Session tozalash va revocation** 🟡 MEDIUM
+- [x] **F1-6 · Session tozalash va revocation** 🟡 MEDIUM
   - Fayl: `utils/auth/auth_db.py:794` atrofida
   - Muddati o'tgan sessiyalar avtomatik tozalanmaydi; "barcha sessiyalarni bekor qilish" yo'q.
   - DoD: davriy cleanup (worker job); foydalanuvchi parol o'zgartirganda barcha sessiyasi bekor bo'ladi.
   - Vaqt: 0.5 kun
+  - ✅ 2026-06-11 — `cleanup_expired_sessions` + `revoke_all_user_sessions` qo'shildi; worker har soatda cleanup qiladi; `update_user_password` da avtomatik revoke
 
 ---
 

@@ -67,6 +67,7 @@ from utils.auth.auth_db import (
     update_user_status,
     update_user_status_for_company,
     validate_company_subscription_data,
+    write_audit_log,
 )
 from services.api.session_scope import get_session_company_id, get_session_role, load_api_session
 from utils.auth.credential_crypto import get_credential_security_status
@@ -239,8 +240,31 @@ async def call_rpc(
     if fn is None:
         raise HTTPException(status_code=404, detail=f"Unknown internal RPC op: {payload.op}")
 
+    auth = session.get("auth") or {}
+    actor_user_id = auth.get("user_id")
+    actor_role = auth.get("role") or get_session_role(session)
+    company_id = get_session_company_id(session)
+
     try:
         result = fn(*payload.args, **payload.kwargs)
+        write_audit_log(
+            event_type=f"rpc.{payload.op}",
+            entity_type="rpc",
+            entity_id=payload.op,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            actor_role=actor_role,
+            event_payload={"args": payload.args, "kwargs": payload.kwargs, "success": True},
+        )
         return {"result": _serialize(result)}
     except Exception as exc:
+        write_audit_log(
+            event_type=f"rpc.{payload.op}.error",
+            entity_type="rpc",
+            entity_id=payload.op,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            actor_role=actor_role,
+            event_payload={"args": payload.args, "kwargs": payload.kwargs, "error": str(exc)},
+        )
         raise HTTPException(status_code=500, detail=f"Internal RPC error in {payload.op}: {exc}") from exc

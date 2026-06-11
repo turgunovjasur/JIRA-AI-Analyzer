@@ -6,9 +6,10 @@ direct Streamlit DB calls while preserving the current auth logic.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 
+from services.api.rate_limit import check_rate_limit
 from services.api.session_scope import load_api_session, require_company_scope
 from utils.auth.auth_db import (
     consume_password_reset_token,
@@ -41,7 +42,7 @@ class SessionLogoutRequest(BaseModel):
 
 
 @router.post("/login")
-async def login(payload: LoginRequest):
+async def login(payload: LoginRequest, request: Request, _rl: None = Depends(check_rate_limit)):
     success, error_message, auth_payload = authenticate_credentials(payload.username, payload.password)
     if not success or not auth_payload:
         return {
@@ -73,7 +74,7 @@ async def login(payload: LoginRequest):
 
 
 @router.post("/password-reset")
-async def password_reset(payload: PasswordResetRequest):
+async def password_reset(payload: PasswordResetRequest, request: Request, _rl: None = Depends(check_rate_limit)):
     ok = consume_password_reset_token(payload.token.strip(), payload.new_password)
     return {"success": ok}
 

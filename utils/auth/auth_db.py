@@ -81,6 +81,9 @@ from utils.auth.platform_repository import (
     fetch_web_session,
     touch_web_session,
     revoke_web_session,
+    revoke_all_user_sessions,
+    cleanup_expired_web_sessions,
+    insert_audit_log,
 )
 from utils.auth.auth_bootstrap import run_auth_bootstrap
 from utils.auth.auth_config_helpers import (
@@ -669,8 +672,11 @@ def get_users_by_company(company_id: int) -> List[Dict]:
 
 
 def update_user_password(user_id: int, new_password: str) -> bool:
-    """Userning parolini yangilash"""
-    return update_user_password_hash(_get_conn, user_id, hash_password(new_password))
+    """Userning parolini yangilash va barcha aktiv sessiyalarini bekor qilish."""
+    ok = update_user_password_hash(_get_conn, user_id, hash_password(new_password))
+    if ok:
+        revoke_all_user_sessions(_get_conn, user_id)
+    return ok
 
 
 def update_user_password_for_company(user_id: int, company_id: int, new_password: str) -> bool:
@@ -837,6 +843,34 @@ def revoke_web_session_token(raw_token: str) -> bool:
     if not raw_token:
         return False
     return revoke_web_session(_get_conn, _hash_web_session_token(raw_token))
+
+
+def cleanup_expired_sessions() -> int:
+    """Muddati o'tgan va bekor qilingan sessiyalarni DB'dan tozalash."""
+    return cleanup_expired_web_sessions(_get_conn)
+
+
+def write_audit_log(
+    *,
+    event_type: str,
+    entity_type: str,
+    entity_id: str = "",
+    company_id: int | None = None,
+    actor_user_id: int | None = None,
+    actor_role: str = "",
+    event_payload: dict | None = None,
+) -> bool:
+    """audit_logs jadvaliga yozish."""
+    return insert_audit_log(
+        _get_conn,
+        event_type=event_type,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        company_id=company_id,
+        actor_user_id=actor_user_id,
+        actor_role=actor_role,
+        event_payload=event_payload,
+    )
 
 
 def update_user_status(user_id: int, is_active: bool) -> bool:

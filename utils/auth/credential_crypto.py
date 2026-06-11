@@ -38,6 +38,19 @@ def get_sensitive_credential_fields() -> set[str]:
     return set(_SENSITIVE_FIELDS)
 
 
+def assert_master_key_configured() -> None:
+    """APP_STRICT_MODE=true bo'lsa, master key yo'qligida startup xato beradi."""
+    strict = os.getenv("APP_STRICT_MODE", "").strip().lower() in ("1", "true", "yes")
+    if not strict:
+        return
+    if not has_configured_master_key():
+        raise RuntimeError(
+            "APP_STRICT_MODE=true lekin APP_CREDENTIALS_MASTER_KEY o'rnatilmagan. "
+            "Tokenlar plain text saqlanadi — xavfli. "
+            "APP_CREDENTIALS_MASTER_KEY ni .env ga qo'shing yoki APP_STRICT_MODE ni o'chiring."
+        )
+
+
 def _get_master_secret() -> str:
     return (
         os.getenv("APP_CREDENTIALS_MASTER_KEY")

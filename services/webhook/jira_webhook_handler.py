@@ -28,8 +28,10 @@ from contextlib import asynccontextmanager, suppress
 from datetime import datetime
 from typing import Optional, Dict, Any
 
-from fastapi import FastAPI, BackgroundTasks, Request
+from fastapi import FastAPI, BackgroundTasks, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from starlette.middleware.base import BaseHTTPMiddleware
 import uvicorn
 
 # Loyiha root path qo'shish (turli muhitlarda ishlashi uchun)
@@ -194,6 +196,9 @@ async def lifespan(app: FastAPI):
 
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
+    from utils.auth.credential_crypto import assert_master_key_configured
+    assert_master_key_configured()
+
     app_settings = get_app_settings(force_reload=False)
     settings = app_settings.webhook_tz_pr
 
@@ -237,6 +242,30 @@ app = FastAPI(
     version="4.0.0",
     lifespan=lifespan,
 )
+
+# CORS — faqat ruxsat etilgan origin(lar)dan so'rovlarni qabul qilish
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").strip()
+_allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+)
+
+
+class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response: Response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return response
+
+
+app.add_middleware(_SecurityHeadersMiddleware)
 
 
 def _resolve_company_for_webhook(task_key: str, company_code: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -409,6 +438,20 @@ async def _jira_webhook_impl(
                 return {"status": "ignored", "reason": f"unknown company code '{company_code}'"}
             log.warning(f"[{task_key}] Project key '{project_key}' uchun kompaniya topilmadi yoki ambiguous — ignored")
             return {"status": "ignored", "reason": f"unknown or ambiguous project key '{project_key}'"}
+
+        # Webhook secret tekshiruvi (agar kompaniya sozlamalarida belgilangan bo'lsa)
+        from utils.auth.auth_db import get_company_settings
+        company_settings = get_company_settings(company_id)
+        expected_secret = (company_settings.get("webhook_secret") or "").strip()
+        if expected_secret:
+            provided_secret = (
+                request.headers.get("X-Webhook-Secret")
+                or request.query_params.get("token")
+                or ""
+            ).strip()
+            if provided_secret != expected_secret:
+                from fastapi.responses import JSONResponse
+                return JSONResponse(status_code=401, content={"status": "unauthorized", "reason": "invalid webhook secret"})
 
         # Yangi status trigger status'lardan birimi?
         settings = app_settings.webhook_tz_pr
