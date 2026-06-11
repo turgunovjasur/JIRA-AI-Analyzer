@@ -6,15 +6,78 @@ import { MetricCard } from "@/components/ui/metric-card";
 import { Notice } from "@/components/ui/notice";
 import { SectionHeader } from "@/components/ui/section-header";
 import { StatusPill } from "@/components/ui/status-pill";
-import { getMonitoringSnapshot } from "@/lib/backend";
+import { getBackendHealth, getMonitoringSnapshot } from "@/lib/backend";
 import { requireSession } from "@/lib/session";
 import type {
+  BackendHealth,
   MonitoringBlockedTaskRow,
   MonitoringErrorRow,
   MonitoringOverallStatsRow,
   MonitoringRecentTaskRow,
   MonitoringServiceStatusRow,
 } from "@/lib/types";
+
+function ServiceDot({ value }: { value: string }) {
+  const ok = value === "ok";
+  const color = ok ? "#22c55e" : "#ef4444";
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+      <span style={{ width: 8, height: 8, borderRadius: "50%", background: color, display: "inline-block", flexShrink: 0 }} />
+      <span style={{ fontSize: 13, color: ok ? "#15803d" : "#b91c1c" }}>{value}</span>
+    </span>
+  );
+}
+
+function HealthCard({ health }: { health: BackendHealth | null }) {
+  const isHealthy = !health || health.status === "healthy";
+  const services = health?.services || {};
+  const serviceEntries = Object.entries(services).filter(([k]) => k !== "execution_mode");
+  const execMode = services["execution_mode"];
+
+  return (
+    <Card>
+      <SectionHeader
+        eyebrow="System"
+        title="Backend holati"
+        action={
+          <span style={{
+            display: "inline-flex", alignItems: "center", gap: 6,
+            padding: "4px 12px", borderRadius: 20,
+            background: isHealthy ? "#22c55e22" : "#ef444422",
+            color: isHealthy ? "#15803d" : "#b91c1c",
+            fontSize: 13, fontWeight: 600,
+          }}>
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: isHealthy ? "#22c55e" : "#ef4444", display: "inline-block" }} />
+            {isHealthy ? "Healthy" : "Unhealthy"}
+          </span>
+        }
+      />
+      {serviceEntries.length > 0 ? (
+        <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12 }}>
+          {serviceEntries.map(([name, status]) => (
+            <div key={name} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span style={{ fontSize: 11, color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: "0.05em" }}>{name}</span>
+              <ServiceDot value={typeof status === "string" ? status : "ok"} />
+            </div>
+          ))}
+          {execMode && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span style={{ fontSize: 11, color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: "0.05em" }}>execution_mode</span>
+              <span style={{ fontSize: 13 }}>{String(execMode)}</span>
+            </div>
+          )}
+        </div>
+      ) : (
+        <p style={{ marginTop: 12, fontSize: 13, color: "var(--muted-foreground)" }}>Backend bilan ulanib bo&apos;lmadi.</p>
+      )}
+      {health?.timestamp && (
+        <p style={{ marginTop: 12, fontSize: 12, color: "var(--muted-foreground)" }}>
+          Tekshirildi: {formatDate(health.timestamp)}
+        </p>
+      )}
+    </Card>
+  );
+}
 
 const FILTERS = [
   "Barchasi",
@@ -239,6 +302,8 @@ export default async function MonitoringPage({
 
   const companyId = role === "company_admin" ? session.auth.company_id : null;
 
+  const health = await getBackendHealth().catch(() => null);
+
   try {
     const snapshot = await getMonitoringSnapshot({ companyId, status: selectedStatus });
     const stats = snapshot.overall_stats?.[0] || {};
@@ -252,6 +317,8 @@ export default async function MonitoringPage({
           <h2 className="qa-page-heading">Monitoring</h2>
           <p className="qa-page-desc">Queue holati, xizmat ishlashi va so&apos;nggi tasklar real-time.</p>
         </div>
+
+        <HealthCard health={health} />
 
         <section className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
           <MetricCard helper="Jami tasklar" label="Total" value={stats.total_tasks ?? 0} />

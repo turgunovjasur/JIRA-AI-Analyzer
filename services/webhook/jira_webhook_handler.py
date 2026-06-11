@@ -786,6 +786,47 @@ async def health_check():
     return health
 
 
+@app.get("/metrics")
+async def get_metrics():
+    """
+    Tashqi monitoring tizimlari (UptimeRobot, Grafana) uchun metrikalar.
+    Auth talab qilinmaydi — faqat aggregat ko'rsatkichlar qaytaradi.
+    """
+    metrics: dict = {
+        "status": "ok",
+        "timestamp": datetime.now().isoformat(),
+    }
+    try:
+        from utils.database.runtime import connect_processing_db
+        from utils.database.monitoring_repository import get_overall_stats_df
+
+        conn = connect_processing_db(timeout=5.0, row_factory=True)
+        df = get_overall_stats_df(conn, company_id=None)
+        conn.close()
+        if df is not None and not df.empty:
+            row = df.iloc[0].where(df.iloc[0].notna(), other=None).to_dict()
+            metrics["tasks"] = {
+                "total": int(row.get("total_tasks") or 0),
+                "completed": int(row.get("completed") or 0),
+                "progressing": int(row.get("progressing") or 0),
+                "returned": int(row.get("returned") or 0),
+                "error": int(row.get("error") or 0),
+                "blocked": int(row.get("blocked") or 0),
+                "skipped": int(row.get("skipped") or 0),
+                "avg_compliance": round(float(row.get("avg_compliance") or 0), 1),
+            }
+    except Exception as e:
+        metrics["tasks_error"] = str(e)
+
+    if _worker_queue_enabled():
+        try:
+            metrics["queue"] = get_background_queue_snapshot()
+        except Exception:
+            pass
+
+    return metrics
+
+
 @app.get("/settings")
 async def get_settings():
     """

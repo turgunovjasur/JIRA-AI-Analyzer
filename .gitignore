@@ -16,6 +16,8 @@ eggs/
 .eggs/
 lib/
 lib64/
+# frontend source lib is NOT ignored:
+!frontend/src/lib/
 parts/
 sdist/
 var/

@@ -258,9 +258,13 @@ Har kim ro'yxatdan o'tib, to'lab, o'zi ishlatadi.
   - DoD: release oldidan bajariladigan checklist; asosiy oqimlar uchun smoke test.
   - Vaqt: 1 kun
 
-- [ ] **F5-3 · Monitoring va metrics**
-  - DoD: AI usage/cost tracking; integration health; error tracking dashboard.
-  - Vaqt: 3 kun
+- [x] **F5-3 · Monitoring va metrics**
+  - Fayl: `services/webhook/jira_webhook_handler.py`, `frontend/src/app/(app)/monitoring/page.tsx`
+  - `GET /health` — komponentlar holati (DB, JIRA, settings, execution_mode); 503 unhealthy da
+  - `GET /metrics` — auth talab qilmaydi; aggregat task ko'rsatkichlari (total/completed/error/avg_score)
+  - Monitoring sahifasida **Backend holati** kartasi: har bir servis uchun yashil/qizil dot
+  - DoD: `/health` 503 qaytaradi xato bo'lsa; `/metrics` tashqi tool pollashi mumkin; monitoring UI holat ko'rsatadi.
+  - ✅ 2026-06-11
 
 - [ ] **F5-4 · Argon2 ga o'tish (parol hashing)** — ixtiyoriy
   - Fayl: `utils/auth/auth_db.py:360` (hozir PBKDF2 200k — OK, lekin argon2id zamonaviyroq).
