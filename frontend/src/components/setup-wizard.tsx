@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { CheckCircle, Circle, ExternalLink, ChevronDown, ChevronUp } from "lucide-react";
 
+import { Card } from "@/components/ui/card";
 import type { SharedSettingsView } from "@/lib/types";
 
 type Step = {
@@ -13,9 +14,13 @@ type Step = {
   hint: string;
 };
 
-function buildSteps(settings: SharedSettingsView | null, webhookUrl: string): Step[] {
+function buildSteps(
+  settings: SharedSettingsView | null,
+  webhookUrl: string,
+  hasWebhookModule: boolean,
+): Step[] {
   const f = settings?.fields;
-  return [
+  const steps: Step[] = [
     {
       key: "jira",
       title: "JIRA ulanishi",
@@ -37,23 +42,29 @@ function buildSteps(settings: SharedSettingsView | null, webhookUrl: string): St
       description: "GitHub Personal Access Token qo'shing (PR ma'lumotlari uchun).",
       hint: `Settings → GitHub bo'limida "GitHub Token" va "GitHub Org" maydonlarini to'ldiring.`,
     },
-    {
+  ];
+
+  if (hasWebhookModule) {
+    steps.push({
       key: "webhook",
       title: "Webhook JIRA ga ulash",
       done: false,
       description: "JIRA webhook URL ni JIRA Admin panelga qo'shing.",
       hint: `JIRA Admin → System → WebHooks → Create a WebHook. URL: ${webhookUrl || "https://sizning-domen.com/webhook/jira"}. Events: Issue Updated (status change).`,
-    },
-  ];
+    });
+  }
+
+  return steps;
 }
 
 type SetupWizardProps = {
   settings: SharedSettingsView | null;
   webhookUrl?: string;
+  hasWebhookModule?: boolean;
 };
 
-export function SetupWizard({ settings, webhookUrl = "" }: SetupWizardProps) {
-  const steps = buildSteps(settings, webhookUrl);
+export function SetupWizard({ settings, webhookUrl = "", hasWebhookModule = false }: SetupWizardProps) {
+  const steps = buildSteps(settings, webhookUrl, hasWebhookModule);
   const completedCount = steps.filter((s) => s.done).length;
   const allDone = completedCount === steps.length;
   const [open, setOpen] = useState(!allDone);
@@ -64,15 +75,7 @@ export function SetupWizard({ settings, webhookUrl = "" }: SetupWizardProps) {
   if (allDone) return null;
 
   return (
-    <div
-      style={{
-        border: "1px solid var(--border)",
-        borderRadius: 12,
-        marginBottom: 24,
-        overflow: "hidden",
-        background: "var(--card)",
-      }}
-    >
+    <Card className="mb-6 overflow-hidden" padding="none">
       <button
         onClick={() => setOpen((v) => !v)}
         style={{
@@ -187,6 +190,6 @@ export function SetupWizard({ settings, webhookUrl = "" }: SetupWizardProps) {
           ))}
         </div>
       )}
-    </div>
+    </Card>
   );
 }

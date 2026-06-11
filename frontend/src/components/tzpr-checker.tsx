@@ -975,22 +975,6 @@ export function TZPRChecker({ cacheScope }: TZPRCheckerProps) {
           />
         </Field>
 
-        <BaseCard as="details" className="px-4 py-3 text-sm" padding="none" tone="soft">
-          <summary className="cursor-pointer select-none font-medium text-muted-foreground">
-            Ixtiyoriy sozlamalar
-          </summary>
-          <div className="mt-3 grid gap-2 text-sm text-muted-foreground">
-            <label className="flex items-center gap-2">
-              <input checked readOnly type="checkbox" />
-              To'liq diff va UI output profile
-            </label>
-            <label className="flex items-center gap-2">
-              <input checked readOnly type="checkbox" />
-              Multi-agent checker
-            </label>
-          </div>
-        </BaseCard>
-
         <Button disabled={submitting || runInProgress} fullWidth type="submit">
           {submitting || runInProgress ? (
             <>

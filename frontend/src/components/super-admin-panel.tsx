@@ -835,21 +835,22 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                                     value={normalizeDateInputValue(subscriptionDraft.next_payment_date)}
                                   />
                                 </div>
-                                <BaseInputField
-                                  className={SETTINGS_INPUT_CLASS}
-                                  label="To'lov izohi (ichki eslatma)"
-                                  onChange={(value) =>
-                                    setSubscriptionDrafts((current) => ({
-                                      ...current,
-                                      [company.id]: {
-                                        ...(current[company.id] || {}),
-                                        last_payment_note: value,
-                                      },
-                                    }))
-                                  }
-                                  style={{ marginTop: 8 }}
-                                  value={subscriptionDraft.last_payment_note || ""}
-                                />
+                                <div className="mt-2">
+                                  <BaseInputField
+                                    className={SETTINGS_INPUT_CLASS}
+                                    label="To'lov izohi (ichki eslatma)"
+                                    onChange={(value) =>
+                                      setSubscriptionDrafts((current) => ({
+                                        ...current,
+                                        [company.id]: {
+                                          ...(current[company.id] || {}),
+                                          last_payment_note: value,
+                                        },
+                                      }))
+                                    }
+                                    value={subscriptionDraft.last_payment_note || ""}
+                                  />
+                                </div>
                                 <Button
                                   className="mt-3 tenant-action-btn tenant-action-btn--save"
                                   disabled={busy}

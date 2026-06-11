@@ -274,9 +274,15 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
   const [jiraTokenMask, setJiraTokenMask] = useState("");
   const [githubTokenMask, setGithubTokenMask] = useState("");
   const [figmaTokenMask, setFigmaTokenMask] = useState("");
+  const [geminiKey1Mask, setGeminiKey1Mask] = useState("");
+  const [geminiKey2Mask, setGeminiKey2Mask] = useState("");
   const [jiraTokenDirty, setJiraTokenDirty] = useState(false);
   const [githubTokenDirty, setGithubTokenDirty] = useState(false);
   const [figmaTokenDirty, setFigmaTokenDirty] = useState(false);
+  const [geminiKey1Dirty, setGeminiKey1Dirty] = useState(false);
+  const [geminiKey2Dirty, setGeminiKey2Dirty] = useState(false);
+  const [showFigmaToken, setShowFigmaToken] = useState(false);
+  const [showGeminiKey2, setShowGeminiKey2] = useState(false);
 
   const checkerOrderError = !moduleForm.checker.ai_data_section_order.includes("tz")
     || !moduleForm.checker.ai_data_section_order.includes("code");
@@ -429,15 +435,21 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
           gemini_model: sharedPayload.fields.gemini_model || "",
           jira_token: sharedPayload.fields.jira_token_mask || "",
           github_token: sharedPayload.fields.github_token_mask || "",
-          gemini_api_key_1: "",
-          gemini_api_key_2: "",
+          gemini_api_key_1: sharedPayload.fields.gemini_api_key_1_mask || "",
+          gemini_api_key_2: sharedPayload.fields.gemini_api_key_2_mask || "",
         });
         setJiraTokenMask(sharedPayload.fields.jira_token_mask || "");
         setGithubTokenMask(sharedPayload.fields.github_token_mask || "");
         setFigmaTokenMask(sharedPayload.fields.figma_token_mask || "");
+        setGeminiKey1Mask(sharedPayload.fields.gemini_api_key_1_mask || "");
+        setGeminiKey2Mask(sharedPayload.fields.gemini_api_key_2_mask || "");
         setJiraTokenDirty(false);
         setGithubTokenDirty(false);
         setFigmaTokenDirty(false);
+        setGeminiKey1Dirty(false);
+        setGeminiKey2Dirty(false);
+        setShowFigmaToken(Boolean(sharedPayload.fields.figma_token_present));
+        setShowGeminiKey2(Boolean(sharedPayload.fields.gemini_api_key_2_present));
 
         if (canUseWebhook) {
           const webhookResponse = await fetch("/api/settings/webhook", { cache: "no-store" });
@@ -812,9 +824,13 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
 
     const payload: SharedSettingsSaveRequest = {
       gemini_model: form.gemini_model,
-      gemini_api_key_1: form.gemini_api_key_1,
-      gemini_api_key_2: form.gemini_api_key_2,
     };
+    if (geminiKey1Dirty && form.gemini_api_key_1.trim()) {
+      payload.gemini_api_key_1 = form.gemini_api_key_1.trim();
+    }
+    if (geminiKey2Dirty && form.gemini_api_key_2.trim()) {
+      payload.gemini_api_key_2 = form.gemini_api_key_2.trim();
+    }
 
     if (view?.mode === "company") {
       payload.jira_server = form.jira_server;
@@ -853,19 +869,31 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
       const nextFigmaMask = figmaTokenDirty && form.figma_token.trim()
         ? maskSecret(form.figma_token.trim())
         : figmaTokenMask;
+      const nextGemini1Mask = geminiKey1Dirty && form.gemini_api_key_1.trim()
+        ? maskSecret(form.gemini_api_key_1.trim())
+        : geminiKey1Mask;
+      const nextGemini2Mask = geminiKey2Dirty && form.gemini_api_key_2.trim()
+        ? maskSecret(form.gemini_api_key_2.trim())
+        : geminiKey2Mask;
       setJiraTokenMask(nextJiraMask);
       setGithubTokenMask(nextGithubMask);
       setFigmaTokenMask(nextFigmaMask);
+      setGeminiKey1Mask(nextGemini1Mask);
+      setGeminiKey2Mask(nextGemini2Mask);
       setJiraTokenDirty(false);
       setGithubTokenDirty(false);
       setFigmaTokenDirty(false);
+      setGeminiKey1Dirty(false);
+      setGeminiKey2Dirty(false);
+      if (nextFigmaMask) setShowFigmaToken(true);
+      if (nextGemini2Mask) setShowGeminiKey2(true);
       setForm((current) => ({
         ...current,
         figma_token: nextFigmaMask,
         jira_token: nextJiraMask,
         github_token: nextGithubMask,
-        gemini_api_key_1: "",
-        gemini_api_key_2: "",
+        gemini_api_key_1: nextGemini1Mask,
+        gemini_api_key_2: nextGemini2Mask,
       }));
     } catch (e) {
       setSharedError(e instanceof Error ? e.message : "Settings save xatosi.");
@@ -1065,7 +1093,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
       />
 
       {!loading && view && view.mode === "company" ? (
-        <SetupWizard settings={view} />
+        <SetupWizard hasWebhookModule={hasWebhookModule} settings={view} />
       ) : null}
 
       {loading ? <PageIntro eyebrow="Loading" title="Settings yuklanmoqda..." /> : null}
@@ -1205,30 +1233,44 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                 <SettingsInnerCard>
                   <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Figma</p>
                   <div className="mt-3 grid gap-4">
-                    <BaseInputField
-                      className={SETTINGS_INPUT_CLASS}
-                      hint={view.fields.figma_token_present ? "Bo'sh qoldirilsa mavjud token saqlanadi" : undefined}
-                      label="Figma Token"
-                      onBlur={() => {
-                        if (figmaTokenDirty && !form.figma_token.trim() && figmaTokenMask) {
-                          setForm((current) => ({ ...current, figma_token: figmaTokenMask }));
-                          setFigmaTokenDirty(false);
-                        }
-                      }}
-                      onChange={(value) => {
-                        setFigmaTokenDirty(true);
-                        updateField("figma_token", value);
-                      }}
-                      onFocus={() => {
-                        if (!figmaTokenDirty && form.figma_token === figmaTokenMask) {
-                          setForm((current) => ({ ...current, figma_token: "" }));
+                    {showFigmaToken ? (
+                      <BaseInputField
+                        className={SETTINGS_INPUT_CLASS}
+                        hint={view.fields.figma_token_present ? "Bo'sh qoldirilsa mavjud token saqlanadi" : undefined}
+                        label="Figma Token"
+                        onBlur={() => {
+                          if (figmaTokenDirty && !form.figma_token.trim() && figmaTokenMask) {
+                            setForm((current) => ({ ...current, figma_token: figmaTokenMask }));
+                            setFigmaTokenDirty(false);
+                          }
+                        }}
+                        onChange={(value) => {
                           setFigmaTokenDirty(true);
-                        }
-                      }}
-                      placeholder="figd_..."
-                      type="text"
-                      value={form.figma_token}
-                    />
+                          updateField("figma_token", value);
+                        }}
+                        onFocus={() => {
+                          if (!figmaTokenDirty && form.figma_token === figmaTokenMask) {
+                            setForm((current) => ({ ...current, figma_token: "" }));
+                            setFigmaTokenDirty(true);
+                          }
+                        }}
+                        placeholder="figd_..."
+                        type="text"
+                        value={form.figma_token}
+                      />
+                    ) : (
+                      <button
+                        className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:border-primary hover:text-primary"
+                        onClick={() => {
+                          setShowFigmaToken(true);
+                          setFigmaTokenDirty(true);
+                          setForm((current) => ({ ...current, figma_token: "" }));
+                        }}
+                        type="button"
+                      >
+                        + Figma token qo&apos;shish
+                      </button>
+                    )}
                   </div>
                 </SettingsInnerCard>
 
@@ -1246,20 +1288,64 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                       className={SETTINGS_INPUT_CLASS}
                       hint={view.fields.gemini_api_key_1_present ? "Bo'sh qoldirilsa mavjud kalit saqlanadi" : undefined}
                       label="Gemini API Key 1"
-                      onChange={(value) => updateField("gemini_api_key_1", value)}
-                      placeholder={view.fields.gemini_api_key_1_present ? "Saqlangan (yangilash uchun kiriting)" : "AIza..."}
-                      type="password"
+                      onBlur={() => {
+                        if (geminiKey1Dirty && !form.gemini_api_key_1.trim() && geminiKey1Mask) {
+                          setForm((current) => ({ ...current, gemini_api_key_1: geminiKey1Mask }));
+                          setGeminiKey1Dirty(false);
+                        }
+                      }}
+                      onChange={(value) => {
+                        setGeminiKey1Dirty(true);
+                        updateField("gemini_api_key_1", value);
+                      }}
+                      onFocus={() => {
+                        if (!geminiKey1Dirty && form.gemini_api_key_1 === geminiKey1Mask) {
+                          setForm((current) => ({ ...current, gemini_api_key_1: "" }));
+                          setGeminiKey1Dirty(true);
+                        }
+                      }}
+                      placeholder="AIza..."
+                      type="text"
                       value={form.gemini_api_key_1}
                     />
-                    <BaseInputField
-                      className={SETTINGS_INPUT_CLASS}
-                      hint={view.fields.gemini_api_key_2_present ? "Bo'sh qoldirilsa mavjud kalit saqlanadi" : undefined}
-                      label="Gemini API Key 2 (ixtiyoriy)"
-                      onChange={(value) => updateField("gemini_api_key_2", value)}
-                      placeholder={view.fields.gemini_api_key_2_present ? "Saqlangan (yangilash uchun kiriting)" : "AIza..."}
-                      type="password"
-                      value={form.gemini_api_key_2}
-                    />
+                    {showGeminiKey2 ? (
+                      <BaseInputField
+                        className={SETTINGS_INPUT_CLASS}
+                        hint={view.fields.gemini_api_key_2_present ? "Bo'sh qoldirilsa mavjud kalit saqlanadi" : undefined}
+                        label="Gemini API Key 2 (ixtiyoriy)"
+                        onBlur={() => {
+                          if (geminiKey2Dirty && !form.gemini_api_key_2.trim() && geminiKey2Mask) {
+                            setForm((current) => ({ ...current, gemini_api_key_2: geminiKey2Mask }));
+                            setGeminiKey2Dirty(false);
+                          }
+                        }}
+                        onChange={(value) => {
+                          setGeminiKey2Dirty(true);
+                          updateField("gemini_api_key_2", value);
+                        }}
+                        onFocus={() => {
+                          if (!geminiKey2Dirty && form.gemini_api_key_2 === geminiKey2Mask) {
+                            setForm((current) => ({ ...current, gemini_api_key_2: "" }));
+                            setGeminiKey2Dirty(true);
+                          }
+                        }}
+                        placeholder="AIza..."
+                        type="text"
+                        value={form.gemini_api_key_2}
+                      />
+                    ) : (
+                      <button
+                        className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:border-primary hover:text-primary"
+                        onClick={() => {
+                          setShowGeminiKey2(true);
+                          setGeminiKey2Dirty(true);
+                          setForm((current) => ({ ...current, gemini_api_key_2: "" }));
+                        }}
+                        type="button"
+                      >
+                        + Yana qo&apos;shimcha key kerakmi?
+                      </button>
+                    )}
                   </div>
                 </SettingsInnerCard>
               </div>

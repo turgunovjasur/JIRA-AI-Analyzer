@@ -619,6 +619,8 @@ export type SharedSettingsView = {
     gemini_model?: string;
     jira_token_mask?: string;
     github_token_mask?: string;
+    gemini_api_key_1_mask?: string;
+    gemini_api_key_2_mask?: string;
     figma_token_present: boolean;
     jira_token_present: boolean;
     github_token_present: boolean;

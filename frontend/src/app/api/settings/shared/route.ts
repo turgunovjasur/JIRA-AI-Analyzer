@@ -63,6 +63,8 @@ function buildView(params: {
       figma_token_mask: maskSecret(source.figma_token),
       jira_token_mask: maskSecret(source.jira_token),
       github_token_mask: maskSecret(source.github_token),
+      gemini_api_key_1_mask: maskSecret(source.gemini_api_key_1),
+      gemini_api_key_2_mask: maskSecret(source.gemini_api_key_2),
       figma_token_present: hasSecret(source.figma_token),
       jira_token_present: hasSecret(source.jira_token),
       github_token_present: hasSecret(source.github_token),
