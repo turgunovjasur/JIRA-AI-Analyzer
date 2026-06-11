@@ -173,15 +173,17 @@ export async function POST(request: Request) {
       if (typeof payload.jira_project_keys === "string") data.jira_project_keys = payload.jira_project_keys.trim();
       if (typeof payload.github_org === "string") data.github_org = payload.github_org.trim();
       if (typeof payload.gemini_model === "string") data.gemini_model = payload.gemini_model.trim();
-      if (payload.figma_token?.trim()) data.figma_token = payload.figma_token.trim();
-      if (payload.jira_token?.trim()) data.jira_token = payload.jira_token.trim();
-      if (payload.github_token?.trim()) data.github_token = payload.github_token.trim();
+      // Credential maydonlari faqat dirty/cleared bo'lganda yuboriladi.
+      // Bo'sh string = aniq o'chirish (clear); shuning uchun trim emas, present tekshiriladi.
+      if (typeof payload.figma_token === "string") data.figma_token = payload.figma_token.trim();
+      if (typeof payload.jira_token === "string") data.jira_token = payload.jira_token.trim();
+      if (typeof payload.github_token === "string") data.github_token = payload.github_token.trim();
     } else {
       if (typeof payload.gemini_model === "string") data.gemini_model = payload.gemini_model.trim();
     }
 
-    if (payload.gemini_api_key_1?.trim()) data.gemini_api_key_1 = payload.gemini_api_key_1.trim();
-    if (payload.gemini_api_key_2?.trim()) data.gemini_api_key_2 = payload.gemini_api_key_2.trim();
+    if (typeof payload.gemini_api_key_1 === "string") data.gemini_api_key_1 = payload.gemini_api_key_1.trim();
+    if (typeof payload.gemini_api_key_2 === "string") data.gemini_api_key_2 = payload.gemini_api_key_2.trim();
 
     if (role === "company_admin" && !Object.keys(data).length) {
       return NextResponse.json(

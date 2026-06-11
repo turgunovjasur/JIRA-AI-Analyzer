@@ -283,6 +283,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
   const [geminiKey2Dirty, setGeminiKey2Dirty] = useState(false);
   const [showFigmaToken, setShowFigmaToken] = useState(false);
   const [showGeminiKey2, setShowGeminiKey2] = useState(false);
+  const [clearedCreds, setClearedCreds] = useState<Record<string, boolean>>({});
 
   const checkerOrderError = !moduleForm.checker.ai_data_section_order.includes("tz")
     || !moduleForm.checker.ai_data_section_order.includes("code");
@@ -450,6 +451,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
         setGeminiKey2Dirty(false);
         setShowFigmaToken(Boolean(sharedPayload.fields.figma_token_present));
         setShowGeminiKey2(Boolean(sharedPayload.fields.gemini_api_key_2_present));
+        setClearedCreds({});
 
         if (canUseWebhook) {
           const webhookResponse = await fetch("/api/settings/webhook", { cache: "no-store" });
@@ -749,6 +751,27 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
     setForm((current) => ({ ...current, [field]: value }));
   }
 
+  function clearCredential(field: keyof SettingsFormState, setDirty: (next: boolean) => void) {
+    setDirty(true);
+    setClearedCreds((current) => ({ ...current, [field]: true }));
+    setForm((current) => ({ ...current, [field]: "" }));
+  }
+
+  function clearCredentialSlot(field: keyof SettingsFormState, setDirty: (next: boolean) => void, present: boolean) {
+    if (!present || clearedCreds[field]) return undefined;
+    return (
+      <button
+        className="eye-btn"
+        onClick={() => clearCredential(field, setDirty)}
+        tabIndex={-1}
+        title="Kalitni o'chirish"
+        type="button"
+      >
+        ✕
+      </button>
+    );
+  }
+
   function updateWebhookField<K extends keyof WebhookFormState>(field: K, value: WebhookFormState[K]) {
     setWhDirty(true);
     setWebhookForm((current) => ({ ...current, [field]: value }));
@@ -827,9 +850,13 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
     };
     if (geminiKey1Dirty && form.gemini_api_key_1.trim()) {
       payload.gemini_api_key_1 = form.gemini_api_key_1.trim();
+    } else if (clearedCreds.gemini_api_key_1) {
+      payload.gemini_api_key_1 = "";
     }
     if (geminiKey2Dirty && form.gemini_api_key_2.trim()) {
       payload.gemini_api_key_2 = form.gemini_api_key_2.trim();
+    } else if (clearedCreds.gemini_api_key_2) {
+      payload.gemini_api_key_2 = "";
     }
 
     if (view?.mode === "company") {
@@ -839,12 +866,18 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
       payload.github_org = form.github_org;
       if (figmaTokenDirty && form.figma_token.trim()) {
         payload.figma_token = form.figma_token.trim();
+      } else if (clearedCreds.figma_token) {
+        payload.figma_token = "";
       }
       if (jiraTokenDirty && form.jira_token.trim()) {
         payload.jira_token = form.jira_token.trim();
+      } else if (clearedCreds.jira_token) {
+        payload.jira_token = "";
       }
       if (githubTokenDirty && form.github_token.trim()) {
         payload.github_token = form.github_token.trim();
+      } else if (clearedCreds.github_token) {
+        payload.github_token = "";
       }
     }
 
@@ -860,21 +893,19 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
       }
 
       setSharedSuccess("✓ Muvaffaqiyatli saqlandi.");
-      const nextJiraMask = jiraTokenDirty && form.jira_token.trim()
-        ? maskSecret(form.jira_token.trim())
-        : jiraTokenMask;
-      const nextGithubMask = githubTokenDirty && form.github_token.trim()
-        ? maskSecret(form.github_token.trim())
-        : githubTokenMask;
-      const nextFigmaMask = figmaTokenDirty && form.figma_token.trim()
-        ? maskSecret(form.figma_token.trim())
-        : figmaTokenMask;
-      const nextGemini1Mask = geminiKey1Dirty && form.gemini_api_key_1.trim()
-        ? maskSecret(form.gemini_api_key_1.trim())
-        : geminiKey1Mask;
-      const nextGemini2Mask = geminiKey2Dirty && form.gemini_api_key_2.trim()
-        ? maskSecret(form.gemini_api_key_2.trim())
-        : geminiKey2Mask;
+      const maskAfterSave = (
+        field: keyof SettingsFormState,
+        dirty: boolean,
+        currentMask: string,
+      ) => {
+        if (clearedCreds[field]) return "";
+        return dirty && form[field].trim() ? maskSecret(form[field].trim()) : currentMask;
+      };
+      const nextJiraMask = maskAfterSave("jira_token", jiraTokenDirty, jiraTokenMask);
+      const nextGithubMask = maskAfterSave("github_token", githubTokenDirty, githubTokenMask);
+      const nextFigmaMask = maskAfterSave("figma_token", figmaTokenDirty, figmaTokenMask);
+      const nextGemini1Mask = maskAfterSave("gemini_api_key_1", geminiKey1Dirty, geminiKey1Mask);
+      const nextGemini2Mask = maskAfterSave("gemini_api_key_2", geminiKey2Dirty, geminiKey2Mask);
       setJiraTokenMask(nextJiraMask);
       setGithubTokenMask(nextGithubMask);
       setFigmaTokenMask(nextFigmaMask);
@@ -885,8 +916,9 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
       setFigmaTokenDirty(false);
       setGeminiKey1Dirty(false);
       setGeminiKey2Dirty(false);
-      if (nextFigmaMask) setShowFigmaToken(true);
-      if (nextGemini2Mask) setShowGeminiKey2(true);
+      setClearedCreds({});
+      setShowFigmaToken(Boolean(nextFigmaMask));
+      setShowGeminiKey2(Boolean(nextGemini2Mask));
       setForm((current) => ({
         ...current,
         figma_token: nextFigmaMask,
@@ -1083,7 +1115,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
       <PageIntro
         eyebrow="Configuration"
         title="Settings"
-        description={`${companyName} uchun webhook, integration va modul sozlamalari.`}
+        description={`${companyName} uchun ${hasWebhookModule ? "webhook, " : ""}integration va modul sozlamalari.`}
         badge={(
           <div className="flex items-center gap-2">
             <Badge tone="success">● Online</Badge>
@@ -1168,16 +1200,17 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                     />
                     <BaseInputField
                       className={SETTINGS_INPUT_CLASS}
-                      hint={view.fields.jira_token_present ? "Bo'sh qoldirilsa mavjud token saqlanadi" : undefined}
+                      hint={clearedCreds.jira_token ? "Saqlansa token o'chiriladi" : view.fields.jira_token_present ? "Bo'sh qoldirilsa mavjud token saqlanadi" : undefined}
                       label="JIRA Token"
                       onBlur={() => {
-                        if (jiraTokenDirty && !form.jira_token.trim() && jiraTokenMask) {
+                        if (jiraTokenDirty && !clearedCreds.jira_token && !form.jira_token.trim() && jiraTokenMask) {
                           setForm((current) => ({ ...current, jira_token: jiraTokenMask }));
                           setJiraTokenDirty(false);
                         }
                       }}
                       onChange={(value) => {
                         setJiraTokenDirty(true);
+                        setClearedCreds((current) => ({ ...current, jira_token: false }));
                         updateField("jira_token", value);
                       }}
                       onFocus={() => {
@@ -1187,6 +1220,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                         }
                       }}
                       placeholder="ATATT..."
+                      rightSlot={clearCredentialSlot("jira_token", setJiraTokenDirty, view.fields.jira_token_present)}
                       type="text"
                       value={form.jira_token}
                     />
@@ -1198,16 +1232,17 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                   <div className="mt-3 grid gap-4">
                     <BaseInputField
                       className={SETTINGS_INPUT_CLASS}
-                      hint={view.fields.github_token_present ? "Bo'sh qoldirilsa mavjud token saqlanadi" : undefined}
+                      hint={clearedCreds.github_token ? "Saqlansa token o'chiriladi" : view.fields.github_token_present ? "Bo'sh qoldirilsa mavjud token saqlanadi" : undefined}
                       label="GitHub Token"
                       onBlur={() => {
-                        if (githubTokenDirty && !form.github_token.trim() && githubTokenMask) {
+                        if (githubTokenDirty && !clearedCreds.github_token && !form.github_token.trim() && githubTokenMask) {
                           setForm((current) => ({ ...current, github_token: githubTokenMask }));
                           setGithubTokenDirty(false);
                         }
                       }}
                       onChange={(value) => {
                         setGithubTokenDirty(true);
+                        setClearedCreds((current) => ({ ...current, github_token: false }));
                         updateField("github_token", value);
                       }}
                       onFocus={() => {
@@ -1217,6 +1252,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                         }
                       }}
                       placeholder="ghp_xxx..."
+                      rightSlot={clearCredentialSlot("github_token", setGithubTokenDirty, view.fields.github_token_present)}
                       type="text"
                       value={form.github_token}
                     />
@@ -1236,16 +1272,17 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                     {showFigmaToken ? (
                       <BaseInputField
                         className={SETTINGS_INPUT_CLASS}
-                        hint={view.fields.figma_token_present ? "Bo'sh qoldirilsa mavjud token saqlanadi" : undefined}
+                        hint={clearedCreds.figma_token ? "Saqlansa token o'chiriladi" : view.fields.figma_token_present ? "Bo'sh qoldirilsa mavjud token saqlanadi" : undefined}
                         label="Figma Token"
                         onBlur={() => {
-                          if (figmaTokenDirty && !form.figma_token.trim() && figmaTokenMask) {
+                          if (figmaTokenDirty && !clearedCreds.figma_token && !form.figma_token.trim() && figmaTokenMask) {
                             setForm((current) => ({ ...current, figma_token: figmaTokenMask }));
                             setFigmaTokenDirty(false);
                           }
                         }}
                         onChange={(value) => {
                           setFigmaTokenDirty(true);
+                          setClearedCreds((current) => ({ ...current, figma_token: false }));
                           updateField("figma_token", value);
                         }}
                         onFocus={() => {
@@ -1255,6 +1292,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                           }
                         }}
                         placeholder="figd_..."
+                        rightSlot={clearCredentialSlot("figma_token", setFigmaTokenDirty, view.fields.figma_token_present)}
                         type="text"
                         value={form.figma_token}
                       />
@@ -1286,16 +1324,17 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                     />
                     <BaseInputField
                       className={SETTINGS_INPUT_CLASS}
-                      hint={view.fields.gemini_api_key_1_present ? "Bo'sh qoldirilsa mavjud kalit saqlanadi" : undefined}
+                      hint={clearedCreds.gemini_api_key_1 ? "Saqlansa kalit o'chiriladi" : view.fields.gemini_api_key_1_present ? "Bo'sh qoldirilsa mavjud kalit saqlanadi" : undefined}
                       label="Gemini API Key 1"
                       onBlur={() => {
-                        if (geminiKey1Dirty && !form.gemini_api_key_1.trim() && geminiKey1Mask) {
+                        if (geminiKey1Dirty && !clearedCreds.gemini_api_key_1 && !form.gemini_api_key_1.trim() && geminiKey1Mask) {
                           setForm((current) => ({ ...current, gemini_api_key_1: geminiKey1Mask }));
                           setGeminiKey1Dirty(false);
                         }
                       }}
                       onChange={(value) => {
                         setGeminiKey1Dirty(true);
+                        setClearedCreds((current) => ({ ...current, gemini_api_key_1: false }));
                         updateField("gemini_api_key_1", value);
                       }}
                       onFocus={() => {
@@ -1305,22 +1344,24 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                         }
                       }}
                       placeholder="AIza..."
+                      rightSlot={clearCredentialSlot("gemini_api_key_1", setGeminiKey1Dirty, view.fields.gemini_api_key_1_present)}
                       type="text"
                       value={form.gemini_api_key_1}
                     />
                     {showGeminiKey2 ? (
                       <BaseInputField
                         className={SETTINGS_INPUT_CLASS}
-                        hint={view.fields.gemini_api_key_2_present ? "Bo'sh qoldirilsa mavjud kalit saqlanadi" : undefined}
+                        hint={clearedCreds.gemini_api_key_2 ? "Saqlansa kalit o'chiriladi" : view.fields.gemini_api_key_2_present ? "Bo'sh qoldirilsa mavjud kalit saqlanadi" : undefined}
                         label="Gemini API Key 2 (ixtiyoriy)"
                         onBlur={() => {
-                          if (geminiKey2Dirty && !form.gemini_api_key_2.trim() && geminiKey2Mask) {
+                          if (geminiKey2Dirty && !clearedCreds.gemini_api_key_2 && !form.gemini_api_key_2.trim() && geminiKey2Mask) {
                             setForm((current) => ({ ...current, gemini_api_key_2: geminiKey2Mask }));
                             setGeminiKey2Dirty(false);
                           }
                         }}
                         onChange={(value) => {
                           setGeminiKey2Dirty(true);
+                          setClearedCreds((current) => ({ ...current, gemini_api_key_2: false }));
                           updateField("gemini_api_key_2", value);
                         }}
                         onFocus={() => {
@@ -1330,6 +1371,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                           }
                         }}
                         placeholder="AIza..."
+                        rightSlot={clearCredentialSlot("gemini_api_key_2", setGeminiKey2Dirty, view.fields.gemini_api_key_2_present)}
                         type="text"
                         value={form.gemini_api_key_2}
                       />
@@ -1346,13 +1388,12 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                         + Yana qo&apos;shimcha key kerakmi?
                       </button>
                     )}
+                    <Notice className="mt-1" tone="info">
+                      ℹ️ Bu bo&apos;limdagi Gemini key userlar uchun shared default bo&apos;ladi. User o&apos;zinikini kiritsa ustun turadi; hech biri bo&apos;lmasa super admin default ishlatiladi.
+                    </Notice>
                   </div>
                 </SettingsInnerCard>
               </div>
-
-              <Notice className="mt-4" tone="info">
-                ℹ️ Bu bo'limdagi Gemini key userlar uchun shared default bo'ladi. User o'zinikini kiritsa ustun turadi; hech biri bo'lmasa super admin default ishlatiladi.
-              </Notice>
             </SettingsBaseCard>
           ) : null}
 
@@ -2311,20 +2352,54 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                 <div />
                 <BaseInputField
                   className={SETTINGS_INPUT_CLASS}
-                  hint={view.fields.gemini_api_key_1_present ? "Bo'sh qoldirilsa mavjud kalit saqlanadi" : undefined}
+                  hint={clearedCreds.gemini_api_key_1 ? "Saqlansa kalit o'chiriladi" : view.fields.gemini_api_key_1_present ? "Bo'sh qoldirilsa mavjud kalit saqlanadi" : undefined}
                   label="API Key 1"
-                  onChange={(value) => updateField("gemini_api_key_1", value)}
-                  placeholder={view.fields.gemini_api_key_1_present ? "••••••••" : "AIza..."}
-                  type="password"
+                  onBlur={() => {
+                    if (geminiKey1Dirty && !clearedCreds.gemini_api_key_1 && !form.gemini_api_key_1.trim() && geminiKey1Mask) {
+                      setForm((current) => ({ ...current, gemini_api_key_1: geminiKey1Mask }));
+                      setGeminiKey1Dirty(false);
+                    }
+                  }}
+                  onChange={(value) => {
+                    setGeminiKey1Dirty(true);
+                    setClearedCreds((current) => ({ ...current, gemini_api_key_1: false }));
+                    updateField("gemini_api_key_1", value);
+                  }}
+                  onFocus={() => {
+                    if (!geminiKey1Dirty && form.gemini_api_key_1 === geminiKey1Mask) {
+                      setForm((current) => ({ ...current, gemini_api_key_1: "" }));
+                      setGeminiKey1Dirty(true);
+                    }
+                  }}
+                  placeholder="AIza..."
+                  rightSlot={clearCredentialSlot("gemini_api_key_1", setGeminiKey1Dirty, view.fields.gemini_api_key_1_present)}
+                  type="text"
                   value={form.gemini_api_key_1}
                 />
                 <BaseInputField
                   className={SETTINGS_INPUT_CLASS}
-                  hint={view.fields.gemini_api_key_2_present ? "Bo'sh qoldirilsa mavjud kalit saqlanadi" : undefined}
+                  hint={clearedCreds.gemini_api_key_2 ? "Saqlansa kalit o'chiriladi" : view.fields.gemini_api_key_2_present ? "Bo'sh qoldirilsa mavjud kalit saqlanadi" : undefined}
                   label="API Key 2 (ixtiyoriy)"
-                  onChange={(value) => updateField("gemini_api_key_2", value)}
-                  placeholder={view.fields.gemini_api_key_2_present ? "••••••••" : "AIza..."}
-                  type="password"
+                  onBlur={() => {
+                    if (geminiKey2Dirty && !clearedCreds.gemini_api_key_2 && !form.gemini_api_key_2.trim() && geminiKey2Mask) {
+                      setForm((current) => ({ ...current, gemini_api_key_2: geminiKey2Mask }));
+                      setGeminiKey2Dirty(false);
+                    }
+                  }}
+                  onChange={(value) => {
+                    setGeminiKey2Dirty(true);
+                    setClearedCreds((current) => ({ ...current, gemini_api_key_2: false }));
+                    updateField("gemini_api_key_2", value);
+                  }}
+                  onFocus={() => {
+                    if (!geminiKey2Dirty && form.gemini_api_key_2 === geminiKey2Mask) {
+                      setForm((current) => ({ ...current, gemini_api_key_2: "" }));
+                      setGeminiKey2Dirty(true);
+                    }
+                  }}
+                  placeholder="AIza..."
+                  rightSlot={clearCredentialSlot("gemini_api_key_2", setGeminiKey2Dirty, view.fields.gemini_api_key_2_present)}
+                  type="text"
                   value={form.gemini_api_key_2}
                 />
               </div>
