@@ -260,6 +260,44 @@ def _parse_figma_tokens(raw) -> list:
         return []
 
 
+def _merge_incoming_figma_tokens(company_id: int, incoming: list) -> str:
+    """
+    Frontend'dan kelgan figma_tokens ro'yxatini birlashtirib JSON string qaytaradi.
+
+    Har element ikki xil bo'ladi:
+      - {name, token}            — yangi yoki o'zgartirilgan token
+      - {name, keep: true, idx}  — mavjud tokenni saqlash (idx bo'yicha)
+
+    'keep' elementlar uchun haqiqiy token qiymati DB'dagi (decrypted) mavjud
+    ro'yxatdan olinadi — frontend mask'ni qaytarib yubormaydi (xavfsizlik).
+    """
+    existing = []
+    try:
+        current = get_company_settings(company_id) if company_id else {}
+        existing = _parse_figma_tokens(current.get('figma_tokens'))
+        if not existing and current.get('figma_token'):
+            existing = [{"name": "", "token": current.get('figma_token')}]
+    except Exception:
+        existing = []
+
+    result = []
+    for entry in incoming:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get('name') or '').strip()
+        if entry.get('keep'):
+            idx = entry.get('idx')
+            if isinstance(idx, int) and 0 <= idx < len(existing):
+                tok = str(existing[idx].get('token') or '').strip()
+                if tok:
+                    result.append({"name": name or str(existing[idx].get('name') or ''), "token": tok})
+        else:
+            tok = str(entry.get('token') or '').strip()
+            if tok:
+                result.append({"name": name, "token": tok})
+    return json.dumps(result, ensure_ascii=False)
+
+
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -982,6 +1020,14 @@ def save_company_settings(company_id: int, settings: Dict) -> bool:
     Kompaniya sozlamalarini saqlash (upsert).
     Ruxsat etilgan kalitlar: API keys, webhook_*, webhook_module_settings.
     """
+    settings = dict(settings)
+    # Ko'p figma token: frontend list yuboradi ({name,token} yoki {name,keep,idx}).
+    # Mavjud tokenlar bilan birlashtirib JSON string'ga aylantiramiz; legacy
+    # single figma_token endi figma_tokens ichida bo'lgani uchun tozalanadi.
+    if isinstance(settings.get('figma_tokens'), list):
+        settings['figma_tokens'] = _merge_incoming_figma_tokens(company_id, settings['figma_tokens'])
+        settings['figma_token'] = ""
+
     allowed_keys = {
         'jira_server', 'jira_email', 'jira_token', 'jira_project_keys',
         'github_token', 'github_org', 'figma_token', 'figma_tokens',

@@ -616,6 +616,7 @@ export type SharedSettingsView = {
     jira_project_keys?: string;
     github_org?: string;
     figma_token_mask?: string;
+    figma_tokens?: Array<{ name: string; mask: string }>;
     gemini_model?: string;
     jira_token_mask?: string;
     github_token_mask?: string;
@@ -636,6 +637,7 @@ export type SharedSettingsSaveRequest = {
   jira_project_keys?: string;
   github_org?: string;
   figma_token?: string;
+  figma_tokens?: Array<{ name: string; token?: string; keep?: boolean; idx?: number }>;
   gemini_model?: string;
   jira_token?: string;
   github_token?: string;

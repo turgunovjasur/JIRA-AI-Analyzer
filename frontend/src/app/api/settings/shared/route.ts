@@ -23,6 +23,30 @@ function maskSecret(value: unknown) {
   return `${stars}${tail}`;
 }
 
+function maskedFigmaTokens(raw: Record<string, unknown>): Array<{ name: string; mask: string }> {
+  let list: unknown = raw.figma_tokens;
+  if (typeof list === "string") {
+    try {
+      list = JSON.parse(list);
+    } catch {
+      list = [];
+    }
+  }
+  if (Array.isArray(list) && list.length > 0) {
+    return list
+      .map((entry) => {
+        const item = (entry || {}) as Record<string, unknown>;
+        return { name: textValue(item.name), mask: maskSecret(item.token) };
+      })
+      .filter((entry) => Boolean(entry.mask));
+  }
+  // Legacy: faqat bitta figma_token bo'lsa, uni birinchi element sifatida ko'rsatamiz.
+  if (hasSecret(raw.figma_token)) {
+    return [{ name: "", mask: maskSecret(raw.figma_token) }];
+  }
+  return [];
+}
+
 function buildIntegrationStatus(raw: Record<string, unknown>) {
   return {
     jira:
@@ -61,6 +85,7 @@ function buildView(params: {
       github_org: textValue(source.github_org),
       gemini_model: textValue(source.gemini_model),
       figma_token_mask: maskSecret(source.figma_token),
+      figma_tokens: maskedFigmaTokens(source),
       jira_token_mask: maskSecret(source.jira_token),
       github_token_mask: maskSecret(source.github_token),
       gemini_api_key_1_mask: maskSecret(source.gemini_api_key_1),
@@ -175,7 +200,8 @@ export async function POST(request: Request) {
       if (typeof payload.gemini_model === "string") data.gemini_model = payload.gemini_model.trim();
       // Credential maydonlari faqat dirty/cleared bo'lganda yuboriladi.
       // Bo'sh string = aniq o'chirish (clear); shuning uchun trim emas, present tekshiriladi.
-      if (typeof payload.figma_token === "string") data.figma_token = payload.figma_token.trim();
+      if (Array.isArray(payload.figma_tokens)) data.figma_tokens = payload.figma_tokens;
+      else if (typeof payload.figma_token === "string") data.figma_token = payload.figma_token.trim();
       if (typeof payload.jira_token === "string") data.jira_token = payload.jira_token.trim();
       if (typeof payload.github_token === "string") data.github_token = payload.github_token.trim();
     } else {

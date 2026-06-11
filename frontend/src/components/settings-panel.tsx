@@ -36,6 +36,15 @@ type SettingsPanelProps = {
 
 type SettingsTab = "integrations" | "webhook" | "modules";
 
+type FigmaTokenEntry = {
+  name: string;
+  token: string; // joriy input qiymati (o'zgarmagan token uchun mask)
+  mask: string; // saqlangan mask ("" — yangi token)
+  dirty: boolean; // qiymat o'zgartirildi
+  isNew: boolean; // shu sessiyada qo'shilgan (mavjud emas)
+  origIdx: number | null; // saqlangan figma_tokens dagi indeks (keep uchun)
+};
+
 type SettingsFormState = {
   jira_server: string;
   jira_email: string;
@@ -273,17 +282,16 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
   const [moduleAllowed, setModuleAllowed] = useState<ModuleSettingsAllowed>(DEFAULT_MODULE_ALLOWED);
   const [jiraTokenMask, setJiraTokenMask] = useState("");
   const [githubTokenMask, setGithubTokenMask] = useState("");
-  const [figmaTokenMask, setFigmaTokenMask] = useState("");
   const [geminiKey1Mask, setGeminiKey1Mask] = useState("");
   const [geminiKey2Mask, setGeminiKey2Mask] = useState("");
   const [jiraTokenDirty, setJiraTokenDirty] = useState(false);
   const [githubTokenDirty, setGithubTokenDirty] = useState(false);
-  const [figmaTokenDirty, setFigmaTokenDirty] = useState(false);
   const [geminiKey1Dirty, setGeminiKey1Dirty] = useState(false);
   const [geminiKey2Dirty, setGeminiKey2Dirty] = useState(false);
-  const [showFigmaToken, setShowFigmaToken] = useState(false);
   const [showGeminiKey2, setShowGeminiKey2] = useState(false);
   const [clearedCreds, setClearedCreds] = useState<Record<string, boolean>>({});
+  const [figmaTokens, setFigmaTokens] = useState<FigmaTokenEntry[]>([]);
+  const [figmaListDirty, setFigmaListDirty] = useState(false);
 
   const checkerOrderError = !moduleForm.checker.ai_data_section_order.includes("tz")
     || !moduleForm.checker.ai_data_section_order.includes("code");
@@ -432,7 +440,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
           jira_email: sharedPayload.fields.jira_email || "",
           jira_project_keys: sharedPayload.fields.jira_project_keys || "",
           github_org: sharedPayload.fields.github_org || "",
-          figma_token: sharedPayload.fields.figma_token_mask || "",
+          figma_token: "",
           gemini_model: sharedPayload.fields.gemini_model || "",
           jira_token: sharedPayload.fields.jira_token_mask || "",
           github_token: sharedPayload.fields.github_token_mask || "",
@@ -441,17 +449,25 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
         });
         setJiraTokenMask(sharedPayload.fields.jira_token_mask || "");
         setGithubTokenMask(sharedPayload.fields.github_token_mask || "");
-        setFigmaTokenMask(sharedPayload.fields.figma_token_mask || "");
         setGeminiKey1Mask(sharedPayload.fields.gemini_api_key_1_mask || "");
         setGeminiKey2Mask(sharedPayload.fields.gemini_api_key_2_mask || "");
         setJiraTokenDirty(false);
         setGithubTokenDirty(false);
-        setFigmaTokenDirty(false);
         setGeminiKey1Dirty(false);
         setGeminiKey2Dirty(false);
-        setShowFigmaToken(Boolean(sharedPayload.fields.figma_token_present));
         setShowGeminiKey2(Boolean(sharedPayload.fields.gemini_api_key_2_present));
         setClearedCreds({});
+        setFigmaTokens(
+          (sharedPayload.fields.figma_tokens || []).map((entry, index) => ({
+            name: entry.name || "",
+            token: entry.mask || "",
+            mask: entry.mask || "",
+            dirty: false,
+            isNew: false,
+            origIdx: index,
+          })),
+        );
+        setFigmaListDirty(false);
 
         if (canUseWebhook) {
           const webhookResponse = await fetch("/api/settings/webhook", { cache: "no-store" });
@@ -772,6 +788,24 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
     );
   }
 
+  function updateFigmaTokenEntry(index: number, patch: Partial<FigmaTokenEntry>) {
+    setFigmaListDirty(true);
+    setFigmaTokens((current) => current.map((entry, i) => (i === index ? { ...entry, ...patch } : entry)));
+  }
+
+  function addFigmaTokenEntry() {
+    setFigmaListDirty(true);
+    setFigmaTokens((current) => [
+      ...current,
+      { name: "", token: "", mask: "", dirty: true, isNew: true, origIdx: null },
+    ]);
+  }
+
+  function removeFigmaTokenEntry(index: number) {
+    setFigmaListDirty(true);
+    setFigmaTokens((current) => current.filter((_, i) => i !== index));
+  }
+
   function updateWebhookField<K extends keyof WebhookFormState>(field: K, value: WebhookFormState[K]) {
     setWhDirty(true);
     setWebhookForm((current) => ({ ...current, [field]: value }));
@@ -864,10 +898,14 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
       payload.jira_email = form.jira_email;
       payload.jira_project_keys = form.jira_project_keys;
       payload.github_org = form.github_org;
-      if (figmaTokenDirty && form.figma_token.trim()) {
-        payload.figma_token = form.figma_token.trim();
-      } else if (clearedCreds.figma_token) {
-        payload.figma_token = "";
+      if (figmaListDirty) {
+        payload.figma_tokens = figmaTokens
+          .map((entry, i) =>
+            entry.isNew || entry.dirty
+              ? { name: entry.name.trim(), token: entry.token.trim() }
+              : { name: entry.name.trim(), keep: true, idx: entry.origIdx ?? i },
+          )
+          .filter((entry) => "keep" in entry || Boolean(entry.token));
       }
       if (jiraTokenDirty && form.jira_token.trim()) {
         payload.jira_token = form.jira_token.trim();
@@ -903,25 +941,38 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
       };
       const nextJiraMask = maskAfterSave("jira_token", jiraTokenDirty, jiraTokenMask);
       const nextGithubMask = maskAfterSave("github_token", githubTokenDirty, githubTokenMask);
-      const nextFigmaMask = maskAfterSave("figma_token", figmaTokenDirty, figmaTokenMask);
       const nextGemini1Mask = maskAfterSave("gemini_api_key_1", geminiKey1Dirty, geminiKey1Mask);
       const nextGemini2Mask = maskAfterSave("gemini_api_key_2", geminiKey2Dirty, geminiKey2Mask);
       setJiraTokenMask(nextJiraMask);
       setGithubTokenMask(nextGithubMask);
-      setFigmaTokenMask(nextFigmaMask);
       setGeminiKey1Mask(nextGemini1Mask);
       setGeminiKey2Mask(nextGemini2Mask);
       setJiraTokenDirty(false);
       setGithubTokenDirty(false);
-      setFigmaTokenDirty(false);
       setGeminiKey1Dirty(false);
       setGeminiKey2Dirty(false);
       setClearedCreds({});
-      setShowFigmaToken(Boolean(nextFigmaMask));
       setShowGeminiKey2(Boolean(nextGemini2Mask));
+      // Figma ko'p token: yangi/o'zgargan tokenlarni mask'ga aylantirib, qayta indekslaymiz
+      if (figmaListDirty) {
+        const savedFigma = figmaTokens
+          .filter((entry) => (!entry.isNew && !entry.dirty) || entry.token.trim())
+          .map((entry, i) => {
+            const nextMask = entry.isNew || entry.dirty ? maskSecret(entry.token.trim()) : entry.mask;
+            return {
+              name: entry.name.trim(),
+              token: nextMask,
+              mask: nextMask,
+              dirty: false,
+              isNew: false,
+              origIdx: i,
+            };
+          });
+        setFigmaTokens(savedFigma);
+        setFigmaListDirty(false);
+      }
       setForm((current) => ({
         ...current,
-        figma_token: nextFigmaMask,
         jira_token: nextJiraMask,
         github_token: nextGithubMask,
         gemini_api_key_1: nextGemini1Mask,
@@ -1269,46 +1320,53 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                 <SettingsInnerCard>
                   <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Figma</p>
                   <div className="mt-3 grid gap-4">
-                    {showFigmaToken ? (
-                      <BaseInputField
-                        className={SETTINGS_INPUT_CLASS}
-                        hint={clearedCreds.figma_token ? "Saqlansa token o'chiriladi" : view.fields.figma_token_present ? "Bo'sh qoldirilsa mavjud token saqlanadi" : undefined}
-                        label="Figma Token"
-                        onBlur={() => {
-                          if (figmaTokenDirty && !clearedCreds.figma_token && !form.figma_token.trim() && figmaTokenMask) {
-                            setForm((current) => ({ ...current, figma_token: figmaTokenMask }));
-                            setFigmaTokenDirty(false);
-                          }
-                        }}
-                        onChange={(value) => {
-                          setFigmaTokenDirty(true);
-                          setClearedCreds((current) => ({ ...current, figma_token: false }));
-                          updateField("figma_token", value);
-                        }}
-                        onFocus={() => {
-                          if (!figmaTokenDirty && form.figma_token === figmaTokenMask) {
-                            setForm((current) => ({ ...current, figma_token: "" }));
-                            setFigmaTokenDirty(true);
-                          }
-                        }}
-                        placeholder="figd_..."
-                        rightSlot={clearCredentialSlot("figma_token", setFigmaTokenDirty, view.fields.figma_token_present)}
-                        type="text"
-                        value={form.figma_token}
-                      />
-                    ) : (
-                      <button
-                        className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:border-primary hover:text-primary"
-                        onClick={() => {
-                          setShowFigmaToken(true);
-                          setFigmaTokenDirty(true);
-                          setForm((current) => ({ ...current, figma_token: "" }));
-                        }}
-                        type="button"
-                      >
-                        + Figma token qo&apos;shish
-                      </button>
-                    )}
+                    {figmaTokens.map((entry, index) => (
+                      <div className="grid gap-3 rounded-lg border border-border p-3" key={`figma-token-${index}`}>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold text-muted-foreground">Figma token #{index + 1}</span>
+                          <button
+                            className="text-xs font-medium text-muted-foreground transition-colors hover:text-red-500"
+                            onClick={() => removeFigmaTokenEntry(index)}
+                            type="button"
+                          >
+                            ✕ O&apos;chirish
+                          </button>
+                        </div>
+                        <BaseInputField
+                          className={SETTINGS_INPUT_CLASS}
+                          label="Nom (ixtiyoriy)"
+                          onChange={(value) => updateFigmaTokenEntry(index, { name: value })}
+                          placeholder="Masalan: Asosiy loyiha"
+                          value={entry.name}
+                        />
+                        <BaseInputField
+                          className={SETTINGS_INPUT_CLASS}
+                          hint={!entry.isNew ? "Bo'sh qoldirilsa mavjud token saqlanadi" : undefined}
+                          label="Token"
+                          onBlur={() => {
+                            if (entry.dirty && !entry.isNew && !entry.token.trim() && entry.mask) {
+                              updateFigmaTokenEntry(index, { token: entry.mask, dirty: false });
+                            }
+                          }}
+                          onChange={(value) => updateFigmaTokenEntry(index, { token: value, dirty: true })}
+                          onFocus={() => {
+                            if (!entry.dirty && entry.mask && entry.token === entry.mask) {
+                              updateFigmaTokenEntry(index, { token: "", dirty: true });
+                            }
+                          }}
+                          placeholder="figd_..."
+                          type="text"
+                          value={entry.token}
+                        />
+                      </div>
+                    ))}
+                    <button
+                      className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:border-primary hover:text-primary"
+                      onClick={addFigmaTokenEntry}
+                      type="button"
+                    >
+                      + Figma token qo&apos;shish
+                    </button>
                   </div>
                 </SettingsInnerCard>
 
