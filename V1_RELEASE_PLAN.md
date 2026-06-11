@@ -63,28 +63,32 @@ Har kim ro'yxatdan o'tib, to'lab, o'zi ishlatadi.
 
 > Maqsad: kichik, lekin tez yutuq beradigan ishlar. ~Yarim kun.
 
-- [ ] **F0-1 · `frontend/.next/` ni git'dan chiqarish**
+- [x] **F0-1 · `frontend/.next/` ni git'dan chiqarish**
   - Fayl: `.gitignore`, `frontend/.gitignore`
   - Hozir build artifaktlar (`frontend/.next/**`) commit qilinmoqda — git'ni shishiradi va konfliktlar beradi.
   - DoD: `.gitignore`da `frontend/.next/` bor; `git rm -r --cached frontend/.next` qilingan; `git status` toza.
   - Vaqt: 15 min
+  - ✅ 2026-06-11 commit cd21b05 — node_modules, .next untrack; history rewrite bilan 785MB → 2.6MB
 
-- [ ] **F0-2 · Eskirgan testni tuzatish**
+- [x] **F0-2 · Eskirgan testni tuzatish**
   - Fayl: `tests/test_tzpr_multi_agent.py:199`
   - `normalize_single_verification` endi `sources: []` maydonini qaytaradi, test buni kutmaydi.
-  - DoD: test yangilanган; `pytest tests/test_tzpr_multi_agent.py` to'liq yashil.
+  - DoD: test yangilangan; `pytest tests/test_tzpr_multi_agent.py` to'liq yashil.
   - Vaqt: 15 min
+  - ✅ 2026-06-11 — `sources: []` assert ga qo'shildi; 16/16 yashil
 
-- [ ] **F0-3 · Test DB ishga tushirish yo'lini hujjatlash**
+- [x] **F0-3 · Test DB ishga tushirish yo'lini hujjatlash**
   - Fayl: `tests/conftest.py`, `README.md` yoki `CLAUDE.md`
   - 244 test `APP_TEST_POSTGRES_DSN` yo'qligida skip bo'ladi. conftest faqat `ALTER` qiladi, schema'ni yaratmaydi — avval `001_initial_schema.sql` qo'llash kerak.
   - DoD: bitta buyruq bilan (`make test` yoki skript) fresh test DB yaratilib, schema qo'llanib, to'liq suite ishga tushadi.
   - Vaqt: 1 soat
+  - ✅ 2026-06-11 — `scripts/setup_test_db.sh` + `Makefile` (`make test-setup`, `make test`, `make test-all`); CLAUDE.md ga hujjatlandi
 
-- [ ] **F0-4 · Eski/keraksiz fayllarni tozalash**
+- [x] **F0-4 · Eski/keraksiz fayllarni tozalash**
   - Root'dagi `QA-Assistant.zip`, `result.json` (408KB), `MULTI_AGENT_RESULTS.md` kabi fayllar git'ga kerakmi — tekshirish.
   - DoD: repo'da faqat kerakli fayllar; kattalar `.gitignore`da yoki o'chirilgan.
   - Vaqt: 30 min
+  - ✅ 2026-06-11 — QA-Assistant.zip, result.json, MULTI_AGENT_RESULTS.md o'chirildi; *.zip va result.json .gitignore ga qo'shildi
 
 ---
 

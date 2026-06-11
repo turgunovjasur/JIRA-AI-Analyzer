@@ -200,6 +200,7 @@ def test_agent2_single_verification_normalizes_to_expected_requirement_id():
         "id": "REQ-1",
         "status": "completed",
         "evidence": "Dalil bor.",
+        "sources": [],
     }
     assert warnings
 

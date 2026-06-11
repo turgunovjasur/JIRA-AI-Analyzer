@@ -283,6 +283,29 @@ Sahifa callbacklari `msg.lower()` orqali qaysi stepga tegishliligini aniqlaydi.
 
 ---
 
+## Test DB sozlash
+
+DB testlari `APP_TEST_POSTGRES_DSN` talab qiladi. Birinchi marta (yoki schema o'zganda):
+
+```bash
+# 1) Test DB yaratish va schema qo'llash
+make test-setup              # default: jira_ai_test DB
+
+# 2) Testlarni ishga tushirish
+export APP_TEST_POSTGRES_DSN=postgresql://localhost/jira_ai_test
+make test
+
+# Yoki bir buyruqda:
+make test-all
+```
+
+- `conftest.py` schema'ni yaratmaydi — faqat `ALTER` va fixture data qo'shadi.
+- Schema avval `database/postgresql/001_initial_schema.sql` orqali qo'llanishi shart.
+- `APP_TEST_POSTGRES_DSN` yo'qligida DB testlari `skip` bo'ladi (production DB'ga tegmaydi).
+- `pytest.ini`da `no_db` marker bor — DB kerak bo'lmagan pure unit testlar uchun.
+
+---
+
 ## Kod yozish qoidalari
 
 - **Ssenariy tahlil qil** — yangi feature qo'shishdan avval "bu haqiqatda ishga tushadimi?" deb tekshir
