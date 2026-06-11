@@ -804,16 +804,30 @@ async def get_metrics():
         df = get_overall_stats_df(conn, company_id=None)
         conn.close()
         if df is not None and not df.empty:
-            row = df.iloc[0].where(df.iloc[0].notna(), other=None).to_dict()
+            import math
+
+            row = df.iloc[0].to_dict()
+
+            def _num(key):
+                # NaN/None xavfsiz son: bo'sh jadvalda SUM/AVG NULL -> NaN qaytaradi
+                value = row.get(key)
+                if value is None:
+                    return 0.0
+                try:
+                    value = float(value)
+                except (TypeError, ValueError):
+                    return 0.0
+                return 0.0 if math.isnan(value) else value
+
             metrics["tasks"] = {
-                "total": int(row.get("total_tasks") or 0),
-                "completed": int(row.get("completed") or 0),
-                "progressing": int(row.get("progressing") or 0),
-                "returned": int(row.get("returned") or 0),
-                "error": int(row.get("error") or 0),
-                "blocked": int(row.get("blocked") or 0),
-                "skipped": int(row.get("skipped") or 0),
-                "avg_compliance": round(float(row.get("avg_compliance") or 0), 1),
+                "total": int(_num("total_tasks")),
+                "completed": int(_num("completed")),
+                "progressing": int(_num("progressing")),
+                "returned": int(_num("returned")),
+                "error": int(_num("error")),
+                "blocked": int(_num("blocked")),
+                "skipped": int(_num("skipped")),
+                "avg_compliance": round(_num("avg_compliance"), 1),
             }
     except Exception as e:
         metrics["tasks_error"] = str(e)
