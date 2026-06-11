@@ -56,8 +56,6 @@ cover/
 # Django stuff:
 *.log
 local_settings.py
-db.sqlite3
-db.sqlite3-journal
 
 # Flask stuff:
 instance/
@@ -181,3 +179,12 @@ tmp/
 
 models/
 data/
+
+# Next.js build artifacts
+frontend/.next/
+frontend/node_modules/
+frontend/out/
+
+# Debug / scratch artifacts
+result.json
+*.zip
