@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "re
 import {
   Activity,
   AlertTriangle,
+  ArrowRight,
   Check,
   ChevronLeft,
   Clock3,
@@ -350,6 +351,55 @@ function getAgentSubLabel(index: number) {
   return "Multi-agent bosqichi";
 }
 
+function shortModelName(model?: string | null) {
+  const value = (model || "").trim();
+  if (!value) return "";
+  if (/flash/i.test(value)) return "Flash";
+  if (/\bpro\b/i.test(value)) return "Pro";
+  return value.replace(/^gemini-?/i, "");
+}
+
+function getAgentMetrics(agent: TZPRAgentRunSnapshot) {
+  const artifact = (agent.artifact ?? null) as Record<string, unknown> | null;
+  const metrics = (artifact?.metrics ?? {}) as Record<string, unknown>;
+  const num = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+  return {
+    retry: num(metrics.retry_count),
+    technical: num(metrics.technical_failure_count),
+    fallback: num(metrics.fallback_model_call_count),
+    requirements: num(metrics.requirement_count),
+    missing: num(metrics.missing_verification_count),
+  };
+}
+
+function getAgentModelInfo(agent: TZPRAgentRunSnapshot) {
+  const primary = (agent.primary_model || "").trim();
+  const actual = (agent.actual_model || primary || "").trim();
+  const metrics = getAgentMetrics(agent);
+  const fallbackUsed =
+    Boolean(agent.used_fallback) ||
+    metrics.fallback > 0 ||
+    (Boolean(primary) && Boolean(actual) && primary !== actual);
+  const transitioned = Boolean(primary) && Boolean(actual) && primary !== actual;
+  return { primary, actual, fallbackUsed, transitioned };
+}
+
+function getAgentPhaseText(agent: TZPRAgentRunSnapshot, index: number, state: PipelineState) {
+  if (state === "running") {
+    if (index === 0) return "TZ talablarga ajratilmoqda…";
+    if (index === 1) return "Talablar PR kodida tekshirilmoqda…";
+    if (index === 2) return "Yakuniy qaror chiqarilmoqda…";
+    return "Bajarilmoqda…";
+  }
+  if (state === "failed") {
+    return agent.error_text || agent.output_summary || "Xatolik bilan to'xtadi.";
+  }
+  if (state === "pending") {
+    return "Navbatda — oldingi agent tugashini kutmoqda.";
+  }
+  return agent.output_summary || agent.input_summary || getAgentSubLabel(index);
+}
+
 function StatusDot({ state }: { state: PipelineState }) {
   return (
     <span
@@ -418,24 +468,72 @@ function AgentPipeline({
                   <p className="truncate text-sm font-semibold text-foreground">
                     Agent {index + 1} · {getAgentShortLabel(agent, index)}
                   </p>
-                  <p className="mt-1 truncate text-xs text-muted-foreground">
-                    {agent.output_summary || agent.input_summary || getAgentSubLabel(index)}
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                    {getAgentPhaseText(agent, index, state)}
                   </p>
                 </div>
               </div>
 
               <div className="mt-4 flex flex-wrap items-center gap-2">
                 <Badge tone={getAgentTone(agent.state)}>{agent.state || "pending"}</Badge>
-                <Badge tone="soft">{agent.actual_model || agent.primary_model || "model"}</Badge>
+                {(() => {
+                  const model = getAgentModelInfo(agent);
+                  if (model.fallbackUsed && model.transitioned) {
+                    return (
+                      <Badge tone="warning" className="inline-flex items-center gap-1">
+                        <RefreshCw size={11} />
+                        {shortModelName(model.primary)}
+                        <ArrowRight size={10} />
+                        {shortModelName(model.actual)}
+                      </Badge>
+                    );
+                  }
+                  return <Badge tone="soft">{shortModelName(model.actual) || "model"}</Badge>;
+                })()}
                 <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                   <Clock3 size={12} />
                   {formatAgentDuration(agent)}
                 </span>
+                {(() => {
+                  const metrics = getAgentMetrics(agent);
+                  return (
+                    <>
+                      {metrics.fallback > 0 ? (
+                        <Badge tone="warning">{metrics.fallback}× fallback</Badge>
+                      ) : null}
+                      {metrics.retry > 0 ? (
+                        <Badge tone="soft">{metrics.retry} qayta urinish</Badge>
+                      ) : null}
+                      {metrics.technical > 0 ? (
+                        <Badge tone="danger">{metrics.technical} texnik xato</Badge>
+                      ) : null}
+                    </>
+                  );
+                })()}
               </div>
 
               {agent.error_text ? (
                 <BaseCard as="div" className="mt-3 px-3 py-2 text-xs leading-5 text-[color:var(--error)]" padding="none" tone="danger">
                   {agent.error_text}
+                </BaseCard>
+              ) : null}
+
+              {(agent.warnings || []).length ? (
+                <BaseCard as="div" className="mt-2 px-3 py-2" padding="none" tone="warning">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-[color:var(--warning)]">
+                    <AlertTriangle size={12} />
+                    Nima bo'ldi?
+                  </div>
+                  <ul className="mt-1 space-y-1 text-xs leading-5 text-muted-foreground">
+                    {(agent.warnings || []).slice(0, 3).map((warning, warnIndex) => (
+                      <li key={warnIndex}>• {warning}</li>
+                    ))}
+                    {(agent.warnings || []).length > 3 ? (
+                      <li className="text-muted-foreground/70">
+                        +{(agent.warnings || []).length - 3} ta yana
+                      </li>
+                    ) : null}
+                  </ul>
                 </BaseCard>
               ) : null}
             </BaseCard>

@@ -688,6 +688,7 @@ class AgentRunnerMixin:
             "retry_count": retry_count,
             "schema_validation_failures": schema_validation_failures,
             "technical_failure_count": len(technical_failures),
+            "fallback_model_call_count": _count_attempt_flag(call_records, "fallback_model_used") + _count_attempt_flag(extra_attempts, "fallback_model_used"),
             "repair_success_count": _count_attempt_flag(call_records, "used_repair") + _count_attempt_flag(extra_attempts, "used_repair"),
             "cleanup_success_count": _count_attempt_flag(call_records, "used_cleanup") + _count_attempt_flag(extra_attempts, "used_cleanup"),
             "empty_response_count": _count_attempt_error(call_records, "empty_response") + _count_attempt_error(extra_attempts, "empty_response"),
@@ -1006,6 +1007,66 @@ class AgentRunnerMixin:
                     }
                 )
 
+        primary_model, fallback_model = self._model_names_for_agent("agent2_verifier")
+        if parsed is None and fallback_model and fallback_model != primary_model:
+            attempt_started = perf_counter()
+            raw = ""
+            usage_metrics = {}
+            model_used = fallback_model
+            try:
+                raw, model_used, usage_metrics = self._call_agent2_single_raw_isolated(
+                    prompt,
+                    api_keys,
+                    cached_content=fallback_cached_content,
+                    fallback_cached_content="",
+                    shared_state=shared_state,
+                    force_model=fallback_model,
+                )
+                parse_result = _parse_gemini_json(raw)
+                if not parse_result.ok:
+                    raise ValueError(parse_result.error or "Agent2 JSON parse failed")
+                validation = agent2_contract.validate_agent2_json(
+                    parse_result.data,
+                    expected_id=req_id,
+                )
+                if not validation.get("ok"):
+                    raise ValueError(str(validation.get("error") or "Agent2 JSON validation failed"))
+                parsed = validation["verification"]
+                attempt_records.append(
+                    {
+                        "attempt": len(attempt_records) + 1,
+                        "state": "completed",
+                        "fallback_model_used": True,
+                        "latency_ms": int((perf_counter() - attempt_started) * 1000),
+                        "model": model_used,
+                        "raw_length": len(raw or ""),
+                        "used_cleanup": parse_result.used_cleanup,
+                        "used_repair": parse_result.used_repair,
+                        "repair_type": parse_result.repair_type,
+                        "warnings": [*parse_result.warnings, *list(validation.get("warnings") or [])],
+                        **usage_metrics,
+                    }
+                )
+                log.info(
+                    f"[{self.task_key}] Agent2 single verification fallback model ishladi "
+                    f"({req_id}): {primary_model} → {fallback_model}"
+                )
+            except Exception as exc:
+                last_error = str(exc).strip() or exc.__class__.__name__
+                attempt_records.append(
+                    {
+                        "attempt": len(attempt_records) + 1,
+                        "state": "parse_failed",
+                        "fallback_model_used": True,
+                        "latency_ms": int((perf_counter() - attempt_started) * 1000),
+                        "model": model_used,
+                        "error": _summarize(last_error, 320),
+                        "raw_length": len(raw or ""),
+                        "raw_excerpt": _summarize(raw if raw else "", 600),
+                        **_token_metrics(usage_metrics),
+                    }
+                )
+
         model_used = str((attempt_records[-1] if attempt_records else {}).get("model") or PRO_MODEL_NAME)
         retry_count = max(0, len(attempt_records) - 1)
         schema_validation_failures = sum(
@@ -1055,6 +1116,10 @@ class AgentRunnerMixin:
                 "retry_count": retry_count,
             }
 
+        fallback_recovered = any(
+            bool(item.get("fallback_model_used")) and str(item.get("state") or "") == "completed"
+            for item in attempt_records
+        )
         try:
             verification, item_warnings = agent2_contract.normalize_single_verification(
                 parsed,
@@ -1062,10 +1127,15 @@ class AgentRunnerMixin:
             )
             if item_warnings:
                 schema_validation_failures += 1
+            recovery_warnings = (
+                [f"Agent2 {req_id} ni asosiy model tekshira olmadi — fallback model ({model_used}) bilan tiklandi."]
+                if fallback_recovered
+                else []
+            )
             return {
                 "verification": verification,
                 "technical_failures": [],
-                "warnings": item_warnings,
+                "warnings": [*recovery_warnings, *item_warnings],
                 "call_record": {
                     "id": req_id,
                     "state": "completed",
@@ -1251,8 +1321,12 @@ class AgentRunnerMixin:
         cached_content: str = "",
         fallback_cached_content: str = "",
         shared_state: dict[str, Any] | None = None,
+        force_model: str = "",
     ) -> tuple[str, str, dict[str, int]]:
         primary_model, fallback_model = self._model_names_for_agent("agent2_verifier")
+        if force_model:
+            primary_model = force_model
+            fallback_model = ""
         helper = GeminiHelper(
             api_keys=api_keys,
             model_name=primary_model,
