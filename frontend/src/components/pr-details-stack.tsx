@@ -1,5 +1,10 @@
+"use client";
+
+import { useState } from "react";
+
 import { Badge } from "@/components/ui/badge";
 import { BaseCard } from "@/components/ui/card";
+import { cn } from "@/lib/cn";
 
 import type {
   TZPRFileChange,
@@ -231,35 +236,10 @@ function renderSelectionList(items: TZPRPullRequestSelectionItem[], emptyText: s
   );
 }
 
-function renderPrSelectionSummary(prSelection?: TZPRPullRequestSelection | null) {
-  if (!prSelection) {
-    return null;
-  }
+type PrTab = "found" | "merged" | "skipped" | "analyzed";
 
-  const merged = prSelection.merged || [];
-  const skipped = prSelection.skipped || [];
-
-  return (
-    <BaseCard as="div" className="grid gap-4 px-4 py-4" padding="none" tone="soft">
-      <div className="flex flex-wrap gap-2">
-        <Badge tone="soft">{prSelection.found_count || 0} topildi</Badge>
-        <Badge tone="success">{prSelection.merged_count || 0} merged</Badge>
-        <Badge tone={prSelection.skipped_count ? "warning" : "soft"}>{prSelection.skipped_count || 0} skipped</Badge>
-        <Badge tone="soft">{prSelection.analyzed_count || 0} tahlil qilindi</Badge>
-      </div>
-
-      <div className="grid gap-3 lg:grid-cols-2">
-        <div>
-          <div className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Merged PR'lar</div>
-          {renderSelectionList(merged, "Merged PR qaytmadi.", "success")}
-        </div>
-        <div>
-          <div className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Skipped PR'lar</div>
-          {renderSelectionList(skipped, "Skipped PR yo'q.", "warning")}
-        </div>
-      </div>
-    </BaseCard>
-  );
+function renderEmpty(text: string) {
+  return <p className="text-sm leading-6 text-muted-foreground">{text}</p>;
 }
 
 type PRDetailsStackProps = {
@@ -268,14 +248,88 @@ type PRDetailsStackProps = {
 };
 
 export function PRDetailsStack({ prDetails, prSelection }: PRDetailsStackProps) {
+  const [tab, setTab] = useState<PrTab>("found");
+
   if (!prDetails.length && !prSelection) {
-    return <p className="text-sm leading-6 text-muted-foreground">PR tafsilotlari mavjud emas.</p>;
+    return renderEmpty("PR tafsilotlari mavjud emas.");
   }
+
+  const merged = prSelection?.merged || [];
+  const skipped = prSelection?.skipped || [];
+  const mergedDetails = prDetails.filter((pr) => pr.merged);
+
+  const foundCount = prSelection?.found_count ?? prDetails.length;
+  const mergedCount = prSelection?.merged_count ?? mergedDetails.length;
+  const skippedCount = prSelection?.skipped_count ?? skipped.length;
+  const analyzedCount = prSelection?.analyzed_count ?? prDetails.length;
+
+  const tabs: [PrTab, string, number][] = [
+    ["found", "Topildi", foundCount],
+    ["merged", "Merged", mergedCount],
+    ["skipped", "Skipped", skippedCount],
+    ["analyzed", "Tahlil qilindi", analyzedCount],
+  ];
+
+  const renderContent = () => {
+    if (tab === "skipped") {
+      return renderSelectionList(skipped, "Skip qilingan PR yo'q.", "warning");
+    }
+
+    if (tab === "merged") {
+      if (mergedDetails.length) {
+        return mergedDetails.map((pr, index) => renderPullRequestCard(pr, index));
+      }
+      if (merged.length) {
+        return renderSelectionList(merged, "Merged PR qaytmadi.", "success");
+      }
+      return renderEmpty("Merged PR yo'q.");
+    }
+
+    if (tab === "found") {
+      if (!prDetails.length && !skipped.length) {
+        return renderEmpty("PR topilmadi.");
+      }
+      return (
+        <>
+          {prDetails.map((pr, index) => renderPullRequestCard(pr, index))}
+          {skipped.length ? (
+            <div>
+              <div className="mb-2 mt-1 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Skip qilingan PR'lar
+              </div>
+              {renderSelectionList(skipped, "Skip qilingan PR yo'q.", "warning")}
+            </div>
+          ) : null}
+        </>
+      );
+    }
+
+    // analyzed
+    if (!prDetails.length) {
+      return renderEmpty("Tahlil qilingan PR yo'q.");
+    }
+    return prDetails.map((pr, index) => renderPullRequestCard(pr, index));
+  };
 
   return (
     <div className="grid gap-3">
-      {renderPrSelectionSummary(prSelection)}
-      {prDetails.map((pr, index) => renderPullRequestCard(pr, index))}
+      <div className="inline-flex flex-wrap rounded-[12px] border border-border bg-[color:var(--bg-layer)] p-1">
+        {tabs.map(([value, label, count]) => (
+          <button
+            className={cn(
+              "rounded-[9px] px-3 py-1.5 text-xs font-semibold text-muted-foreground transition-colors",
+              tab === value && "bg-card text-foreground shadow-sm",
+            )}
+            key={value}
+            onClick={() => setTab(value)}
+            type="button"
+          >
+            {label} ({count})
+          </button>
+        ))}
+      </div>
+
+      <div className="grid gap-3">{renderContent()}</div>
     </div>
   );
 }

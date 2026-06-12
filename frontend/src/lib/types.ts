@@ -136,6 +136,7 @@ export type TZPRPullRequestDetail = {
   url?: string | null;
   state?: string | null;
   source?: string | null;
+  merged?: boolean | null;
   additions?: number | null;
   deletions?: number | null;
   files?: TZPRFileChange[];
