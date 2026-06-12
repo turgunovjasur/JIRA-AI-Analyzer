@@ -52,14 +52,12 @@ def build_final_analysis_text(
     figma_data: dict[str, Any] | None,
     extra_issues: list[str],
 ) -> str:
-    by_status = {"completed": [], "failed": [], "manual_review": []}
+    by_status = {"completed": [], "failed": [], "skipped": [], "manual_review": []}
     for item in decisions:
         status = str(item.get("status") or "failed").strip().lower()
         if bool(item.get("technical_failure")):
             status = "manual_review"
-        if status == "skipped":
-            status = "manual_review"
-        if status not in {"completed", "failed", "manual_review"}:
+        if status not in {"completed", "failed", "skipped", "manual_review"}:
             status = "failed"
         by_status.setdefault(status, []).append(item)
     issue_items = build_issue_section_items(by_status.get("manual_review", []), extra_issues)
@@ -75,6 +73,9 @@ def build_final_analysis_text(
         "",
         f"## {FINAL_ANALYSIS_SECTION_TITLES['failed']}",
         *decision_lines(by_status.get("failed", [])),
+        "",
+        f"## {FINAL_ANALYSIS_SECTION_TITLES['skipped']}",
+        *decision_lines(by_status.get("skipped", [])),
         "",
         f"## {FINAL_ANALYSIS_SECTION_TITLES['issues']}",
         *issue_items,

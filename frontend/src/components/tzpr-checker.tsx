@@ -53,7 +53,7 @@ type TZPRCheckerProps = {
 };
 
 type PipelineState = "pending" | "running" | "completed" | "failed";
-type RequirementFilter = "all" | "completed" | "failed" | "extra";
+type RequirementFilter = "all" | "completed" | "failed" | "skipped" | "extra";
 
 const DEFAULT_EXECUTION_MODE: TZPRExecutionMode = "multi_agent";
 const RUN_POLL_INTERVAL_MS = 2000;
@@ -189,6 +189,7 @@ function getRequirementCounts(result?: TZPRAnalysisResult | null) {
   return {
     completed: matrix.filter((row) => (row.status || "").toLowerCase() === "completed").length,
     failed: matrix.filter((row) => (row.status || "").toLowerCase() === "failed").length,
+    skipped: matrix.filter((row) => (row.status || "").toLowerCase() === "skipped").length,
     extra: extra.length,
     total: matrix.length,
   };
@@ -513,6 +514,7 @@ function RequirementMatrix({
             ["all", `Talablar (${counts.total})`],
             ["completed", `Bajarilgan (${counts.completed})`],
             ["failed", `Bajarilmagan (${counts.failed})`],
+            ...(counts.skipped ? [["skipped", `Skip (${counts.skipped})`]] : []),
             ["extra", `Extra item (${counts.extra})`],
           ].map(([value, label]) => (
             <button
@@ -568,7 +570,10 @@ function RequirementMatrix({
           )
         ) : rows.map((row, index) => {
           const status = (row.status || "").toLowerCase();
-          const tone = status === "completed" ? "success" : "danger";
+          const isCompleted = status === "completed";
+          const isSkipped = status === "skipped";
+          const tone = isCompleted ? "success" : isSkipped ? "warning" : "danger";
+          const dotState = isCompleted ? "completed" : isSkipped ? "running" : "failed";
           const files = getRequirementFiles(row);
           const figmaSources = getRequirementFigmaSources(row);
           const requirementOrigin = getRequirementOrigin(row, result);
@@ -577,12 +582,12 @@ function RequirementMatrix({
           return (
             <details className="group" key={row.id || index}>
               <summary className="grid cursor-pointer list-none grid-cols-[18px_minmax(0,1fr)_auto] items-center gap-3 px-5 py-4 transition-colors hover:bg-[color:var(--bg-layer)]">
-                <StatusDot state={status === "completed" ? "completed" : "failed"} />
+                <StatusDot state={dotState} />
                 <span className="min-w-0 text-sm leading-6 text-foreground">
                   {row.requirement || "Talab matni qaytmadi."}
                 </span>
                 <div className="flex items-center gap-2">
-                  <Badge tone={tone}>{row.status_label || (status === "completed" ? "Bajarilgan" : "Topilmadi")}</Badge>
+                  <Badge tone={tone}>{row.status_label || (isCompleted ? "Bajarilgan" : isSkipped ? "Skip qilingan" : "Topilmadi")}</Badge>
                   <ChevronLeft className="rotate-180 text-muted-foreground transition-transform group-open:rotate-90" size={14} />
                 </div>
               </summary>

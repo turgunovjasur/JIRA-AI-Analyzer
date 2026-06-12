@@ -174,15 +174,12 @@ class ResultBuilderMixin:
         figma_data: dict[str, Any] | None,
         extra_issues: list[str],
     ) -> list[TZPRAnalysisSection]:
-        by_status = {"completed": [], "failed": [], "manual_review": []}
+        by_status = {"completed": [], "failed": [], "skipped": [], "manual_review": []}
         for item in decisions:
             status = str(item.get("status") or "failed").strip().lower()
             if bool(item.get("technical_failure")):
                 status = "manual_review"
-            # Skip qilingan (dev izohi) requirementlar manual review bo'limida ko'rsatiladi.
-            if status == "skipped":
-                status = "manual_review"
-            if status not in {"completed", "failed", "manual_review"}:
+            if status not in {"completed", "failed", "skipped", "manual_review"}:
                 status = "failed"
             by_status.setdefault(status, []).append(item)
 
@@ -193,6 +190,7 @@ class ResultBuilderMixin:
         section_items = {
             "completed": [_decision_matrix_item_text(item) for item in by_status.get("completed", [])],
             "failed": [_decision_matrix_item_text(item) for item in by_status.get("failed", [])],
+            "skipped": [_decision_matrix_item_text(item) for item in by_status.get("skipped", [])],
             "issues": issue_items,
             "figma": figma_items,
         }

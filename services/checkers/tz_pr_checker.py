@@ -2217,6 +2217,7 @@ class TZPRService(BaseService):
             "completed": ("completed", "Bajarilgan"),
             "partial": ("partial", "Qisman bajarilgan"),
             "failed": ("failed", "Bajarilmagan"),
+            "skipped": ("skipped", "Skip qilingan (dev izohi)"),
         }
         pr_file_index = self._build_pr_file_index(pr_details)
         figma_summaries = list((figma_data or {}).get("summaries") or [])

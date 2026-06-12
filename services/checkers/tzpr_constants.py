@@ -76,6 +76,7 @@ AGENT_SEQUENCE = build_agent_sequence()
 FINAL_ANALYSIS_SECTION_TITLES = {
     "completed": "✅ BAJARILGAN TALABLAR",
     "failed": "❌ BAJARILMAGAN TALABLAR",
+    "skipped": "⏭️ SKIP QILINGAN (dev izohi — manual tekshiring)",
     "issues": "🐛 POTENSIAL MUAMMOLAR",
     "figma": "🎨 FIGMA DIZAYN MOSLIGI",
 }
