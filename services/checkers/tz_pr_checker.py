@@ -2310,6 +2310,7 @@ class TZPRService(BaseService):
                     "completed": "Gemini bu talabni bajarilgan deb baholagan.",
                     "partial": "Gemini bu talabni qisman bajarilgan deb baholagan.",
                     "failed": "Gemini bu talabni bajarilmagan deb baholagan.",
+                    "skipped": "Dev izohi asosida skip qilingan — manual tekshiruv kerak.",
                 }[section.key]
                 figma_relation = parsed["figma_relation"] or (
                     "Figma bo'yicha ishonchli xulosa yo'q."
