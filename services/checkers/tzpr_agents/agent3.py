@@ -204,7 +204,15 @@ def build_quality_artifact(
     technical_failures: list[dict[str, Any]] | None = None,
     parsed: dict[str, Any] | None = None,
     agent2_success: bool = True,
+    dev_comments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    # Skip uchun asos bo'lgan dev izohi(lari) — har skip qatorida ko'rsatiladi
+    dev_comment_quote = " | ".join(
+        f'{str(c.get("author") or "Dev").strip()}: "{str(c.get("body") or "").strip()}"'
+        for c in (dev_comments or [])
+        if isinstance(c, dict) and str(c.get("body") or "").strip()
+    )
+
     skip_map: dict[str, str] = {}
     if isinstance(parsed, dict):
         for skip_item in (parsed.get("skipped") or []):
@@ -295,7 +303,11 @@ def build_quality_artifact(
                     reason = skip_map.get(row["id"], "")
                     row["status"] = "skipped"
                     row["skip_reason"] = reason
-                    row["evidence"] = f"⏭️ Skip (dev izohi): {reason}" if reason else "⏭️ Skip (dev izohi)"
+                    evidence = f"⏭️ Skip sababi: {reason}" if reason else "⏭️ Skip qilingan"
+                    if dev_comment_quote:
+                        evidence = f"{evidence}  ·  💬 Dev izohi (skip asosi): {dev_comment_quote}"
+                    row["evidence"] = evidence
+                    row["dev_comments"] = list(dev_comments or [])
 
     extra_risk = highest_extra_risk(compact_extra)
 

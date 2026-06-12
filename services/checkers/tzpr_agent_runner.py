@@ -1346,6 +1346,7 @@ class AgentRunnerMixin:
                 technical_failures=agent2.get("technical_failures") or [],
                 parsed=parsed,
                 agent2_success=bool(agent2.get("success")),
+                dev_comments=context.get("agent3_dev_comments") or [],
             )
             final_requirements = quality["requirements"]
             run_state = quality["run_state"]
