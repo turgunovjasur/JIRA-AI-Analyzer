@@ -83,6 +83,62 @@ def build_agent1_sanitized_input(
     }
 
 
+def select_agent3_dev_comments(
+    *,
+    comment_separated: dict[str, Any],
+    task_details: dict[str, Any],
+    read_comments_enabled: bool,
+    dev_comment_source: str,
+    max_comments_to_read: int,
+) -> list[dict[str, Any]]:
+    """
+    Agent3 (arbiter) uchun dev commentlarni tanlaydi.
+
+    - dev_before (oldindan) + dev_after (qaytargandan keyingi e'tiroz) birlashtiriladi.
+    - AI commentlar chiqariladi.
+    - dev_comment_source == "assignee_reporter" bo'lsa faqat task assignee va reporter
+      commentlari olinadi; "all" bo'lsa barcha dev commentlar.
+    """
+    if not read_comments_enabled:
+        return []
+
+    combined: list[dict[str, Any]] = [
+        comment
+        for comment in [
+            *(comment_separated.get("dev_before") or []),
+            *(comment_separated.get("dev_after") or []),
+        ]
+        if isinstance(comment, dict)
+        and str(comment.get("body") or "").strip()
+        and not CommentSeparator.is_ai_comment(comment)
+    ]
+
+    if str(dev_comment_source or "").strip().lower() != "all":
+        allowed = {
+            str(task_details.get(key) or "").strip().casefold()
+            for key in ("assignee", "reporter")
+        }
+        allowed.discard("")
+        allowed.discard("unassigned")
+        allowed.discard("unknown")
+        combined = [
+            comment
+            for comment in combined
+            if str(comment.get("author") or "").strip().casefold() in allowed
+        ]
+
+    if max_comments_to_read and max_comments_to_read > 0:
+        combined = combined[-max_comments_to_read:]
+
+    return [
+        {
+            "author": str(comment.get("author") or "Unknown").strip() or "Unknown",
+            "body": str(comment.get("body") or "").strip(),
+        }
+        for comment in combined
+    ]
+
+
 def build_figma_access_status(
     *,
     task_details: dict[str, Any],

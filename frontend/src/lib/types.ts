@@ -661,6 +661,7 @@ export type CheckerModuleSettings = {
   read_comments_enabled: boolean;
   max_comments_to_read: number;
   trusted_scope_comment_authors?: string;
+  dev_comment_source?: string;
 };
 
 export type TestcaseModuleSettings = {

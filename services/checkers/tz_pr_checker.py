@@ -301,6 +301,7 @@ class TZPRService(BaseService):
             "visible_sections": self._get_visible_sections_from_settings(),
             "read_comments_enabled": bool(getattr(settings, "read_comments_enabled", True)),
             "max_comments_to_read": int(getattr(settings, "max_comments_to_read", 0) or 0),
+            "dev_comment_source": str(getattr(settings, "dev_comment_source", "assignee_reporter") or "assignee_reporter"),
             "default_use_smart_patch": default_use_smart_patch,
             "agent2_parallelism": agent2_parallelism,
             "agent2_batch_size": agent2_batch_size,

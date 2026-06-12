@@ -804,6 +804,7 @@ async def read_module_config(
                 "read_comments_enabled": bool(checker.read_comments_enabled),
                 "max_comments_to_read": int(checker.max_comments_to_read),
                 "trusted_scope_comment_authors": str(checker.trusted_scope_comment_authors or ""),
+                "dev_comment_source": str(getattr(checker, "dev_comment_source", "assignee_reporter") or "assignee_reporter"),
                 "agent1_primary_model": str(getattr(checker, "agent1_primary_model", "") or ""),
                 "agent1_fallback_model": str(getattr(checker, "agent1_fallback_model", "") or ""),
                 "agent2_primary_model": str(getattr(checker, "agent2_primary_model", "") or ""),
@@ -871,6 +872,11 @@ async def save_module_config(
         "trusted_scope_comment_authors": str(
             checker_raw.get("trusted_scope_comment_authors") or ""
         ).strip(),
+        "dev_comment_source": (
+            "all"
+            if str(checker_raw.get("dev_comment_source") or "").strip().lower() == "all"
+            else "assignee_reporter"
+        ),
         "agent2_batch_size": _parse_positive_int(
             checker_raw.get("agent2_batch_size", 6),
             "checker.agent2_batch_size",

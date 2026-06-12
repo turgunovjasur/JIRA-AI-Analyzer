@@ -15,6 +15,17 @@ RESPONSE_SCHEMA = {
             "items": {"type": "string"},
         },
         "recommendation": {"type": "string"},
+        "skipped": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "reason": {"type": "string"},
+                },
+                "required": ["id", "reason"],
+            },
+        },
     },
     "required": ["summary", "recommendation"],
 }
@@ -26,21 +37,23 @@ def build_prompt(
     verifications: list[dict[str, Any]],
     extra: list[dict[str, Any]],
     technical_failures: list[dict[str, Any]] | None = None,
+    dev_comments: list[dict[str, Any]] | None = None,
 ) -> str:
     payload = {
         "requirements": compact_requirements(requirements),
         "verifications": normalize_verifications(verifications),
         "extra": normalize_extra(extra),
         "technical_failures": compact_technical_failures(technical_failures or []),
+        "dev_comments": _compact_dev_comments(dev_comments or []),
     }
     return f"""Siz Agent3 — professional checker arbiter va human-readable final summarizer.
 
 Missiya:
-Agent1 requirement inventory va Agent2 verification natijalarini inson o'qiydigan yakuniy xulosaga aylantiring. Siz yangi requirement yaratmaysiz, Agent2 statuslarini qayta ixtiro qilmaysiz, score hisoblamaysiz va final matrix qaytarmaysiz. Matrix deterministic kod orqali quriladi; siz faqat aniq summary, risklar va recommendation yozasiz.
+Agent1 requirement inventory va Agent2 verification natijalarini inson o'qiydigan yakuniy xulosaga aylantiring. Siz yangi requirement yaratmaysiz, Agent2 statuslarini qayta ixtiro qilmaysiz, score hisoblamaysiz va final matrix qaytarmaysiz. Matrix deterministic kod orqali quriladi; siz faqat aniq summary, risklar, recommendation va (kerak bo'lsa) skip qarorini yozasiz.
 
 Asosiy kontrakt:
 - Faqat valid JSON qaytaring; JSONdan tashqari izoh yozmang.
-- Output faqat `summary`, `risks`, `recommendation` maydonlarini o'z ichiga olsin.
+- Output `summary`, `risks`, `recommendation` va ixtiyoriy `skipped` maydonlaridan iborat bo'lsin.
 - Verdict, score, completed/failed ro'yxatlari yoki matrix qaytarmang.
 - Requirement ID'larini inputdagi `REQ-*` shaklida ishlating; `completed-1`, `failed-1` kabi yangi ID yasamang.
 - Summary qisqa, aniq va QA/manager o'qishi uchun tushunarli bo'lsin.
@@ -52,8 +65,16 @@ Arbitraj qoidasi:
 - `extra` itemlar bor bo'lsa, requirement failed natijasini takrorlamasdan, faqat qo'shimcha code scope/risk sifatida eslating. Failed requirement bilan aynan bir xil gapni duplicate risk qilib yozmang.
 - Agar ambiguous yoki manual tekshiruv talab qiladigan dalillar bo'lsa, recommendationda manual review kerakligini aniq yozing.
 
+SKIP qoidasi (dev commentlar asosida) — juda muhim:
+- `dev_comments` — task assignee/reporter yozgan izohlar. Ular faqat TUSHUNTIRADI; ular kodni KO'RSATMAYDI va o'zicha "bajarildi" isboti EMAS.
+- Faqat Agent2 `failed` degan requirement uchun skip ko'rib chiqing. completed yoki technical requirementga tegmang.
+- Agar biror `failed` requirement uchun dev comment ISHONCHLI va ANIQ texnik sabab bersa (masalan: "bu logika boshqa repozitoriyada", "bu qism alohida task/PR da", "bu PR scope'idan tashqarida"), uni `skipped` ro'yxatiga qo'shing — `{{"id": "REQ-X", "reason": "<dev izohiga asoslangan qisqa sabab>"}}`.
+- Shubhali, umumiy yoki "ishonib qo'yaqoling" tipidagi izohga skip BERMANG. Dalil aniq bo'lmasa requirement `failed` bo'lib qolsin.
+- skip = "bajarildi" degani EMAS; skip = "bu yerda tekshirib bo'lmaydi, QA manual tekshirsin" degani. Buni summaryda aniq yozing.
+
 Recommendation qoidasi:
-- Failed requirementlar bo'lsa: return/fix kerakligini yozing.
+- Skip qilinmagan failed requirementlar bo'lsa: return/fix kerakligini yozing.
+- Skip qilingan requirementlar bo'lsa: ular manual tekshiruv talab qilishini yozing.
 - Faqat medium/high extra risk bo'lsa: manual review kerakligini yozing.
 - Faqat technical failure bo'lsa: checker rerun yoki manual review kerakligini yozing.
 - Critical issue topilmasa: ready/approve qilish mumkinligini yozing.
@@ -63,10 +84,28 @@ INPUT:
 
 OUTPUT FORMAT:
 {{
-  "summary": "REQ-1 bajarilgan. REQ-2 bo'yicha evidence topilmadi. Extra code risk medium, manual review kerak.",
-  "risks": ["REQ-2 bo'yicha evidence topilmadi."],
-  "recommendation": "Manual review kerak."
+  "summary": "REQ-1 bajarilgan. REQ-3 kodi shu repoda yo'q, dev mobil repoda deydi — skip, manual tekshirilsin.",
+  "risks": ["REQ-3 mobil repoda — manual tekshiruv kerak."],
+  "recommendation": "Skip qilingan requirementlarni QA manual tekshirsin.",
+  "skipped": [{{"id": "REQ-3", "reason": "Dev: mobil logika smartup5x_mobile repoda, bu PR scope'idan tashqarida."}}]
 }}""".strip()
+
+
+def _compact_dev_comments(dev_comments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    compact: list[dict[str, Any]] = []
+    for item in dev_comments or []:
+        if not isinstance(item, dict):
+            continue
+        body = str(item.get("body") or "").strip()
+        if not body:
+            continue
+        compact.append(
+            {
+                "author": str(item.get("author") or "Unknown").strip() or "Unknown",
+                "body": body,
+            }
+        )
+    return compact
 
 
 def validate_agent3_json(parsed: Any) -> dict[str, Any]:
@@ -114,12 +153,24 @@ def validate_agent3_json(parsed: Any) -> dict[str, Any]:
     if len(summary) < 20:
         warnings.append("weak_summary")
 
+    skipped: list[dict[str, str]] = []
+    skipped_value = parsed.get("skipped")
+    if isinstance(skipped_value, list):
+        for item in skipped_value:
+            if not isinstance(item, dict):
+                continue
+            skip_id = str(item.get("id") or "").strip()
+            skip_reason = str(item.get("reason") or "").strip()
+            if skip_id and skip_reason:
+                skipped.append({"id": skip_id, "reason": skip_reason})
+
     return {
         "ok": True,
         "data": {
             "summary": summary,
             "risks": risks,
             "recommendation": recommendation,
+            "skipped": skipped,
         },
         "error": None,
         "warnings": warnings,
@@ -154,7 +205,16 @@ def build_quality_artifact(
     parsed: dict[str, Any] | None = None,
     agent2_success: bool = True,
 ) -> dict[str, Any]:
-    del parsed
+    skip_map: dict[str, str] = {}
+    if isinstance(parsed, dict):
+        for skip_item in (parsed.get("skipped") or []):
+            if not isinstance(skip_item, dict):
+                continue
+            skip_id = str(skip_item.get("id") or "").strip()
+            skip_reason = str(skip_item.get("reason") or "").strip()
+            if skip_id and skip_reason:
+                skip_map[skip_id] = skip_reason
+
     compact_reqs = compact_requirements(requirements)
     compact_verifications = normalize_verifications(verifications)
     compact_extra = normalize_extra(extra or [])
@@ -221,6 +281,22 @@ def build_quality_artifact(
         )
 
     invalid = list(dict.fromkeys(item for item in invalid if item))
+
+    # Skip: Agent3 dev commentlar asosida ba'zi FAILED requirementlarni skip qiladi.
+    # Skip qilinganlar failed'dan chiqariladi va balъ maxrajiga kirmaydi (checker hisoblaydi).
+    skipped: list[str] = []
+    if skip_map:
+        skip_ids = {req_id for req_id in failed if req_id in skip_map}
+        if skip_ids:
+            failed = [req_id for req_id in failed if req_id not in skip_ids]
+            skipped = [req_id for req_id in req_ids if req_id in skip_ids]
+            for row in requirement_rows:
+                if row["id"] in skip_ids and row["status"] == "failed":
+                    reason = skip_map.get(row["id"], "")
+                    row["status"] = "skipped"
+                    row["skip_reason"] = reason
+                    row["evidence"] = f"⏭️ Skip (dev izohi): {reason}" if reason else "⏭️ Skip (dev izohi)"
+
     extra_risk = highest_extra_risk(compact_extra)
 
     if not agent2_success or missing or invalid:
@@ -235,12 +311,17 @@ def build_quality_artifact(
         verdict_reason = "Bajarilmagan requirementlar topildi."
         run_state = "completed"
         quality_status = "ok"
-    elif technical:
+    elif technical or skipped:
         verdict = "manual_review"
         verdict_label = "Manual Review"
-        verdict_reason = "Ba'zi requirementlar texnik sabab bilan tekshirilmadi."
+        if skipped and technical:
+            verdict_reason = "Ba'zi requirementlar dev izohi asosida skip qilindi yoki texnik sabab bilan tekshirilmadi — manual tekshiruv kerak."
+        elif skipped:
+            verdict_reason = "Ba'zi requirementlar dev izohi asosida skip qilindi — manual tekshiruv kerak."
+        else:
+            verdict_reason = "Ba'zi requirementlar texnik sabab bilan tekshirilmadi."
         run_state = "manual_review"
-        quality_status = "technical_verification_unavailable"
+        quality_status = "technical_verification_unavailable" if technical else "ok"
     elif extra_risk in {"medium", "high"}:
         verdict = "manual_review"
         verdict_label = "Manual Review"
@@ -264,9 +345,12 @@ def build_quality_artifact(
         "completed_count": len(completed),
         "failed_count": len(failed),
         "technical_count": len(technical),
+        "skipped_count": len(skipped),
         "completed": completed,
         "failed": failed,
         "technical": technical,
+        "skipped": skipped,
+        "skip_reasons": {req_id: skip_map.get(req_id, "") for req_id in skipped},
         "missing": missing,
         "invalid": invalid,
         "extra": compact_extra,
@@ -301,6 +385,7 @@ def build_deterministic_summary(quality: dict[str, Any]) -> str:
     completed = list(quality.get("completed") or [])
     failed = list(quality.get("failed") or [])
     technical = list(quality.get("technical") or [])
+    skipped = list(quality.get("skipped") or [])
     missing = list(quality.get("missing") or [])
     invalid = list(quality.get("invalid") or [])
     extra = list(quality.get("extra") or [])
@@ -309,6 +394,8 @@ def build_deterministic_summary(quality: dict[str, Any]) -> str:
         parts.append(f"{len(completed)} ta requirement bajarilgan: {', '.join(completed[:5])}.")
     if failed:
         parts.append(f"{len(failed)} ta requirement bajarilmagan: {', '.join(failed[:5])}.")
+    if skipped:
+        parts.append(f"{len(skipped)} ta requirement dev izohi asosida skip qilindi (manual tekshiruv kerak): {', '.join(skipped[:5])}.")
     if technical:
         parts.append(f"{len(technical)} ta requirement texnik sabab bilan tekshirilmadi: {', '.join(technical[:5])}.")
     if missing:
@@ -370,5 +457,6 @@ def status_label(status: str) -> str:
     return {
         "completed": "Bajarilgan",
         "failed": "Bajarilmagan",
+        "skipped": "Skip qilingan (dev izohi)",
         "manual_review": "Manual review",
     }.get(status, "Manual review")

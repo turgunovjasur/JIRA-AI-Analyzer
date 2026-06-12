@@ -121,7 +121,9 @@ class TZPRCheckerSettings:
     """TZ-PR Checker modul sozlamalari"""
     agent2_parallelism: int = 5
     agent2_batch_size: int = 6
-    trusted_scope_comment_authors: str = ""
+    trusted_scope_comment_authors: str = ""  # deprecated — dev_comment_source bilan almashtirildi
+    # Qaysi dev commentlar Agent3 (arbiter) ga beriladi: "assignee_reporter" yoki "all"
+    dev_comment_source: str = "assignee_reporter"
     agent1_coverage_threshold: float = 1.0
     agent1_primary_model: str = ""
     agent1_fallback_model: str = ""

@@ -118,6 +118,7 @@ type ModuleFormState = {
     read_comments_enabled: boolean;
     max_comments_to_read: string;
     trusted_scope_comment_authors: string;
+    dev_comment_source: string;
     agent2_batch_size: string;
     agent2_extra_scan_enabled: boolean;
     agent1_primary_model: string;
@@ -218,6 +219,7 @@ const EMPTY_MODULE_FORM: ModuleFormState = {
     read_comments_enabled: true,
     max_comments_to_read: "0",
     trusted_scope_comment_authors: "",
+    dev_comment_source: "assignee_reporter",
     agent2_batch_size: "6",
     agent2_extra_scan_enabled: true,
     agent1_primary_model: "",
@@ -674,6 +676,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                     read_comments_enabled?: boolean;
                     max_comments_to_read?: number;
                     trusted_scope_comment_authors?: string;
+                    dev_comment_source?: string;
                     agent2_batch_size?: number;
                     agent2_extra_scan_enabled?: boolean;
                     agent1_primary_model?: string;
@@ -710,6 +713,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                 read_comments_enabled: Boolean(checker.read_comments_enabled),
                 max_comments_to_read: String(checker.max_comments_to_read ?? 0),
                 trusted_scope_comment_authors: String(checker.trusted_scope_comment_authors || ""),
+                dev_comment_source: String(checker.dev_comment_source || "assignee_reporter"),
                 agent2_batch_size: String(checker.agent2_batch_size ?? 6),
                 agent2_extra_scan_enabled: Boolean(checker.agent2_extra_scan_enabled ?? true),
                 agent1_primary_model: String(checker.agent1_primary_model || ""),
@@ -1118,6 +1122,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
           read_comments_enabled: moduleForm.checker.read_comments_enabled,
           max_comments_to_read: Number(moduleForm.checker.max_comments_to_read || 0),
           trusted_scope_comment_authors: moduleForm.checker.trusted_scope_comment_authors,
+          dev_comment_source: moduleForm.checker.dev_comment_source,
           agent2_batch_size: Number(moduleForm.checker.agent2_batch_size || 6),
           agent2_extra_scan_enabled: moduleForm.checker.agent2_extra_scan_enabled,
           agent1_primary_model: moduleForm.checker.agent1_primary_model,
@@ -2161,14 +2166,16 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                                 />
                               </SettingsCardItem>
                               <SettingsCardItem>
-                                <BaseInputField
-                                  className={SETTINGS_INPUT_CLASS}
-                                  hint="Vergul bilan ajrating. Faqat shu authorlar comment orqali scope o'zgartira oladi."
-                                  label="Trusted scope comment authorlar"
-                                  onChange={(value) => updateCheckerField("trusted_scope_comment_authors", value)}
-                                  placeholder="QA Lead, Product Owner"
-                                  value={moduleForm.checker.trusted_scope_comment_authors}
-                                />
+                                <BaseSelectField
+                                  className="settings-form-select"
+                                  hint="Dev izohlar Agent3 (arbiter) ga beriladi: u bajarilmagan talablarni dev tushuntirgan bo'lsa skip qiladi (manual tekshiruvga). Faqat ishonchli manba tanlang."
+                                  label="Dev comment manbai (Agent3 uchun)"
+                                  onChange={(value) => updateCheckerField("dev_comment_source", value)}
+                                  value={moduleForm.checker.dev_comment_source}
+                                >
+                                  <option value="assignee_reporter">Faqat assignee + reporter izohlari</option>
+                                  <option value="all">Barcha dev izohlari</option>
+                                </BaseSelectField>
                               </SettingsCardItem>
                             </>
                           ) : null}

@@ -1311,6 +1311,7 @@ class AgentRunnerMixin:
             verifications=agent2.get("verifications") or [],
             extra=agent2.get("extra") or [],
             technical_failures=agent2.get("technical_failures") or [],
+            dev_comments=context.get("agent3_dev_comments") or [],
         )
 
         fallback = agent3_contract.fallback_arbiter(
@@ -1383,9 +1384,12 @@ class AgentRunnerMixin:
                 "completed_count": quality.get("completed_count", 0),
                 "failed_count": quality.get("failed_count", 0),
                 "technical_count": quality.get("technical_count", 0),
+                "skipped_count": quality.get("skipped_count", 0),
                 "completed": quality.get("completed", []),
                 "failed": quality.get("failed", []),
                 "technical": quality.get("technical", []),
+                "skipped": quality.get("skipped", []),
+                "skip_reasons": quality.get("skip_reasons", {}),
                 "missing": quality.get("missing", []),
                 "invalid": quality.get("invalid", []),
                 "extra": quality.get("extra", []),
@@ -1405,9 +1409,12 @@ class AgentRunnerMixin:
             "completed_count": quality.get("completed_count", 0),
             "failed_count": quality.get("failed_count", 0),
             "technical_count": quality.get("technical_count", 0),
+            "skipped_count": quality.get("skipped_count", 0),
             "completed": quality.get("completed", []),
             "failed": quality.get("failed", []),
             "technical": quality.get("technical", []),
+            "skipped": quality.get("skipped", []),
+            "skip_reasons": quality.get("skip_reasons", {}),
             "missing": quality.get("missing", []),
             "invalid": quality.get("invalid", []),
             "extra": quality.get("extra", []),

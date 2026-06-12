@@ -15,7 +15,7 @@ from services.checkers.tzpr_multi_agent_service import TZPRMultiAgentService
 from services.checkers.tzpr_preflight import (
     agent1_rules_from_effective_settings as _agent1_rules_from_effective_settings,
     build_agent1_sanitized_input as _build_agent1_sanitized_input,
-    parse_author_list as _parse_author_list,
+    select_agent3_dev_comments as _select_agent3_dev_comments,
 )
 from services.checkers.tzpr_agent_runner import AgentRunnerMixin
 from services.checkers.tzpr_result_builder import ResultBuilderMixin
@@ -226,16 +226,22 @@ class _TZPRMultiAgentExecutor(AgentRunnerMixin, ResultBuilderMixin, RunStateMixi
         comment_separated = CommentSeparator.separate(task_details.get("comments", []))
         figma_data = self.service._get_figma_data(task_details, status_updater)
         agent1_rules = _agent1_rules_from_effective_settings(effective_settings)
-        trusted_authors = _parse_author_list(
-            getattr(self.service._get_settings(), "trusted_scope_comment_authors", "")
-        )
+        # Agent1 (scope) endi commentlardan foydalanmaydi — dev commentlar faqat Agent3 ga beriladi.
         agent1_input = _build_agent1_sanitized_input(
             task_details=task_details,
-            trusted_authors=trusted_authors,
+            trusted_authors=[],
             figma_data=figma_data,
-            read_comments_enabled=bool(effective_settings.get("read_comments_enabled", True)),
-            max_comments_to_read=int(effective_settings.get("max_comments_to_read") or 0),
+            read_comments_enabled=False,
+            max_comments_to_read=0,
             rules=agent1_rules,
+        )
+        # Agent3 (arbiter) uchun dev commentlar: dev_before + dev_after, manba sozlamasi bo'yicha filtr.
+        agent3_dev_comments = _select_agent3_dev_comments(
+            comment_separated=comment_separated,
+            task_details=task_details,
+            read_comments_enabled=bool(effective_settings.get("read_comments_enabled", True)),
+            dev_comment_source=str(effective_settings.get("dev_comment_source") or "assignee_reporter"),
+            max_comments_to_read=int(effective_settings.get("max_comments_to_read") or 0),
         )
         if emit_events:
             self._event(
@@ -260,6 +266,7 @@ class _TZPRMultiAgentExecutor(AgentRunnerMixin, ResultBuilderMixin, RunStateMixi
             "tz_content": tz_content,
             "comment_analysis": comment_analysis,
             "comment_separated": comment_separated,
+            "agent3_dev_comments": agent3_dev_comments,
             "figma_data": figma_data,
             "agent1_input": agent1_input,
             "is_recheck": is_recheck,

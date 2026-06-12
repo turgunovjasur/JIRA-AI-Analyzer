@@ -152,9 +152,12 @@ class ResultBuilderMixin:
                 "completed_count": agent3.get("completed_count") or 0,
                 "failed_count": agent3.get("failed_count") or 0,
                 "technical_count": agent3.get("technical_count") or 0,
+                "skipped_count": agent3.get("skipped_count") or 0,
                 "completed": agent3.get("completed") or [],
                 "failed": agent3.get("failed") or [],
                 "technical": agent3.get("technical") or [],
+                "skipped": agent3.get("skipped") or [],
+                "skip_reasons": agent3.get("skip_reasons") or {},
                 "missing": agent3.get("missing") or [],
                 "invalid": agent3.get("invalid") or [],
                 "extra": agent3.get("extra") or [],
@@ -175,6 +178,9 @@ class ResultBuilderMixin:
         for item in decisions:
             status = str(item.get("status") or "failed").strip().lower()
             if bool(item.get("technical_failure")):
+                status = "manual_review"
+            # Skip qilingan (dev izohi) requirementlar manual review bo'limida ko'rsatiladi.
+            if status == "skipped":
                 status = "manual_review"
             if status not in {"completed", "failed", "manual_review"}:
                 status = "failed"

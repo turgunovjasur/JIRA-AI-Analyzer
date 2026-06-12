@@ -10,10 +10,12 @@ def calculate_compliance_score_from_agent3(agent3: dict[str, Any]) -> int:
         total = int(agent3.get("total_requirements") or 0)
         completed = int(agent3.get("completed_count") or 0)
         technical = int(agent3.get("technical_count") or 0)
+        skipped = int(agent3.get("skipped_count") or 0)
     except (TypeError, ValueError):
         total = 0
         completed = 0
         technical = 0
+        skipped = 0
     if total <= 0:
         decisions = list(agent3.get("requirements") or [])
         if not decisions:
@@ -25,12 +27,18 @@ def calculate_compliance_score_from_agent3(agent3: dict[str, Any]) -> int:
             if str(item.get("status") or "").strip().lower() == "manual_review"
             or bool(item.get("technical_failure"))
         )
+        skipped = sum(
+            1
+            for item in decisions
+            if str(item.get("status") or "").strip().lower() == "skipped"
+        )
         completed = sum(
             1
             for item in decisions
             if str(item.get("status") or "").strip().lower() == "completed"
         )
-    verifiable_total = max(total - technical, 0)
+    # Skip qilingan (dev izohi) va technical requirementlar balъ maxrajiga kirmaydi.
+    verifiable_total = max(total - technical - skipped, 0)
     if verifiable_total <= 0:
         return 0
     return max(0, min(100, round((completed / verifiable_total) * 100)))
@@ -48,6 +56,8 @@ def build_final_analysis_text(
     for item in decisions:
         status = str(item.get("status") or "failed").strip().lower()
         if bool(item.get("technical_failure")):
+            status = "manual_review"
+        if status == "skipped":
             status = "manual_review"
         if status not in {"completed", "failed", "manual_review"}:
             status = "failed"
