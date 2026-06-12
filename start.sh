@@ -20,6 +20,8 @@ KEEP_BACKEND_RUNNING="${KEEP_BACKEND_RUNNING:-0}"
 FORCE_RESTART_BACKEND="${FORCE_RESTART_BACKEND:-0}"
 FORCE_RESTART_FRONTEND="${FORCE_RESTART_FRONTEND:-0}"
 START_WORKER="${START_WORKER:-0}"
+# Dev rejim: backend Python o'zgarishlarida avtomatik qayta yuklanadi (1=yoq, 0=o'chir)
+BACKEND_RELOAD="${BACKEND_RELOAD:-1}"
 
 BACKEND_PID=""
 WORKER_PID=""
@@ -55,6 +57,7 @@ Ixtiyoriy env o'zgaruvchilar:
   FORCE_RESTART_BACKEND=1
   FORCE_RESTART_FRONTEND=1
   START_WORKER=1
+  BACKEND_RELOAD=1   # backend Python o'zgarishlarida avtomatik qayta yuklash (0=o'chir)
 EOF
 }
 
@@ -394,6 +397,12 @@ if [[ -n "$(pid_for_port "$BACKEND_PORT")" ]]; then
   log "[API] Backend allaqachon ishlayapti: ${BACKEND_BASE_URL}"
 else
   log "[API] Backend ishga tushirilmoqda..."
+  # Reload faqat backend source papkalarini kuzatadi (node_modules/.next/data emas)
+  RELOAD_ARGS=()
+  if [[ "$BACKEND_RELOAD" == "1" ]]; then
+    RELOAD_ARGS=(--reload --reload-dir services --reload-dir core --reload-dir utils --reload-dir config)
+    log "[API] Auto-reload yoqilgan (BACKEND_RELOAD=0 bilan o'chiriladi)"
+  fi
   nohup env \
     DATA_DIR="$DATA_DIR" \
     EXCEL_DIR="$EXCEL_DIR" \
@@ -406,6 +415,7 @@ else
       services.webhook.jira_webhook_handler:app \
       --host "$BACKEND_BIND_HOST" \
       --port "$BACKEND_PORT" \
+      ${RELOAD_ARGS[@]+"${RELOAD_ARGS[@]}"} \
       >>"$BACKEND_LOG" 2>&1 &
   BACKEND_PID="$!"
   STARTED_BACKEND="1"
