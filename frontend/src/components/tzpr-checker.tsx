@@ -1274,20 +1274,7 @@ export function TZPRChecker({ cacheScope }: TZPRCheckerProps) {
             </Card>
           ) : null}
 
-          <Card>
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-              <div className="inline-flex items-center gap-2 text-sm font-semibold text-foreground">
-                <GitPullRequest size={15} />
-                PR tafsilotlari
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Badge tone="soft">{prFoundCount} topildi</Badge>
-                <Badge tone="success">{prMergedCount} merged</Badge>
-                {prSkippedCount ? <Badge tone="warning">{prSkippedCount} skipped</Badge> : null}
-              </div>
-            </div>
-            <PRDetailsStack prDetails={result.pr_details || []} prSelection={prSelection} />
-          </Card>
+          <PRDetailsStack prDetails={result.pr_details || []} prSelection={prSelection} />
         </div>
       ) : result ? (
         <Card>

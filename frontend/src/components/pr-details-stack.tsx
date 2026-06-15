@@ -1,9 +1,10 @@
 "use client";
 
+import { GitPullRequest } from "lucide-react";
 import { useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
-import { BaseCard } from "@/components/ui/card";
+import { BaseCard, Card } from "@/components/ui/card";
 import { cn } from "@/lib/cn";
 
 import type {
@@ -251,7 +252,15 @@ export function PRDetailsStack({ prDetails, prSelection }: PRDetailsStackProps) 
   const [tab, setTab] = useState<PrTab>("found");
 
   if (!prDetails.length && !prSelection) {
-    return renderEmpty("PR tafsilotlari mavjud emas.");
+    return (
+      <Card>
+        <div className="inline-flex items-center gap-2 text-sm font-semibold text-foreground">
+          <GitPullRequest size={15} />
+          PR tafsilotlari
+        </div>
+        <p className="mt-3 text-sm leading-6 text-muted-foreground">PR tafsilotlari mavjud emas.</p>
+      </Card>
+    );
   }
 
   const merged = prSelection?.merged || [];
@@ -312,24 +321,35 @@ export function PRDetailsStack({ prDetails, prSelection }: PRDetailsStackProps) 
   };
 
   return (
-    <div className="grid gap-3">
-      <div className="inline-flex flex-wrap rounded-[12px] border border-border bg-[color:var(--bg-layer)] p-1">
-        {tabs.map(([value, label, count]) => (
-          <button
-            className={cn(
-              "rounded-[9px] px-3 py-1.5 text-xs font-semibold text-muted-foreground transition-colors",
-              tab === value && "bg-card text-foreground shadow-sm",
-            )}
-            key={value}
-            onClick={() => setTab(value)}
-            type="button"
-          >
-            {label} ({count})
-          </button>
-        ))}
+    <Card padding="none" className="overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
+        <div>
+          <div className="inline-flex items-center gap-2 text-sm font-semibold text-foreground">
+            <GitPullRequest size={15} />
+            PR tafsilotlari
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {foundCount} ta PR topildi{skippedCount ? `, ${skippedCount} skip qilingan` : ""}
+          </p>
+        </div>
+        <div className="inline-flex flex-wrap rounded-[12px] border border-border bg-[color:var(--bg-layer)] p-1">
+          {tabs.map(([value, label, count]) => (
+            <button
+              className={cn(
+                "rounded-[9px] px-3 py-1.5 text-xs font-semibold text-muted-foreground transition-colors",
+                tab === value && "bg-card text-foreground shadow-sm",
+              )}
+              key={value}
+              onClick={() => setTab(value)}
+              type="button"
+            >
+              {label} ({count})
+            </button>
+          ))}
+        </div>
       </div>
 
-      <div className="grid gap-3">{renderContent()}</div>
-    </div>
+      <div className="grid gap-3 px-5 py-4">{renderContent()}</div>
+    </Card>
   );
 }
