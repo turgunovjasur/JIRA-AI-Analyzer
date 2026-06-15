@@ -278,7 +278,7 @@ class TZPRService(BaseService):
             effective_use_smart_patch: Optional[bool] = None,
     ) -> Dict[str, Any]:
         settings = self._get_settings()
-        default_use_smart_patch = bool(getattr(settings, "default_use_smart_patch", True))
+        default_use_smart_patch = bool(getattr(settings, "default_use_smart_patch", False))
         try:
             agent2_parallelism = int(getattr(settings, "agent2_parallelism", 5) or 5)
         except (TypeError, ValueError):
@@ -383,8 +383,9 @@ class TZPRService(BaseService):
             show_full_diff (bool): True bo'lsa — har bir fayl uchun to'liq diff/patch
                 AI promtiga kiritiladi. False bo'lsa — faqat fayl nomi va statistika.
             use_smart_patch (Optional[bool]): True bo'lsa — standart diff o'rniga smart_context
-                (to'liq kontekst) ishlatiladi. None bo'lsa setting'dagi
-                `default_use_smart_patch` qiymati ishlatiladi.
+                (to'liq kontekst) ishlatiladi. Smart patch endi sozlama emas —
+                None/berilmasa doim False (oddiy GitHub diff). Param feature kodi
+                kelajak uchun saqlangan.
             status_callback (Optional[Callable[[str, str], None]]): Ixtiyoriy.
                 Progress yangilanishi uchun callback(level, message).
                 UI progress bar yoki logging uchun ishlatiladi.
@@ -435,7 +436,7 @@ class TZPRService(BaseService):
             effective_use_smart_patch = (
                 use_smart_patch
                 if use_smart_patch is not None
-                else bool(getattr(self._get_settings(), "default_use_smart_patch", True))
+                else bool(getattr(self._get_settings(), "default_use_smart_patch", False))
             )
             effective_settings = self._build_effective_settings(
                 requested_output_profile=output_profile,

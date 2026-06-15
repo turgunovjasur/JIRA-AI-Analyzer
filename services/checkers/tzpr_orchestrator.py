@@ -124,7 +124,7 @@ class _TZPRMultiAgentExecutor(AgentRunnerMixin, ResultBuilderMixin, RunStateMixi
         effective_use_smart_patch = (
             self.use_smart_patch
             if self.use_smart_patch is not None
-            else bool(getattr(self.service._get_settings(), "default_use_smart_patch", True))
+            else bool(getattr(self.service._get_settings(), "default_use_smart_patch", False))
         )
         needs_code_context = True
         effective_settings = self.service._build_effective_settings(

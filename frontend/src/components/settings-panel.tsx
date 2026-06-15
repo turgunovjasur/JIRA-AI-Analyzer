@@ -84,7 +84,6 @@ type WebhookFormState = {
   testcase_auto_comment_trigger_status: string;
   testcase_auto_comment_trigger_aliases: string;
   testcase_default_include_pr: boolean;
-  testcase_default_use_smart_patch: boolean;
   testcase_default_test_types: string[];
   testcase_max_test_cases: string;
   testcase_ai_data_section_order: string[];
@@ -112,7 +111,6 @@ type SystemFormState = {
 
 type ModuleFormState = {
   checker: {
-    default_use_smart_patch: boolean;
     visible_sections: string[];
     ai_data_section_order: string[];
     read_comments_enabled: boolean;
@@ -130,7 +128,6 @@ type ModuleFormState = {
   };
   testcase: {
     default_include_pr: boolean;
-    default_use_smart_patch: boolean;
     default_test_types: string[];
     max_test_cases: string;
     ai_data_section_order: string[];
@@ -178,7 +175,6 @@ const EMPTY_WEBHOOK_FORM: WebhookFormState = {
   testcase_auto_comment_trigger_status: "READY TO TEST",
   testcase_auto_comment_trigger_aliases: "Ready To Test,READY TO TEST",
   testcase_default_include_pr: true,
-  testcase_default_use_smart_patch: true,
   testcase_default_test_types: ["positive", "negative"],
   testcase_max_test_cases: "10",
   testcase_ai_data_section_order: ["tz", "comments", "custom_context", "code"],
@@ -213,7 +209,6 @@ const DEFAULT_MODULE_ALLOWED: ModuleSettingsAllowed = {
 
 const EMPTY_MODULE_FORM: ModuleFormState = {
   checker: {
-    default_use_smart_patch: true,
     visible_sections: ["completed", "partial", "failed", "issues", "figma"],
     ai_data_section_order: ["tz", "comments", "figma", "code"],
     read_comments_enabled: true,
@@ -231,7 +226,6 @@ const EMPTY_MODULE_FORM: ModuleFormState = {
   },
   testcase: {
     default_include_pr: true,
-    default_use_smart_patch: true,
     default_test_types: ["positive", "negative"],
     max_test_cases: "10",
     ai_data_section_order: ["tz", "comments", "custom_context", "code"],
@@ -365,7 +359,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
     "testcase_auto_comment_trigger_status",
     "testcase_auto_comment_trigger_aliases",
     "testcase_default_include_pr",
-    "testcase_default_use_smart_patch",
     "testcase_default_test_types",
     "testcase_max_test_cases",
     "testcase_ai_data_section_order",
@@ -500,7 +493,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                   testcase_auto_comment_trigger_status?: string;
                   testcase_auto_comment_trigger_aliases?: string;
                   testcase_default_include_pr?: boolean;
-                  testcase_default_use_smart_patch?: boolean;
                   testcase_default_test_types?: string[];
                   testcase_max_test_cases?: number;
                   testcase_ai_data_section_order?: string[];
@@ -555,7 +547,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
               testcase_auto_comment_trigger_status: String(data.testcase_auto_comment_trigger_status || "READY TO TEST"),
               testcase_auto_comment_trigger_aliases: String(data.testcase_auto_comment_trigger_aliases || "Ready To Test,READY TO TEST"),
               testcase_default_include_pr: Boolean(data.testcase_default_include_pr ?? true),
-              testcase_default_use_smart_patch: Boolean(data.testcase_default_use_smart_patch ?? true),
               testcase_default_test_types: Array.isArray(data.testcase_default_test_types) ? data.testcase_default_test_types : ["positive", "negative"],
               testcase_max_test_cases: String(data.testcase_max_test_cases ?? 10),
               testcase_ai_data_section_order: Array.isArray(data.testcase_ai_data_section_order) ? data.testcase_ai_data_section_order : ["tz", "comments", "custom_context", "code"],
@@ -597,7 +588,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
               testcase_auto_comment_trigger_status: String(data.testcase_auto_comment_trigger_status || "READY TO TEST"),
               testcase_auto_comment_trigger_aliases: String(data.testcase_auto_comment_trigger_aliases || "Ready To Test,READY TO TEST"),
               testcase_default_include_pr: Boolean(data.testcase_default_include_pr ?? true),
-              testcase_default_use_smart_patch: Boolean(data.testcase_default_use_smart_patch ?? true),
               testcase_default_test_types: Array.isArray(data.testcase_default_test_types) ? data.testcase_default_test_types : ["positive", "negative"],
               testcase_max_test_cases: String(data.testcase_max_test_cases ?? 10),
               testcase_ai_data_section_order: Array.isArray(data.testcase_ai_data_section_order) ? data.testcase_ai_data_section_order : ["tz", "comments", "custom_context", "code"],
@@ -670,7 +660,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                 success?: boolean;
                 data?: {
                   checker?: {
-                    default_use_smart_patch?: boolean;
                     visible_sections?: string[];
                     ai_data_section_order?: string[];
                     read_comments_enabled?: boolean;
@@ -688,7 +677,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                   };
                   testcase?: {
                     default_include_pr?: boolean;
-                    default_use_smart_patch?: boolean;
                     default_test_types?: string[];
                     max_test_cases?: number;
                     ai_data_section_order?: string[];
@@ -707,7 +695,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
             setModuleAllowed(modulesPayload.data.allowed || DEFAULT_MODULE_ALLOWED);
             setModuleForm({
               checker: {
-                default_use_smart_patch: checker.default_use_smart_patch ?? true,
                 visible_sections: Array.isArray(checker.visible_sections) ? checker.visible_sections : EMPTY_MODULE_FORM.checker.visible_sections,
                 ai_data_section_order: Array.isArray(checker.ai_data_section_order) ? checker.ai_data_section_order : EMPTY_MODULE_FORM.checker.ai_data_section_order,
                 read_comments_enabled: Boolean(checker.read_comments_enabled),
@@ -725,7 +712,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
               },
               testcase: {
                 default_include_pr: Boolean(testcase.default_include_pr),
-                default_use_smart_patch: Boolean(testcase.default_use_smart_patch),
                 default_test_types: Array.isArray(testcase.default_test_types) ? testcase.default_test_types : EMPTY_MODULE_FORM.testcase.default_test_types,
                 max_test_cases: String(testcase.max_test_cases ?? 10),
                 ai_data_section_order: Array.isArray(testcase.ai_data_section_order) ? testcase.ai_data_section_order : EMPTY_MODULE_FORM.testcase.ai_data_section_order,
@@ -1029,7 +1015,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
           testcase_auto_comment_trigger_status: webhookForm.testcase_auto_comment_trigger_status,
           testcase_auto_comment_trigger_aliases: webhookForm.testcase_auto_comment_trigger_aliases,
           testcase_default_include_pr: webhookForm.testcase_default_include_pr,
-          testcase_default_use_smart_patch: webhookForm.testcase_default_use_smart_patch,
           testcase_default_test_types: webhookForm.testcase_default_test_types,
           testcase_max_test_cases: Number(webhookForm.testcase_max_test_cases || 10),
           testcase_ai_data_section_order: webhookForm.testcase_ai_data_section_order,
@@ -1116,7 +1101,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
     try {
       const payload: ModuleSettingsSaveRequest = {
         checker: {
-          default_use_smart_patch: moduleForm.checker.default_use_smart_patch,
           visible_sections: moduleForm.checker.visible_sections,
           ai_data_section_order: moduleForm.checker.ai_data_section_order,
           read_comments_enabled: moduleForm.checker.read_comments_enabled,
@@ -1134,7 +1118,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
         },
         testcase: {
           default_include_pr: moduleForm.testcase.default_include_pr,
-          default_use_smart_patch: moduleForm.testcase.default_use_smart_patch,
           default_test_types: moduleForm.testcase.default_test_types,
           max_test_cases: Number(moduleForm.testcase.max_test_cases || 10),
           ai_data_section_order: moduleForm.testcase.ai_data_section_order,
@@ -1887,14 +1870,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                                     value={webhookForm.testcase_default_include_pr}
                                   />
                                 </SettingsCardItem>
-                                <SettingsCardItem>
-                                  <ToggleRow
-                                    desc="Default holatda smart patch ishlatiladi."
-                                    label="Default smart patch"
-                                    onChange={(value) => updateWebhookField("testcase_default_use_smart_patch", value)}
-                                    value={webhookForm.testcase_default_use_smart_patch}
-                                  />
-                                </SettingsCardItem>
                               </>
                             ) : null}
                           </div>
@@ -2113,14 +2088,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                         <div className="ssec-label">Default ishga tushirish</div>
                         <div className="grid gap-3">
                           <SettingsCardItem>
-                            <ToggleRow
-                              desc="AI faqat o'zgargan kod qismlarini tahlil qiladi — tezroq va tejamkor."
-                              label="Smart Patch (default)"
-                              onChange={(value) => updateCheckerField("default_use_smart_patch", value)}
-                              value={Boolean(moduleForm.checker.default_use_smart_patch)}
-                            />
-                          </SettingsCardItem>
-                          <SettingsCardItem>
                             <NumberField
                               hint="1 = har talab alohida call, 6 = default batch."
                               label="Agent2 batch size"
@@ -2271,14 +2238,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                               label="PR biriktirish (default)"
                               onChange={(value) => updateTestcaseField("default_include_pr", value)}
                               value={Boolean(moduleForm.testcase.default_include_pr)}
-                            />
-                          </SettingsCardItem>
-                          <SettingsCardItem>
-                            <ToggleRow
-                              desc="AI faqat o'zgargan kod qismlarini tahlil qiladi."
-                              label="Smart Patch (default)"
-                              onChange={(value) => updateTestcaseField("default_use_smart_patch", value)}
-                              value={Boolean(moduleForm.testcase.default_use_smart_patch)}
                             />
                           </SettingsCardItem>
                         </div>

@@ -19,7 +19,7 @@ class GenerateRequest(BaseModel):
     user_id: int | None = None
     company_id: int | None = None
     include_pr: bool = True
-    use_smart_patch: bool = True
+    use_smart_patch: bool = False
     test_types: list[str] = Field(default_factory=list)
     custom_context: str = ""
 

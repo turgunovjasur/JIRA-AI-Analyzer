@@ -656,7 +656,6 @@ export type CheckerModuleSettings = {
   agent2_batch_size?: number;
   agent2_extra_scan_enabled?: boolean;
   checker_execution_mode?: TZPRExecutionMode;
-  default_use_smart_patch: boolean;
   visible_sections: string[];
   ai_data_section_order: string[];
   read_comments_enabled: boolean;
@@ -667,7 +666,6 @@ export type CheckerModuleSettings = {
 
 export type TestcaseModuleSettings = {
   default_include_pr: boolean;
-  default_use_smart_patch: boolean;
   default_test_types: string[];
   max_test_cases: number;
   ai_data_section_order: string[];
@@ -725,7 +723,6 @@ export type WebhookSettingsView = {
     testcase_auto_comment_trigger_status: string;
     testcase_auto_comment_trigger_aliases: string;
     testcase_default_include_pr: boolean;
-    testcase_default_use_smart_patch: boolean;
     testcase_default_test_types: string[];
     testcase_max_test_cases: number;
     testcase_ai_data_section_order: string[];
@@ -764,7 +761,6 @@ export type WebhookSettingsSaveRequest = {
   testcase_auto_comment_trigger_status: string;
   testcase_auto_comment_trigger_aliases: string;
   testcase_default_include_pr: boolean;
-  testcase_default_use_smart_patch: boolean;
   testcase_default_test_types: string[];
   testcase_max_test_cases: number;
   testcase_ai_data_section_order: string[];

@@ -79,7 +79,7 @@ async def check_and_generate_testcases(
         result = service.generate_test_cases(
             task_key=task_key,
             include_pr=use_pr,
-            use_smart_patch=tc_settings.default_use_smart_patch,
+            use_smart_patch=False,
             test_types=tc_settings.default_test_types,
             custom_context="",
             status_callback=lambda t, m: log.info(f"[{task_key}] {t.upper()} -> {m}")

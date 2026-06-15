@@ -138,8 +138,6 @@ class TZPRCheckerSettings:
 
     # AI Token Sozlamalari
     ai_max_output_tokens: int = CHECKER_MAX_OUTPUT_TOKENS  # Gemini javob uchun max token
-    # Smart patch defaulti (checker run'da use_smart_patch berilmasa shu qiymat ishlatiladi)
-    default_use_smart_patch: bool = True
 
     # Status Nomlari
     trigger_status: str = "READY TO TEST"
@@ -289,7 +287,6 @@ class TZPRCheckerSettings:
     trigger_status_help: str = "Qaysi statusda TZ-PR tekshirish boshlanadi"
     trigger_aliases_help: str = "Trigger status uchun alternativ nomlar (vergul bilan ajrating)"
     return_status_help: str = "Moslik past bo'lganda qaysi statusga qaytarish"
-    smart_patch_help: str = "Checker uchun smart patch default holati (True tavsiya etiladi)"
     use_adf_help: str = "ADF formatda dropdown/collapsible panellar ishlatish"
     show_statistics_help: str = "PR statistikasini comment'da ko'rsatish"
     show_compliance_help: str = "Moslik balini comment'da ko'rsatish"
@@ -361,7 +358,6 @@ class TestcaseGeneratorSettings:
     """Testcase Generator modul sozlamalari"""
     # Default qiymatlar
     default_include_pr: bool = True
-    default_use_smart_patch: bool = True
     # Faqat positive va negative test types qoldirildi (boundary va edge olib tashlandi)
     default_test_types: List[str] = field(default_factory=lambda: ['positive', 'negative'])
     # AI yaratadigan maksimal test case soni
@@ -395,7 +391,6 @@ class TestcaseGeneratorSettings:
 
     # Yordam matnlari
     include_pr_help: str = "GitHub PR kod o'zgarishlarini test case yaratishda hisobga olish"
-    smart_patch_help: str = "Faqat o'zgargan qismlarni AI ga yuborish (tezroq va arzonroq)"
     test_types_help: str = "Default test turlari: positive (asosiy), negative (xato holatlari)"
     max_test_cases_help: str = "AI yaratadigan maksimal test case soni (1-30)"
     ai_max_output_tokens_help: str = "AI javob uchun maksimal token soni (platform policy bo'yicha boshqariladi)"

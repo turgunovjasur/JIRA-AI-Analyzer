@@ -112,7 +112,7 @@ class TestCaseGeneratorService(BaseService):
             self,
             task_key: str,
             include_pr: bool = True,
-            use_smart_patch: bool = True,
+            use_smart_patch: bool = False,
             test_types: List[str] = None,
             custom_context: str = "",
             status_callback: Optional[Callable[[str, str], None]] = None,

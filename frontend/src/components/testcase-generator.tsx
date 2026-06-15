@@ -120,7 +120,6 @@ export function TestCaseGenerator() {
         body: JSON.stringify({
           task_key: normalizedTaskKey,
           include_pr: true,
-          use_smart_patch: true,
           test_types: selectedTypes,
           custom_context: customContext.trim(),
         }),
@@ -163,7 +162,7 @@ export function TestCaseGenerator() {
       <SettingsBaseCard
         header={(
           <SectionHeader
-            action={<Badge tone="soft">PR va smart patch yoqilgan</Badge>}
+            action={<Badge tone="soft">PR yoqilgan</Badge>}
             eyebrow="Generate"
             title="Task yuborish"
           />

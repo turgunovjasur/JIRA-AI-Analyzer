@@ -48,7 +48,7 @@ export async function POST(request: Request) {
       user_id: scopedToCustomer ? session.auth.user_id || null : null,
       company_id: scopedToCustomer ? session.auth.company_id || null : null,
       include_pr: payload.include_pr ?? true,
-      use_smart_patch: payload.use_smart_patch ?? true,
+      use_smart_patch: payload.use_smart_patch ?? false,
       test_types: payload.test_types || ["positive", "negative"],
       custom_context: payload.custom_context || "",
     });

@@ -372,7 +372,6 @@ async def read_webhook_config(
             "testcase_auto_comment_trigger_status": webhook_testcase.auto_comment_trigger_status,
             "testcase_auto_comment_trigger_aliases": webhook_testcase.auto_comment_trigger_aliases,
             "testcase_default_include_pr": bool(webhook_testcase.default_include_pr),
-            "testcase_default_use_smart_patch": bool(webhook_testcase.default_use_smart_patch),
             "testcase_default_test_types": list(webhook_testcase.default_test_types or []),
             "testcase_max_test_cases": int(webhook_testcase.max_test_cases),
             "testcase_ai_data_section_order": list(webhook_testcase.ai_data_section_order or []),
@@ -591,7 +590,6 @@ async def save_webhook_config(
             "auto_comment_trigger_status": _tc_string("testcase_auto_comment_trigger_status", "READY TO TEST") or "READY TO TEST",
             "auto_comment_trigger_aliases": _tc_string("testcase_auto_comment_trigger_aliases", "Ready To Test,READY TO TEST"),
             "default_include_pr": _tc_bool("testcase_default_include_pr", True),
-            "default_use_smart_patch": _tc_bool("testcase_default_use_smart_patch", True),
             "default_test_types": _tc_ordered_list(
                 "testcase_default_test_types",
                 _TESTCASE_TYPES_ALLOWED,
@@ -798,7 +796,6 @@ async def read_module_config(
             "checker": {
                 "agent2_parallelism": int(getattr(checker, "agent2_parallelism", 5) or 5),
                 "agent2_batch_size": int(getattr(checker, "agent2_batch_size", 6) or 6),
-                "default_use_smart_patch": bool(checker.default_use_smart_patch),
                 "visible_sections": list(checker.visible_sections or []),
                 "ai_data_section_order": list(checker.ai_data_section_order or []),
                 "read_comments_enabled": bool(checker.read_comments_enabled),
@@ -814,7 +811,6 @@ async def read_module_config(
             },
             "testcase": {
                 "default_include_pr": bool(testcase.default_include_pr),
-                "default_use_smart_patch": bool(testcase.default_use_smart_patch),
                 "default_test_types": list(testcase.default_test_types or []),
                 "max_test_cases": int(testcase.max_test_cases),
                 "ai_data_section_order": list(testcase.ai_data_section_order or []),
@@ -846,10 +842,6 @@ async def save_module_config(
         raise HTTPException(status_code=400, detail="checker va testcase sozlamalari object bo'lishi kerak")
 
     checker_update = {
-        "default_use_smart_patch": _parse_bool(
-            checker_raw.get("default_use_smart_patch"),
-            "checker.default_use_smart_patch",
-        ),
         "visible_sections": _parse_ordered_list(
             checker_raw.get("visible_sections"),
             "checker.visible_sections",
@@ -895,10 +887,6 @@ async def save_module_config(
         "default_include_pr": _parse_bool(
             testcase_raw.get("default_include_pr"),
             "testcase.default_include_pr",
-        ),
-        "default_use_smart_patch": _parse_bool(
-            testcase_raw.get("default_use_smart_patch"),
-            "testcase.default_use_smart_patch",
         ),
         "default_test_types": _parse_ordered_list(
             testcase_raw.get("default_test_types"),
