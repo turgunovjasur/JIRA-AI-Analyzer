@@ -357,7 +357,6 @@ class TZPRCheckerSettings:
 class TestcaseGeneratorSettings:
     """Testcase Generator modul sozlamalari"""
     # Default qiymatlar
-    default_include_pr: bool = True
     # Faqat positive va negative test types qoldirildi (boundary va edge olib tashlandi)
     default_test_types: List[str] = field(default_factory=lambda: ['positive', 'negative'])
     # AI yaratadigan maksimal test case soni
@@ -367,8 +366,9 @@ class TestcaseGeneratorSettings:
 
     # ━━━ AI ga ma'lumotlar tartibi (darajasi) ━━━
     # Sozlamadagi tartib bo'yicha AI promtiga bo'limlar qo'shiladi. Servis SHU tartibga qat'iy amal qiladi.
-    # Bo'limlar: tz, comments, custom_context, code
-    ai_data_section_order: List[str] = field(default_factory=lambda: ["tz", "comments", "custom_context", "code"])
+    # Bo'limlar: tz, comments, custom_context, figma, code
+    # "figma" — checker kabi Figma'ni yoqish/o'chirish flagi (ro'yxatda bo'lsa Figma olinadi).
+    ai_data_section_order: List[str] = field(default_factory=lambda: ["tz", "comments", "custom_context", "figma", "code"])
 
     # ━━━ Comment O'qish ━━━
     read_comments_enabled: bool = True
@@ -390,13 +390,13 @@ class TestcaseGeneratorSettings:
     )
 
     # Yordam matnlari
-    include_pr_help: str = "GitHub PR kod o'zgarishlarini test case yaratishda hisobga olish"
     test_types_help: str = "Default test turlari: positive (asosiy), negative (xato holatlari)"
     max_test_cases_help: str = "AI yaratadigan maksimal test case soni (1-30)"
     ai_max_output_tokens_help: str = "AI javob uchun maksimal token soni (platform policy bo'yicha boshqariladi)"
     ai_data_section_order_help: str = (
         "AI ga ma'lumotlar qaysi tartibda berilishi. Birinchi o'rinda eng ustun. "
-        "tz = TZ, comments = comment'lar, custom_context = qo'shimcha kontekst, code = kod statistikasi. "
+        "tz = TZ, comments = comment'lar, custom_context = qo'shimcha kontekst, "
+        "figma = Figma'ni yoqish (ro'yxatda bo'lsa Figma olinadi), code = kod statistikasi. "
         "Sozlamaga AI qat'iy amal qiladi."
     )
     read_comments_help: str = "JIRA task comment'larini AI ga yuborish. O'chirilsa faqat TZ asosida ishlaydi"
@@ -407,7 +407,7 @@ class TestcaseGeneratorSettings:
     use_adf_help: str = "ADF formatda dropdown panellar bilan chiroyli comment yozish"
     testcase_footer_help: str = "Test case comment'ning pastki qismida ko'rinadigan matn"
 
-    _AI_DATA_ORDER_ALLOWED = ("tz", "comments", "custom_context", "code")
+    _AI_DATA_ORDER_ALLOWED = ("tz", "comments", "custom_context", "figma", "code")
 
     def __post_init__(self):
         """Sozlamalar validatsiyasi — noto'g'ri qiymatlar exception chiqaradi"""
@@ -424,7 +424,7 @@ class TestcaseGeneratorSettings:
             )
         if "tz" not in order:
             raise ValueError("ai_data_section_order da 'tz' bo'lishi shart")
-        self.ai_data_section_order = order if order else ["tz", "comments", "custom_context", "code"]
+        self.ai_data_section_order = order if order else ["tz", "comments", "custom_context", "figma", "code"]
 
     def get_trigger_statuses(self) -> List[str]:
         """Barcha trigger statuslarni qaytarish"""

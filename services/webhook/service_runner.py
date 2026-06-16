@@ -240,7 +240,6 @@ async def _run_testcase_generation(task_key: str, new_status: str, company_id: i
 
     Xato holatlari:
     - 'ai_timeout' → service2_status='blocked', retry scheduler kutib turadi
-    - 'pr_not_found' va default_include_pr=True → TZ-only fallback urinish
     - Boshqa xatolik → service2_status='error'
 
     Args:

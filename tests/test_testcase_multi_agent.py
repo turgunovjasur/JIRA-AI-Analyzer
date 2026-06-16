@@ -1,0 +1,198 @@
+"""Testcase (Servis-2) 2-agentli oqim testlari.
+
+Agent1 (talab ajratuvchi, checker kontrakti reuse) → Agent2 (testcase yozuvchi).
+PR ishlatilmaydi; manbalar: TZ + Figma + comment. Bu testlar DB talab qilmaydi.
+"""
+import json
+from unittest.mock import MagicMock
+
+import pytest
+
+pytestmark = pytest.mark.no_db
+
+
+LONG_TZ = (
+    "Login sahifasini yaratish kerak. Foydalanuvchi username va parol kiritib "
+    "tizimga kira olishi kerak. Validatsiya: bo'sh maydon xatosi, noto'g'ri parol "
+    "xatosi, muvaffaqiyatli kirish. Sessiya boshqaruvi ham talab qilinadi."
+)
+
+AGENT1_JSON = json.dumps(
+    {
+        "requirements": [
+            {"id": "REQ-1", "text": "Foydalanuvchi username va parol bilan tizimga kira olsin", "source": "tz"},
+            {"id": "REQ-2", "text": "Noto'g'ri parol uchun xato xabari ko'rsatilsin", "source": "tz"},
+        ]
+    },
+    ensure_ascii=False,
+)
+
+AGENT2_JSON = json.dumps(
+    {
+        "test_cases": [
+            {
+                "id": "TC-001", "title": "Muvaffaqiyatli login", "description": "d",
+                "preconditions": "p", "steps": ["1. ochish", "2. login"],
+                "expected_result": "kirildi", "test_type": "positive", "priority": "High",
+                "severity": "Critical", "tags": ["auth"], "requirement_ids": ["REQ-1"],
+            },
+            {
+                "id": "TC-002", "title": "Noto'g'ri parol", "description": "d",
+                "preconditions": "p", "steps": ["1. ochish", "2. xato parol"],
+                "expected_result": "xato xabari", "test_type": "negative", "priority": "High",
+                "severity": "Major", "tags": ["auth"], "requirement_ids": ["REQ-2"],
+            },
+        ]
+    },
+    ensure_ascii=False,
+)
+
+
+def _make_service(agent_outputs, task_details=None):
+    from services.generators.testcase_generator import TestCaseGeneratorService
+
+    service = TestCaseGeneratorService()
+    mock_jira = MagicMock()
+    mock_jira.get_task_details.return_value = task_details or {
+        "summary": "Login", "type": "Story", "priority": "High",
+        "description": LONG_TZ, "comments": [],
+    }
+    service._jira_client = mock_jira
+    service._github_client = MagicMock()
+
+    mock_agent = MagicMock()
+    mock_agent.analyze.side_effect = list(agent_outputs)
+    mock_agent.last_model_used = "gemini-2.5-flash"
+    mock_agent.model_name = "gemini-2.5-flash"
+    service._agent_gemini = mock_agent
+    return service, mock_agent
+
+
+def test_two_agent_success_and_coverage():
+    service, mock_agent = _make_service([AGENT1_JSON, AGENT2_JSON])
+    result = service.generate_test_cases("DEV-1", test_types=["positive", "negative"])
+
+    assert result.success is True
+    assert len(result.test_cases) == 2
+    # Agent1 + Agent2 = 2 ta Gemini chaqiruvi (bitta chaqiruv Agent2)
+    assert mock_agent.analyze.call_count == 2
+    assert len(result.requirements) == 2
+    assert result.requirement_coverage["total_requirements"] == 2
+    assert result.requirement_coverage["covered_count"] == 2
+    assert result.requirement_coverage["uncovered_ids"] == []
+    assert result.test_cases[0].requirement_ids == ["REQ-1"]
+    # PR endi ishlatilmaydi
+    assert result.pr_count == 0
+    assert result.pr_details == []
+
+
+def test_uncovered_requirement_warns():
+    agent2 = json.dumps(
+        {
+            "test_cases": [
+                {
+                    "id": "TC-001", "title": "t", "description": "d", "preconditions": "p",
+                    "steps": ["s"], "expected_result": "r", "test_type": "positive",
+                    "priority": "High", "severity": "Major", "tags": [], "requirement_ids": ["REQ-1"],
+                }
+            ]
+        },
+        ensure_ascii=False,
+    )
+    service, _ = _make_service([AGENT1_JSON, agent2])
+    result = service.generate_test_cases("DEV-1")
+
+    assert result.success is True
+    assert result.requirement_coverage["uncovered_ids"] == ["REQ-2"]
+    assert any("REQ-2" in w for w in result.warnings)
+
+
+def test_agent1_failure_no_monolith_fallback():
+    # Gemini barcha kalit/model bilan yiqildi → RuntimeError
+    service, _ = _make_service([RuntimeError("barcha kalitlar muzlatildi")])
+
+    result = service.generate_test_cases("DEV-1")
+
+    assert result.success is False
+    assert result.status_banner is not None  # xato banner ko'rsatiladi
+    assert result.test_cases == []
+    # Eski monolit (single-agent) kod butunlay olib tashlangan
+    assert not hasattr(service, "_create_test_case_prompt")
+    assert not hasattr(service, "_generate_with_ai")
+
+
+def test_agent1_empty_requirements_errors():
+    empty = json.dumps({"requirements": []})
+    service, _ = _make_service([empty])
+    result = service.generate_test_cases("DEV-1")
+    assert result.success is False
+
+
+def test_build_agent1_input_excludes_comments_and_adds_figma(monkeypatch):
+    from services.generators import testcase_generator as tg
+
+    service = tg.TestCaseGeneratorService()
+    task_details = {
+        "summary": "s", "type": "Task", "priority": "Low", "description": LONG_TZ,
+        "comments": [
+            {"author": "dev", "body": "Foydalanuvchi qo'shimcha talabni aytdi"},
+            {"author": "bot", "body": "[AI_S1] AI yozgan izoh"},
+        ],
+    }
+    monkeypatch.setattr(tg, "build_figma_access_status", lambda **kwargs: {"has_usable_data": True})
+    monkeypatch.setattr(
+        tg, "extract_figma_requirement_candidates",
+        lambda figma_data: (["Figma ekrandagi talab matni"], [], []),
+    )
+
+    inp = service._build_agent1_input(task_details, {"summaries": [{"summary": "x"}]})
+
+    assert inp["tz"] == LONG_TZ
+    # QAT'IY QOIDA: Agent1 ga comment berilmaydi (comment'lar → Agent2)
+    assert inp["comments"] == []
+    assert inp["figma"] == ["Figma ekrandagi talab matni"]
+
+
+def test_finalize_dedup_and_renumber():
+    from services.generators.testcase_generator import TestCaseGeneratorService, TestCase
+
+    service = TestCaseGeneratorService()
+    tcs = [
+        TestCase(id="X", title="Same", description="", preconditions="", steps=["a", "b"],
+                 expected_result="", test_type="positive", priority="High", severity="Major",
+                 tags=[], requirement_ids=["REQ-1"]),
+        TestCase(id="Y", title="Same", description="", preconditions="", steps=["a", "b"],
+                 expected_result="", test_type="positive", priority="High", severity="Major",
+                 tags=[], requirement_ids=["REQ-1"]),  # takror
+        TestCase(id="Z", title="Other", description="", preconditions="", steps=["c"],
+                 expected_result="", test_type="negative", priority="Low", severity="Minor",
+                 tags=[], requirement_ids=["REQ-2"]),
+    ]
+    unique, coverage = service._finalize_testcases(tcs, [{"id": "REQ-1"}, {"id": "REQ-2"}])
+
+    assert len(unique) == 2
+    assert [tc.id for tc in unique] == ["TC-001", "TC-002"]
+    assert coverage["covered_count"] == 2
+    assert coverage["uncovered_ids"] == []
+
+
+def test_enforce_max_three_per_requirement():
+    from services.generators.testcase_generator import (
+        TestCaseGeneratorService, TestCase, MAX_TC_PER_REQ,
+    )
+
+    service = TestCaseGeneratorService()
+
+    def _tc(i, reqs):
+        return TestCase(id=f"X{i}", title=f"t{i}", description="", preconditions="",
+                        steps=[f"s{i}"], expected_result="", test_type="positive",
+                        priority="Low", severity="Minor", tags=[], requirement_ids=reqs)
+
+    # REQ-1 ga 5 ta (ortiqcha), REQ-2 ga 1 ta (chegarada)
+    tcs = [_tc(i, ["REQ-1"]) for i in range(5)] + [_tc(99, ["REQ-2"])]
+    kept = service._enforce_max_per_requirement(tcs, [{"id": "REQ-1"}, {"id": "REQ-2"}])
+
+    req1 = [t for t in kept if "REQ-1" in t.requirement_ids]
+    req2 = [t for t in kept if "REQ-2" in t.requirement_ids]
+    assert len(req1) == MAX_TC_PER_REQ  # 5 → 3
+    assert len(req2) == 1  # min=1 buzilmaydi

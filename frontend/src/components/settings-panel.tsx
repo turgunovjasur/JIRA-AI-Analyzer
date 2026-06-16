@@ -83,7 +83,6 @@ type WebhookFormState = {
   testcase_auto_comment_enabled: boolean;
   testcase_auto_comment_trigger_status: string;
   testcase_auto_comment_trigger_aliases: string;
-  testcase_default_include_pr: boolean;
   testcase_default_test_types: string[];
   testcase_max_test_cases: string;
   testcase_ai_data_section_order: string[];
@@ -127,7 +126,6 @@ type ModuleFormState = {
     agent3_fallback_model: string;
   };
   testcase: {
-    default_include_pr: boolean;
     default_test_types: string[];
     max_test_cases: string;
     ai_data_section_order: string[];
@@ -174,7 +172,6 @@ const EMPTY_WEBHOOK_FORM: WebhookFormState = {
   testcase_auto_comment_enabled: false,
   testcase_auto_comment_trigger_status: "READY TO TEST",
   testcase_auto_comment_trigger_aliases: "Ready To Test,READY TO TEST",
-  testcase_default_include_pr: true,
   testcase_default_test_types: ["positive", "negative"],
   testcase_max_test_cases: "10",
   testcase_ai_data_section_order: ["tz", "comments", "custom_context", "code"],
@@ -225,7 +222,6 @@ const EMPTY_MODULE_FORM: ModuleFormState = {
     agent3_fallback_model: "",
   },
   testcase: {
-    default_include_pr: true,
     default_test_types: ["positive", "negative"],
     max_test_cases: "10",
     ai_data_section_order: ["tz", "comments", "custom_context", "code"],
@@ -358,7 +354,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
     "testcase_auto_comment_enabled",
     "testcase_auto_comment_trigger_status",
     "testcase_auto_comment_trigger_aliases",
-    "testcase_default_include_pr",
     "testcase_default_test_types",
     "testcase_max_test_cases",
     "testcase_ai_data_section_order",
@@ -492,7 +487,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                   testcase_auto_comment_enabled?: boolean;
                   testcase_auto_comment_trigger_status?: string;
                   testcase_auto_comment_trigger_aliases?: string;
-                  testcase_default_include_pr?: boolean;
                   testcase_default_test_types?: string[];
                   testcase_max_test_cases?: number;
                   testcase_ai_data_section_order?: string[];
@@ -546,7 +540,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
               testcase_auto_comment_enabled: Boolean(data.testcase_auto_comment_enabled),
               testcase_auto_comment_trigger_status: String(data.testcase_auto_comment_trigger_status || "READY TO TEST"),
               testcase_auto_comment_trigger_aliases: String(data.testcase_auto_comment_trigger_aliases || "Ready To Test,READY TO TEST"),
-              testcase_default_include_pr: Boolean(data.testcase_default_include_pr ?? true),
               testcase_default_test_types: Array.isArray(data.testcase_default_test_types) ? data.testcase_default_test_types : ["positive", "negative"],
               testcase_max_test_cases: String(data.testcase_max_test_cases ?? 10),
               testcase_ai_data_section_order: Array.isArray(data.testcase_ai_data_section_order) ? data.testcase_ai_data_section_order : ["tz", "comments", "custom_context", "code"],
@@ -587,7 +580,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
               testcase_auto_comment_enabled: Boolean(data.testcase_auto_comment_enabled),
               testcase_auto_comment_trigger_status: String(data.testcase_auto_comment_trigger_status || "READY TO TEST"),
               testcase_auto_comment_trigger_aliases: String(data.testcase_auto_comment_trigger_aliases || "Ready To Test,READY TO TEST"),
-              testcase_default_include_pr: Boolean(data.testcase_default_include_pr ?? true),
               testcase_default_test_types: Array.isArray(data.testcase_default_test_types) ? data.testcase_default_test_types : ["positive", "negative"],
               testcase_max_test_cases: String(data.testcase_max_test_cases ?? 10),
               testcase_ai_data_section_order: Array.isArray(data.testcase_ai_data_section_order) ? data.testcase_ai_data_section_order : ["tz", "comments", "custom_context", "code"],
@@ -676,7 +668,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                     agent3_fallback_model?: string;
                   };
                   testcase?: {
-                    default_include_pr?: boolean;
                     default_test_types?: string[];
                     max_test_cases?: number;
                     ai_data_section_order?: string[];
@@ -711,7 +702,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                 agent3_fallback_model: String(checker.agent3_fallback_model || ""),
               },
               testcase: {
-                default_include_pr: Boolean(testcase.default_include_pr),
                 default_test_types: Array.isArray(testcase.default_test_types) ? testcase.default_test_types : EMPTY_MODULE_FORM.testcase.default_test_types,
                 max_test_cases: String(testcase.max_test_cases ?? 10),
                 ai_data_section_order: Array.isArray(testcase.ai_data_section_order) ? testcase.ai_data_section_order : EMPTY_MODULE_FORM.testcase.ai_data_section_order,
@@ -1014,7 +1004,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
           testcase_auto_comment_enabled: webhookForm.testcase_auto_comment_enabled,
           testcase_auto_comment_trigger_status: webhookForm.testcase_auto_comment_trigger_status,
           testcase_auto_comment_trigger_aliases: webhookForm.testcase_auto_comment_trigger_aliases,
-          testcase_default_include_pr: webhookForm.testcase_default_include_pr,
           testcase_default_test_types: webhookForm.testcase_default_test_types,
           testcase_max_test_cases: Number(webhookForm.testcase_max_test_cases || 10),
           testcase_ai_data_section_order: webhookForm.testcase_ai_data_section_order,
@@ -1117,7 +1106,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
           agent3_fallback_model: moduleForm.checker.agent3_fallback_model,
         },
         testcase: {
-          default_include_pr: moduleForm.testcase.default_include_pr,
           default_test_types: moduleForm.testcase.default_test_types,
           max_test_cases: Number(moduleForm.testcase.max_test_cases || 10),
           ai_data_section_order: moduleForm.testcase.ai_data_section_order,
@@ -1859,19 +1847,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                                 value={webhookForm.testcase_auto_comment_enabled}
                               />
                             </SettingsCardItem>
-
-                            {webhookForm.testcase_auto_comment_enabled ? (
-                              <>
-                                <SettingsCardItem>
-                                  <ToggleRow
-                                    desc="Default holatda PR ma'lumotlari testcase generatsiyaga qo'shiladi."
-                                    label="Default include PR"
-                                    onChange={(value) => updateWebhookField("testcase_default_include_pr", value)}
-                                    value={webhookForm.testcase_default_include_pr}
-                                  />
-                                </SettingsCardItem>
-                              </>
-                            ) : null}
                           </div>
                         </div>
                       </SettingsInnerCard>
@@ -2228,22 +2203,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                   title="Test Case Generator"
                 >
                   <div className="webhook-family-stack">
-                    <SettingsInnerCard>
-                      <div className="ssec mt-0 border-none pt-0">
-                        <div className="ssec-label">Default ishga tushirish</div>
-                        <div className="grid gap-3">
-                          <SettingsCardItem>
-                            <ToggleRow
-                              desc="Defolt ravishda PR tahlilini test case generatsiyaga qo'shadi."
-                              label="PR biriktirish (default)"
-                              onChange={(value) => updateTestcaseField("default_include_pr", value)}
-                              value={Boolean(moduleForm.testcase.default_include_pr)}
-                            />
-                          </SettingsCardItem>
-                        </div>
-                      </div>
-                    </SettingsInnerCard>
-
                     <SettingsInnerCard>
                       <div className="ssec mt-0 border-none pt-0">
                         <div className="ssec-label">Comment o'qish oilasi</div>

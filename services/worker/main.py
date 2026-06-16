@@ -17,6 +17,7 @@ from typing import Any
 from config.app_settings import get_app_settings
 from core.logger import get_logger
 from services.checkers.tzpr_multi_agent import execute_multi_agent_run
+from services.generators.testcase_run import execute_testcase_run
 from services.webhook.queue_manager import _queued_check_tz_pr, _run_task_group
 from services.webhook.retry_scheduler import _retry_blocked_task
 from services.webhook.service_runner import _run_testcase_generation, check_tz_pr_and_comment
@@ -39,6 +40,7 @@ JOB_RUN_TESTCASE = "run_testcase_generation"
 JOB_RETRY_BLOCKED_TASK = "retry_blocked_task"
 JOB_MANUAL_CHECK = "manual_check"
 JOB_TZPR_MULTI_AGENT_RUN = "tzpr_multi_agent_run"
+JOB_TESTCASE_MULTI_AGENT_RUN = "testcase_multi_agent_run"
 
 
 def _worker_name() -> str:
@@ -123,6 +125,12 @@ async def _dispatch_job(job: dict[str, Any]) -> None:
         if not run_id:
             raise RuntimeError("run_id bo'sh")
         await asyncio.to_thread(execute_multi_agent_run, run_id)
+        return
+    if job_type == JOB_TESTCASE_MULTI_AGENT_RUN:
+        run_id = str(payload.get("run_id") or "").strip()
+        if not run_id:
+            raise RuntimeError("run_id bo'sh")
+        await asyncio.to_thread(execute_testcase_run, run_id)
         return
 
     raise RuntimeError(f"Noma'lum job_type: {job_type}")

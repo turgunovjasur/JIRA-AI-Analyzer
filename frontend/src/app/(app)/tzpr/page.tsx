@@ -18,14 +18,5 @@ export default async function TZPRPage() {
     );
   }
 
-  return (
-    <TZPRChecker
-      cacheScope={{
-        companyCode: session.auth.company_code,
-        companyId: session.auth.company_id,
-        role,
-        userId: session.auth.user_id,
-      }}
-    />
-  );
+  return <TZPRChecker />;
 }

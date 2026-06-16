@@ -371,7 +371,6 @@ async def read_webhook_config(
             "testcase_auto_comment_enabled": bool(webhook_testcase.auto_comment_enabled),
             "testcase_auto_comment_trigger_status": webhook_testcase.auto_comment_trigger_status,
             "testcase_auto_comment_trigger_aliases": webhook_testcase.auto_comment_trigger_aliases,
-            "testcase_default_include_pr": bool(webhook_testcase.default_include_pr),
             "testcase_default_test_types": list(webhook_testcase.default_test_types or []),
             "testcase_max_test_cases": int(webhook_testcase.max_test_cases),
             "testcase_ai_data_section_order": list(webhook_testcase.ai_data_section_order or []),
@@ -589,7 +588,6 @@ async def save_webhook_config(
             "auto_comment_enabled": _tc_bool("testcase_auto_comment_enabled", False),
             "auto_comment_trigger_status": _tc_string("testcase_auto_comment_trigger_status", "READY TO TEST") or "READY TO TEST",
             "auto_comment_trigger_aliases": _tc_string("testcase_auto_comment_trigger_aliases", "Ready To Test,READY TO TEST"),
-            "default_include_pr": _tc_bool("testcase_default_include_pr", True),
             "default_test_types": _tc_ordered_list(
                 "testcase_default_test_types",
                 _TESTCASE_TYPES_ALLOWED,
@@ -810,7 +808,6 @@ async def read_module_config(
                 "agent3_fallback_model": str(getattr(checker, "agent3_fallback_model", "") or ""),
             },
             "testcase": {
-                "default_include_pr": bool(testcase.default_include_pr),
                 "default_test_types": list(testcase.default_test_types or []),
                 "max_test_cases": int(testcase.max_test_cases),
                 "ai_data_section_order": list(testcase.ai_data_section_order or []),
@@ -884,10 +881,6 @@ async def save_module_config(
     }
 
     testcase_update = {
-        "default_include_pr": _parse_bool(
-            testcase_raw.get("default_include_pr"),
-            "testcase.default_include_pr",
-        ),
         "default_test_types": _parse_ordered_list(
             testcase_raw.get("default_test_types"),
             "testcase.default_test_types",

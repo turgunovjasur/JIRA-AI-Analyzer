@@ -30,14 +30,9 @@ import { ComplianceRing } from "@/components/ui/compliance-ring";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
-import {
-  buildTZPRResultCacheKey,
-  readTZPRResultHistory,
-  upsertTZPRResultHistory,
-  writeTZPRResultHistory,
-  type TZPRCachedResultEntry,
-  type TZPRResultCacheScope,
-} from "@/lib/tzpr-result-cache";
+import { SectionHeader } from "@/components/ui/section-header";
+import { SettingsBaseCard } from "@/components/settings/base-card-system";
+import { useRecentRuns, type RecentRun } from "@/lib/use-recent-runs";
 import { cn } from "@/lib/cn";
 import type {
   TZPRAgentRunSnapshot,
@@ -49,9 +44,6 @@ import type {
   TZPRRunSnapshot,
 } from "@/lib/types";
 
-type TZPRCheckerProps = {
-  cacheScope: TZPRResultCacheScope;
-};
 
 type PipelineState = "pending" | "running" | "completed" | "failed";
 type RequirementFilter = "all" | "completed" | "failed" | "skipped" | "extra";
@@ -83,24 +75,12 @@ const FALLBACK_AGENTS: TZPRAgentRunSnapshot[] = [
   },
 ];
 
-function getBrowserStorage() {
-  try {
-    return window.localStorage;
-  } catch {
-    return null;
-  }
-}
-
 function isTerminalRunState(value?: string | null) {
   return ["completed", "manual_review", "blocked", "failed"].includes((value || "").toLowerCase());
 }
 
 function isResolvedRunSnapshot(run?: TZPRRunSnapshot | null) {
   return Boolean(run && (isTerminalRunState(run.run_state) || run.finished_at || run.final_result));
-}
-
-function coerceExecutionMode(_value?: string | null): TZPRExecutionMode {
-  return DEFAULT_EXECUTION_MODE;
 }
 
 function deriveResultError(result: TZPRAnalysisResult) {
@@ -117,10 +97,6 @@ function formatDateTime(value?: string | null) {
     dateStyle: "short",
     timeStyle: "short",
   }).format(date);
-}
-
-function formatCheckedAt(value: string) {
-  return formatDateTime(value);
 }
 
 function formatAgentDuration(agent?: TZPRAgentRunSnapshot | null) {
@@ -176,12 +152,12 @@ function getVerdictTone(result?: TZPRAnalysisResult | null): "success" | "warnin
   return "danger";
 }
 
-function getRecentResultTone(entry: TZPRCachedResultEntry) {
-  return getVerdictTone(entry.result);
-}
-
-function getRecentResultLabel(entry: TZPRCachedResultEntry) {
-  return getVerdictLabel(entry.result);
+function getRecentRunTone(value?: string | null): "soft" | "success" | "warning" | "danger" {
+  const normalized = (value || "").toLowerCase();
+  if (normalized === "completed") return "success";
+  if (normalized === "manual_review") return "warning";
+  if (normalized === "blocked" || normalized === "failed" || normalized === "error") return "danger";
+  return "soft";
 }
 
 function getRequirementCounts(result?: TZPRAnalysisResult | null) {
@@ -782,14 +758,13 @@ function StatCard({
   );
 }
 
-export function TZPRChecker({ cacheScope }: TZPRCheckerProps) {
-  const cacheKey = buildTZPRResultCacheKey(cacheScope);
+export function TZPRChecker() {
   const [taskKey, setTaskKey] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<TZPRAnalysisResult | null>(null);
   const [activeRun, setActiveRun] = useState<TZPRRunSnapshot | null>(null);
-  const [recentResults, setRecentResults] = useState<TZPRCachedResultEntry[]>([]);
+  const { recent, addRecent } = useRecentRuns("tz_pr_checker");
   const [requirementFilter, setRequirementFilter] = useState<RequirementFilter>("all");
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
 
@@ -827,29 +802,6 @@ export function TZPRChecker({ cacheScope }: TZPRCheckerProps) {
   const showRunSignals = Boolean((result?.warnings || []).length || figmaSummaries.length);
   const runEvents = agentPanelRun?.run_events || result?.run_events || [];
   const debugJson = agentPanelRun ? JSON.stringify(agentPanelRun, null, 2) : "";
-
-  useEffect(() => {
-    const storage = getBrowserStorage();
-    if (!storage) {
-      setRecentResults([]);
-      return;
-    }
-
-    const entries = readTZPRResultHistory(storage, cacheKey);
-    setRecentResults(entries);
-
-    if (!entries.length) {
-      setResult(null);
-      setError(null);
-      return;
-    }
-
-    const latestEntry = entries[0];
-    setTaskKey(latestEntry.taskKey);
-    setResult(latestEntry.result);
-    setError(deriveResultError(latestEntry.result));
-    setActiveRun(null);
-  }, [cacheKey]);
 
   useEffect(() => {
     const runId = activeRun?.run_id;
@@ -895,51 +847,77 @@ export function TZPRChecker({ cacheScope }: TZPRCheckerProps) {
     setCopyState("idle");
   }, [agentPanelRun?.run_id, agentPanelRun?.updated_at]);
 
-  function persistRecentResult(entry: TZPRCachedResultEntry) {
-    const storage = getBrowserStorage();
-    if (!storage) return;
-
-    setRecentResults((current) => {
-      const nextEntries = upsertTZPRResultHistory(current, entry);
-      try {
-        writeTZPRResultHistory(storage, cacheKey, nextEntries);
-      } catch {
-        // localStorage bloklangan bo'lsa ham asosiy UI ishlashda davom etadi.
-      }
-      return nextEntries;
+  function rememberRun(snapshot: TZPRRunSnapshot) {
+    const runId = snapshot.run_id?.trim();
+    const runTaskKey = (snapshot.task_key || snapshot.final_result?.task_key || taskKey).trim().toUpperCase();
+    if (!runId || !runTaskKey) return;
+    addRecent({
+      run_id: runId,
+      task_key: runTaskKey,
+      saved_at: Date.now(),
+      run_state: snapshot.run_state || snapshot.final_result?.run_state || undefined,
     });
-  }
-
-  function showCachedResult(entry: TZPRCachedResultEntry, options?: { promote?: boolean }) {
-    setTaskKey(entry.taskKey);
-    setResult(entry.result);
-    setError(deriveResultError(entry.result));
-    setActiveRun(null);
-    setRequirementFilter("all");
-    if (options?.promote) persistRecentResult(entry);
   }
 
   function applyRunSnapshot(snapshot: TZPRRunSnapshot, options?: { persistFinal?: boolean }) {
     setActiveRun(snapshot);
 
+    // Run yaratilishi/yangilanishi bilanoq recent ro'yxatga yoziladi (dedupe hook ichida).
+    rememberRun(snapshot);
+
     const finalResult = snapshot.final_result || null;
     if (finalResult) {
       setResult(finalResult);
       setError(deriveResultError(finalResult));
+      return;
+    }
 
-      if (options?.persistFinal) {
-        persistRecentResult({
-          checkedAt: new Date().toISOString(),
-          executionMode: coerceExecutionMode(finalResult.execution_mode || snapshot.execution_mode),
-          result: finalResult,
-          taskKey: finalResult.task_key || taskKey.trim().toUpperCase(),
-        });
-      }
+    if (options?.persistFinal && snapshot.error_message?.trim()) {
+      setError(snapshot.error_message.trim());
       return;
     }
 
     if (snapshot.error_message?.trim()) {
       setError(snapshot.error_message.trim());
+    }
+  }
+
+  async function reopenRun(entry: RecentRun) {
+    if (submitting || runInProgress) return;
+    setSubmitting(true);
+    setError(null);
+    setResult(null);
+    setActiveRun(null);
+    setRequirementFilter("all");
+    setTaskKey(entry.task_key);
+
+    try {
+      const response = await fetch(`/api/tzpr/runs/${encodeURIComponent(entry.run_id)}`, {
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | (TZPRRunSnapshot & { error?: string })
+        | null;
+      if (!response.ok) {
+        setError(payload?.error || "Eski runni yuklab bo'lmadi.");
+        return;
+      }
+      if (!payload) {
+        setError("Eski run uchun bo'sh javob qaytdi.");
+        return;
+      }
+      // applyRunSnapshot activeRun'ni o'rnatadi → terminal bo'lmasa polling effekti davom etadi.
+      applyRunSnapshot(payload, {
+        persistFinal: isResolvedRunSnapshot(payload) || isTerminalRunState(payload.run_state),
+      });
+    } catch (reopenError) {
+      setError(
+        reopenError instanceof Error
+          ? reopenError.message
+          : "Eski runni yuklashda xato yuz berdi.",
+      );
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -1093,37 +1071,34 @@ export function TZPRChecker({ cacheScope }: TZPRCheckerProps) {
         </Button>
       </Card>
 
-      {recentResults.length && !runInProgress ? (
-        <Card padding="none" className="overflow-hidden">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-5 py-4">
-            <div className="inline-flex items-center gap-2 text-sm font-semibold text-foreground">
-              <Clock3 size={15} />
-              So'nggi tekshiruvlar
-            </div>
-            <Badge tone="soft">oxirgi {recentResults.length} ta</Badge>
+      {recent.length && !runInProgress ? (
+        <SettingsBaseCard
+          header={(
+            <SectionHeader
+              action={<Badge tone="soft">oxirgi {recent.length} ta</Badge>}
+              eyebrow="History"
+              title="So'nggi tekshiruvlar"
+            />
+          )}
+        >
+          <div className="mt-4 grid gap-2">
+            {recent.map((entry) => (
+              <button
+                className="flex items-center justify-between gap-3 rounded-[10px] border border-border bg-[color:var(--bg-layer)] px-4 py-3 text-left transition-colors hover:bg-card disabled:opacity-50"
+                disabled={submitting}
+                key={entry.run_id}
+                onClick={() => void reopenRun(entry)}
+                type="button"
+              >
+                <span className="inline-flex items-center gap-2">
+                  <Clock3 className="text-muted-foreground" size={14} />
+                  <span className="font-mono text-sm font-semibold text-foreground">{entry.task_key}</span>
+                </span>
+                <Badge tone={getRecentRunTone(entry.run_state)}>{entry.run_state || "—"}</Badge>
+              </button>
+            ))}
           </div>
-          <div className="divide-y divide-border">
-            {recentResults.map((entry) => {
-              const isActive = result?.task_key === entry.result.task_key;
-              return (
-                <button
-                  className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-5 py-4 text-left transition-colors hover:bg-[color:var(--bg-layer)] md:grid-cols-[180px_minmax(0,1fr)_auto_auto]"
-                  disabled={isActive}
-                  key={`${entry.taskKey}-${entry.checkedAt}`}
-                  onClick={() => showCachedResult(entry, { promote: true })}
-                  type="button"
-                >
-                  <span className="font-mono text-sm font-semibold text-foreground">{entry.taskKey}</span>
-                  <span className="hidden truncate text-sm text-muted-foreground md:block">
-                    {entry.result.task_summary || entry.result.task_info?.summary || "Task summary mavjud emas."}
-                  </span>
-                  <Badge tone={getRecentResultTone(entry)}>{getRecentResultLabel(entry)}</Badge>
-                  <span className="text-xs text-muted-foreground">{isActive ? "Ochiq" : formatCheckedAt(entry.checkedAt)}</span>
-                </button>
-              );
-            })}
-          </div>
-        </Card>
+        </SettingsBaseCard>
       ) : null}
 
       {agentPanelRun ? (

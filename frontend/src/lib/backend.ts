@@ -16,8 +16,8 @@ import type {
   SystemSettingsSaveRequest,
   SystemSettingsView,
   SuperAdminOverview,
-  TestCaseGenerateRequest,
-  TestCaseGenerationResult,
+  TestcaseCreateRunRequest,
+  TestcaseRunSnapshot,
   WebhookSettingsSaveRequest,
   WebhookSettingsView,
   TZPRCreateRunRequest,
@@ -152,13 +152,19 @@ export function getTzprRunWithBackend(runId: string) {
   });
 }
 
-export function generateTestCasesWithBackend(payload: TestCaseGenerateRequest & {
+export function createTestcaseRunWithBackend(payload: TestcaseCreateRunRequest & {
   company_id?: number | null;
   user_id?: number | null;
 }) {
-  return backendRequest<TestCaseGenerationResult>("/api/testcase/generate", {
+  return backendRequest<TestcaseRunSnapshot>("/api/testcase/runs", {
     method: "POST",
     body: payload,
+  });
+}
+
+export function getTestcaseRunWithBackend(runId: string) {
+  return backendRequest<TestcaseRunSnapshot>(`/api/testcase/runs/${encodeURIComponent(runId)}`, {
+    method: "GET",
   });
 }
 

@@ -328,26 +328,6 @@ class TZPRService(BaseService):
             self._pr_helper = PRHelper(self.github)
         return self._pr_helper
 
-    def _get_figma_client_for_file(self, file_key: str):
-        """Berilgan file_key uchun ishlayotgan tokenni topib FigmaClient qaytaradi (fail-safe)."""
-        try:
-            from utils.figma.figma_client import FigmaClient
-            creds = self._get_creds()
-            figma_tokens = creds.get('figma_tokens', [])
-            log.info(f"Figma creds: figma_tokens={len(figma_tokens)} ta | company_id={self._company_id} | user_id={self._user_id}")
-            if not figma_tokens:
-                figma_token_single = creds.get('figma_token', '')
-                has_old = "bor" if figma_token_single else "yoq"
-                log.warning(f"Figma: figma_tokens bosh | figma_token (eski)={has_old}")
-                return None
-            working_token = FigmaClient.find_working_token(figma_tokens, file_key)
-            if working_token:
-                return FigmaClient(access_token=working_token)
-            log.warning(f"Figma: ishlayotgan token topilmadi | file_key={file_key}")
-        except Exception as e:
-            log.warning(f"Figma client init failed: {e}")
-        return None
-
     def analyze_task(
             self,
             task_key: str,
@@ -640,62 +620,13 @@ class TZPRService(BaseService):
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     def _get_figma_data(self, task_details: Dict, update_status) -> Optional[Dict]:
+        """Figma ma'lumotlarini olish (FAIL-SAFE).
+
+        Implementatsiya umumiy `core.module_preflight.fetch_figma_summaries` da —
+        checker va testcase yagona figma fetch kodidan foydalanadi (xulq bir xil).
         """
-        Figma ma'lumotlarini olish (FAIL-SAFE)
-
-        Returns:
-            Dict or None: Figma data yoki None (xatolik bo'lsa)
-        """
-        try:
-            figma_links = task_details.get('figma_links', [])
-            log.info(f"Figma: task da {len(figma_links)} ta figma_link topildi")
-
-            if not figma_links:
-                # No Figma links - bu normal holat, xatolik emas
-                return None
-
-            # Collect summaries — har bir fayl uchun ishlayotgan token qidiriladi
-            summaries = []
-            for link in figma_links:
-                file_key = link['file_key']
-                client = self._get_figma_client_for_file(file_key)
-                if not client:
-                    update_status("warning", f"Figma: {link['name']} — ishlayotgan token topilmadi")
-                    summaries.append({
-                        'file_key': file_key,
-                        'name': link['name'],
-                        'url': link['url'],
-                        'summary': "Token topilmadi yoki ruxsat yo'q"
-                    })
-                    continue
-                try:
-                    node_id = link.get('node_id')
-                    summary = client.get_file_summary(file_key, node_id=node_id)
-                    summaries.append({
-                        'file_key': file_key,
-                        'name': link['name'],
-                        'url': link['url'],
-                        'summary': summary
-                    })
-                except Exception as e:
-                    update_status("warning", f"Figma: {link['name']} olinmadi")
-                    summaries.append({
-                        'file_key': file_key,
-                        'name': link['name'],
-                        'url': link['url'],
-                        'summary': f"Error: {str(e)}"
-                    })
-
-            return {
-                'links': figma_links,
-                'summaries': summaries,
-                'count': len(summaries)
-            }
-
-        except Exception as e:
-            # Global Figma error - log but don't fail
-            update_status("warning", f"Figma xatolik: {str(e)}")
-            return None
+        from core.module_preflight import fetch_figma_summaries
+        return fetch_figma_summaries(self, task_details, update_status)
 
     def _build_figma_prompt_section(self, figma_data: Optional[Dict]) -> tuple:
         """

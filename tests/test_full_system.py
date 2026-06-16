@@ -271,7 +271,7 @@ class TestServiceUnit:
             'comments': []
         }
         mock_gemini = MagicMock()
-        mock_gemini.analyze.return_value = json.dumps({
+        mock_gemini.analyze.side_effect = [json.dumps({"requirements": [{"id": "REQ-1", "text": "Foydalanuvchi tizimga kira olishi kerak", "source": "tz"}]}), json.dumps({
             "test_cases": [
                 {
                     "id": "TC-001",
@@ -298,14 +298,15 @@ class TestServiceUnit:
                     "tags": ["login", "security"]
                 }
             ]
-        })
+        })]
         mock_pr_helper = MagicMock()
         mock_pr_helper.get_pr_full_info.return_value = None
         service._jira_client = mock_jira
         service._gemini_helper = mock_gemini
+        service._agent_gemini = mock_gemini
         service._github_client = MagicMock()
         service._pr_helper = mock_pr_helper
-        result = service.generate_test_cases("TEST-002", include_pr=True)
+        result = service.generate_test_cases("TEST-002")
         assert isinstance(result, TestCaseGenerationResult)
         assert result.success
 
@@ -321,7 +322,7 @@ class TestServiceUnit:
             'comments': []
         }
         mock_gemini = MagicMock()
-        mock_gemini.analyze.return_value = json.dumps({
+        mock_gemini.analyze.side_effect = [json.dumps({"requirements": [{"id": "REQ-1", "text": "Foydalanuvchi tizimga kira olishi kerak", "source": "tz"}]}), json.dumps({
             "test_cases": [
                 {
                     "id": "TC-001",
@@ -348,14 +349,15 @@ class TestServiceUnit:
                     "tags": ["login"]
                 }
             ]
-        })
+        })]
         mock_pr_helper = MagicMock()
         mock_pr_helper.get_pr_full_info.return_value = None
         service._jira_client = mock_jira
         service._gemini_helper = mock_gemini
+        service._agent_gemini = mock_gemini
         service._github_client = MagicMock()
         service._pr_helper = mock_pr_helper
-        result = service.generate_test_cases("TEST-002", include_pr=True)
+        result = service.generate_test_cases("TEST-002")
         assert len(result.test_cases) == 2
 
     def test_testcase_generator_first_test_type(self):
@@ -370,7 +372,7 @@ class TestServiceUnit:
             'comments': []
         }
         mock_gemini = MagicMock()
-        mock_gemini.analyze.return_value = json.dumps({
+        mock_gemini.analyze.side_effect = [json.dumps({"requirements": [{"id": "REQ-1", "text": "Foydalanuvchi tizimga kira olishi kerak", "source": "tz"}]}), json.dumps({
             "test_cases": [
                 {
                     "id": "TC-001",
@@ -385,14 +387,15 @@ class TestServiceUnit:
                     "tags": []
                 }
             ]
-        })
+        })]
         mock_pr_helper = MagicMock()
         mock_pr_helper.get_pr_full_info.return_value = None
         service._jira_client = mock_jira
         service._gemini_helper = mock_gemini
+        service._agent_gemini = mock_gemini
         service._github_client = MagicMock()
         service._pr_helper = mock_pr_helper
-        result = service.generate_test_cases("TEST-002", include_pr=True)
+        result = service.generate_test_cases("TEST-002")
         assert result.test_cases[0].test_type == "positive"
 
     def test_testcase_generator_custom_context(self):
@@ -407,7 +410,7 @@ class TestServiceUnit:
             'comments': []
         }
         mock_gemini = MagicMock()
-        mock_gemini.analyze.return_value = json.dumps({
+        mock_gemini.analyze.side_effect = [json.dumps({"requirements": [{"id": "REQ-1", "text": "Foydalanuvchi tizimga kira olishi kerak", "source": "tz"}]}), json.dumps({
             "test_cases": [
                 {
                     "id": "TC-001",
@@ -422,16 +425,16 @@ class TestServiceUnit:
                     "tags": []
                 }
             ]
-        })
+        })]
         mock_pr_helper = MagicMock()
         mock_pr_helper.get_pr_full_info.return_value = None
         service._jira_client = mock_jira
         service._gemini_helper = mock_gemini
+        service._agent_gemini = mock_gemini
         service._github_client = MagicMock()
         service._pr_helper = mock_pr_helper
         result = service.generate_test_cases(
             "TEST-003",
-            include_pr=False,
             custom_context="Product: ACME Widget, Narx: $99.99"
         )
         assert result.custom_context_used

@@ -32,7 +32,6 @@ type WebhookSavePayload = {
   testcase_auto_comment_enabled?: boolean;
   testcase_auto_comment_trigger_status?: string;
   testcase_auto_comment_trigger_aliases?: string;
-  testcase_default_include_pr?: boolean;
   testcase_default_test_types?: string[];
   testcase_max_test_cases?: number;
   testcase_ai_data_section_order?: string[];
@@ -106,7 +105,6 @@ export async function GET() {
         testcase_auto_comment_enabled: Boolean(data.testcase_auto_comment_enabled),
         testcase_auto_comment_trigger_status: String(data.testcase_auto_comment_trigger_status || "READY TO TEST"),
         testcase_auto_comment_trigger_aliases: String(data.testcase_auto_comment_trigger_aliases || "Ready To Test,READY TO TEST"),
-        testcase_default_include_pr: Boolean(data.testcase_default_include_pr ?? true),
         testcase_default_test_types: Array.isArray(data.testcase_default_test_types) ? data.testcase_default_test_types : ["positive", "negative"],
         testcase_max_test_cases: ensureNumber(data.testcase_max_test_cases, 10),
         testcase_ai_data_section_order: Array.isArray(data.testcase_ai_data_section_order) ? data.testcase_ai_data_section_order : ["tz", "comments", "custom_context", "code"],
@@ -178,7 +176,6 @@ export async function POST(request: Request) {
         ensureOptionalBool(payload?.testcase_auto_comment_enabled) ?? currentTcEnabled,
       testcase_auto_comment_trigger_status: String(payload?.testcase_auto_comment_trigger_status || "READY TO TEST").trim(),
       testcase_auto_comment_trigger_aliases: String(payload?.testcase_auto_comment_trigger_aliases || "Ready To Test,READY TO TEST").trim(),
-      testcase_default_include_pr: Boolean(payload?.testcase_default_include_pr ?? true),
       testcase_default_test_types: Array.isArray(payload?.testcase_default_test_types) ? payload!.testcase_default_test_types! : ["positive", "negative"],
       testcase_max_test_cases: ensureNumber(payload?.testcase_max_test_cases, 10),
       testcase_ai_data_section_order: Array.isArray(payload?.testcase_ai_data_section_order) ? payload!.testcase_ai_data_section_order! : ["tz", "comments", "custom_context", "code"],
@@ -215,7 +212,6 @@ export async function POST(request: Request) {
         testcase_auto_comment_enabled: cleanPayload.testcase_auto_comment_enabled,
         testcase_auto_comment_trigger_status: cleanPayload.testcase_auto_comment_trigger_status,
         testcase_auto_comment_trigger_aliases: cleanPayload.testcase_auto_comment_trigger_aliases,
-        testcase_default_include_pr: cleanPayload.testcase_default_include_pr,
         testcase_default_test_types: cleanPayload.testcase_default_test_types,
         testcase_max_test_cases: cleanPayload.testcase_max_test_cases,
         testcase_ai_data_section_order: cleanPayload.testcase_ai_data_section_order,

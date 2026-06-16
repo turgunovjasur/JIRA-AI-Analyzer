@@ -15,13 +15,45 @@ Version: 6.0 CUSTOM CONTEXT
 from typing import Dict, List, Optional, Callable
 from dataclasses import dataclass, field
 import json
+import os
 
 # Core imports
 from core import BaseService, PRHelper, PRNotMergedError, TZHelper
 from core.analysis_policy import build_full_analysis_blocked
+from core.module_preflight import ModulePreflightPolicy, run_module_preflight
 from core.logger import get_logger
 
+# Multi-agent: Agent1 (talab ajratuvchi) checker modulidan QAYTA ISHLATILADI —
+# checker fayli O'ZGARTIRILMAYDI, faqat import qilinadi.
+from services.checkers.tzpr_agents import agent1 as agent1_contract
+from services.checkers.tzpr_preflight import (
+    build_figma_access_status,
+    extract_figma_requirement_candidates,
+)
+from services.generators.testcase_agents import agent2_testcase
+from utils.ai.gemini_json import parse_gemini_json
+
 log = get_logger("testcase.gen")
+
+# Agent1 (talab inventarizatsiyasi) uchun output token limiti — checker bilan bir xil.
+AGENT1_MAX_OUTPUT_TOKENS = 16384
+
+# Testcase modul setup profili (STRUKTURAVIY): testcase PR ishlatmaydi.
+# Tunable qiymatlar (min_tz, figma on/off, comment limiti) settings'dan keladi.
+_TESTCASE_PREFLIGHT_POLICY = ModulePreflightPolicy(
+    jira_fetch=True,
+    min_tz_check=True,
+    pr_check=False,
+    figma_check=True,
+    comment_fetch=True,
+    tz_build=True,
+)
+
+# Har talab uchun test case chegarasi:
+#  - kamida MIN (prompt ko'rsatmasi + qoplanmaganlik ogohlantirishi)
+#  - ko'pi bilan MAX (deterministik trim) — 1 talabga juda ko'p test case yozilishini oldini oladi.
+MIN_TC_PER_REQ = 1
+MAX_TC_PER_REQ = 3
 
 
 @dataclass
@@ -37,6 +69,8 @@ class TestCase:
     priority: str
     severity: str
     tags: List[str] = field(default_factory=list)
+    # Qaysi talab(lar)ni qoplaydi (Agent2 belgilaydi: ["REQ-1", ...])
+    requirement_ids: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -65,6 +99,9 @@ class TestCaseGenerationResult:
     ai_prompt_size: int = 0
     ai_model: str = ""
     files_analyzed: int = 0
+    # Multi-agent: Agent1 ajratgan talablar va Agent2 qamrovi
+    requirements: List[Dict] = field(default_factory=list)
+    requirement_coverage: Dict = field(default_factory=dict)
 
 
 class TestCaseGeneratorService(BaseService):
@@ -86,6 +123,8 @@ class TestCaseGeneratorService(BaseService):
         """
         super().__init__(company_id=company_id, user_id=user_id)
         self._pr_helper = None
+        # Agent1/Agent2 uchun model fallback'li Gemini helper (lazy)
+        self._agent_gemini = None
 
     def _get_settings(self):
         """User yoki kompaniya Testcase sozlamalarini qaytarish.
@@ -101,6 +140,17 @@ class TestCaseGeneratorService(BaseService):
         from config.app_settings import get_app_settings
         return get_app_settings().testcase_generator
 
+    def _resolve_min_tz_chars(self) -> int:
+        """min_tz_description_chars — checker sozlamasidan (UI: user, webhook: company)."""
+        if self._user_id is not None and self._company_id is not None:
+            from config.app_settings import get_app_settings_for_user
+            return get_app_settings_for_user(self._user_id, self._company_id).tz_pr_checker.min_tz_description_chars
+        if self._company_id is not None:
+            from config.app_settings import get_app_settings_for_company
+            return get_app_settings_for_company(self._company_id).webhook_tz_pr.min_tz_description_chars
+        from config.app_settings import get_app_settings
+        return get_app_settings().tz_pr_checker.min_tz_description_chars
+
     @property
     def pr_helper(self):
         """Lazy PR Helper"""
@@ -111,71 +161,41 @@ class TestCaseGeneratorService(BaseService):
     def generate_test_cases(
             self,
             task_key: str,
-            include_pr: bool = True,
-            use_smart_patch: bool = False,
             test_types: List[str] = None,
             custom_context: str = "",
             status_callback: Optional[Callable[[str, str], None]] = None,
             dev_objections: Optional[List[Dict]] = None
     ) -> TestCaseGenerationResult:
         """
-        Testcase generation — asosiy funksiya (6 bosqichli pipeline).
+        Testcase generation — 2-agentli pipeline (Agent1 → Agent2).
 
-        Bu funksiya JIRA task TZ va GitHub PR ma'lumotlari asosida
-        Google Gemini AI yordamida test case'lar yaratadi va
-        ``TestCaseGenerationResult`` sifatida qaytaradi.
+        Manbalar: JIRA TZ + comment + Figma. PR ISHLATILMAYDI. Natija
+        ``TestCaseGenerationResult`` sifatida qaytadi.
 
         Ishlash bosqichlari:
-            1. JIRA'dan task tafsilotlarini olish (summary, TZ, description, comments).
-            2. TZHelper orqali TZ matnini formatlash va comment tahlilini bajarish.
-            3. GitHub'dan PR ma'lumotlarini olish — ``include_pr=True`` bo'lsa
-               ``PRHelper.get_pr_full_info()`` chaqiriladi (Smart Patch bilan).
-               PR topilmasa — TZ-only rejimga o'tish (fallback), warning saqlanadi.
-            4. ``TZHelper.create_task_overview()`` orqali task umumiy tavsifi yaratiladi.
-            5. ``_generate_with_ai()`` orqali Gemini AI ga prompt yuboriladi va
-               xom JSON javob olinadi.
-            6. ``_parse_test_cases()`` orqali xom JSON dan ``TestCase`` ro'yxati
-               ajratib olinadi va statistika hisoblanadi.
+            1. Shared module preflight (``run_module_preflight``): JIRA task olish,
+               min TZ tekshiruvi, Figma (settingdan: "figma" ai_data_section_order da),
+               TZ + comment formatlash.
+            2. Agent1 (checker kontrakti) — TZ + Figma'dan talablar ro'yxati (comment YO'Q).
+            3. Agent2 — talablar + TZ + comment + Figma asosida test case (bitta chaqiruv).
+            4. Deterministik finalize: dedup, har talabga max 3 test case, TC-NNN qayta
+               raqamlash, talab qamrovini hisoblash.
 
         Custom context (qo'shimcha kontekst):
-            ``custom_context`` bo'sh bo'lmasa, u prompt ichiga alohida bo'lim
-            sifatida kiritiladi va AI ga ``MUHIM: ishlat`` ko'rsatmasi beriladi.
-            Bu QA muhandisga product nomlari, narxlar, chegirmalar kabi
-            domainга xos ma'lumotlarni AI ga berish imkonini yaratadi.
-
-        PR topilmasa nima bo'ladi (fallback):
-            - ``pr_info = None`` qoladi
-            - ``warnings`` ro'yxatiga xabar qo'shiladi
-            - AI faqat TZ asosida ishlaydi (``include_pr=False`` bilan ekvivalent)
-            - ``TestCaseGenerationResult.pr_count = 0``
+            ``custom_context`` bo'sh bo'lmasa, Agent2 promtiga alohida bo'lim sifatida
+            kiritiladi (product nomlari, narxlar, limitlar test datasida ishlatiladi).
 
         Args:
             task_key: JIRA task identifikatori (masalan: DEV-1234).
-            include_pr: True bo'lsa GitHub PR ma'lumotlari olinadi.
-                False bo'lsa — faqat TZ asosida ishlaydi (tezroq, PR-siz).
-            use_smart_patch: True bo'lsa PRHelper Smart Patch algoritmini
-                ishlatadi — katta PR'larda faqat muhim o'zgarishlar olinadi.
-            test_types: Yaratilishi kerak bo'lgan test turlari ro'yxati.
-                Masalan: ``['positive', 'negative', 'boundary']``.
-                Default: ``['positive', 'negative']``.
-            custom_context: Foydalanuvchidan qo'shimcha kontekst matni.
-                Masalan: ``'Mahsulot: Anor Premium. Narx: 50000 so'm. Chegirma: 20%'``.
-                Bo'sh string bo'lsa e'tiborga olinmaydi.
-            status_callback: Har bir bosqich tugaganda chaqiriladigan callback.
-                Imzosi: ``(status: str, message: str) -> None``.
+            test_types: Test turlari ro'yxati. Default: ``['positive', 'negative']``.
+            custom_context: Qo'shimcha kontekst matni (bo'sh bo'lsa e'tiborga olinmaydi).
+            status_callback: Har bosqichda chaqiriladigan callback ``(status, message)``.
+            dev_objections: Developer etirozlari (ixtiyoriy).
 
         Returns:
-            TestCaseGenerationResult: Natija ob'ekti quyidagilarni o'z ichiga oladi:
-                - ``test_cases``: ``TestCase`` ob'ektlari ro'yxati
-                - ``total_test_cases``: yaratilgan test case'lar soni
-                - ``by_type``: test turi bo'yicha statistika (masalan: ``{'positive': 3}``)
-                - ``by_priority``: prioritet bo'yicha statistika
-                - ``pr_count``, ``files_changed``: PR statistikasi
-                - ``tz_content``: ishlatilgan TZ matni
-                - ``success``: True agar muvaffaqiyatli
-                - ``error_message``: xato bo'lsa tavsif
-                - ``warnings``: ogohlantirish xabarlari ro'yxati
-                - ``custom_context_used``: custom_context ishlatilganmi
+            TestCaseGenerationResult: ``test_cases``, ``total_test_cases``, ``by_type``,
+            ``by_priority``, ``tz_content``, ``requirements``, ``requirement_coverage``,
+            ``success``, ``error_message``, ``warnings``, ``custom_context_used``.
         """
         # Status updater (BaseService'dan)
         update_status = self._create_status_updater(status_callback)
@@ -187,15 +207,27 @@ class TestCaseGeneratorService(BaseService):
             import time as _time
             _t0 = _time.time()
 
-            # 1. JIRA dan task olish
-            log.info(f"[{task_key}] Testcase ▶ JIRA task olinmoqda...")
-            update_status("progress", "JIRA task ma'lumotlari olinmoqda...")
-            task_details = self.jira.get_task_details(
-                task_key,
-                include_pr_urls=bool(include_pr),
-                include_figma_links=False,
+            warnings = []
+            tc_settings = self._get_settings()
+            max_test_cases = tc_settings.max_test_cases
+            min_tz_chars = self._resolve_min_tz_chars()
+            # Figma checker kabi settingdan boshqariladi: "figma" ai_data_section_order da bo'lsa olinadi.
+            figma_enabled = "figma" in (getattr(tc_settings, "ai_data_section_order", None) or [])
+
+            # ── Umumiy setup check'lar (shared module preflight) ──
+            ctx = run_module_preflight(
+                self,
+                task_key=task_key,
+                policy=_TESTCASE_PREFLIGHT_POLICY,
+                min_tz_chars=min_tz_chars,
+                read_comments_enabled=tc_settings.read_comments_enabled,
+                max_comments_to_read=tc_settings.max_comments_to_read,
+                figma_enabled=figma_enabled,
+                update_status=update_status,
             )
-            if not task_details:
+
+            # jira_fetch fail → task topilmadi (modul o'z xato natijasini qaytaradi)
+            if ctx.failed("jira_fetch"):
                 return TestCaseGenerationResult(
                     task_key=task_key,
                     task_summary="",
@@ -203,94 +235,14 @@ class TestCaseGeneratorService(BaseService):
                     error_message=f"{task_key} topilmadi"
                 )
 
-            from utils.pr_cache import (
-                get_skip_cache, get_pr_exists_cache, get_pr_merged_cache, get_pr_cache
-            )
+            task_details = ctx.task_details
+            figma_data = ctx.figma_data
 
-            # 2. Skip cache o'qish — AI_SKIP topilganmi?
-            skip_detected = get_skip_cache(task_key)
-
-            # 3. PR check (skip bo'lmasa)
-            warnings = []
-            pr_info = None
-            pr_details_list = []
-
-            if skip_detected:
-                # AI_SKIP topilgan — PR check o'tkazib yuboriladi
-                log.info(f"[{task_key}] skip_cache=True → PR check o'tkazib yuborildi")
-            elif include_pr:
-                # skip yo'q — PR bor/merged natijasini cache dan olamiz
-                pr_exists = get_pr_exists_cache(task_key)
-                pr_merged = get_pr_merged_cache(task_key)
-
-                if pr_exists is False:
-                    return TestCaseGenerationResult(
-                        task_key=task_key,
-                        task_summary=task_details.get('summary', ''),
-                        success=False,
-                        error_message="Bu task uchun PR topilmadi (JIRA va GitHub'da)",
-                    )
-                if pr_merged is False:
-                    return TestCaseGenerationResult(
-                        task_key=task_key,
-                        task_summary=task_details.get('summary', ''),
-                        success=False,
-                        error_message="❌ PR merged emas. Faqat 'merged' statusdagi PR'lar qabul qilinadi.",
-                    )
-
-                # Cache dan PR info olish (Servis-1 saqlagan)
-                pr_info = get_pr_cache(task_key)
-                if pr_info:
-                    log.info(f"[{task_key}] PR cache dan foydalanildi (Servis-1 topgan, qayta qidirilmadi)")
-                else:
-                    # Cache yo'q (faqat Servis-2 standalone ishlayotgan holat)
-                    try:
-                        pr_info = self.pr_helper.get_pr_full_info(
-                            task_key,
-                            task_details,
-                            status_callback,
-                            use_smart_patch=use_smart_patch
-                        )
-                    except PRNotMergedError as e:
-                        log.warning(f"[{task_key}] PR merged emas: {e}")
-                        return TestCaseGenerationResult(
-                            task_key=task_key,
-                            task_summary=task_details.get('summary', ''),
-                            success=False,
-                            error_message=str(e),
-                        )
-                    except Exception as pr_e:
-                        log.warning(f"[{task_key}] PR fetch xatosi: {pr_e}")
-                        pr_info = None
-
-                if pr_info:
-                    pr_details_list = pr_info.get('pr_details', [])
-                    log.info(f"[{task_key}] Testcase ✅ PR ma'lumot olindi ({pr_info.get('files_changed', 0)} fayl)")
-                else:
-                    warnings.append(
-                        "PR ma'lumoti topilmadi yoki olishda xato yuz berdi. "
-                        "Test case'lar faqat TZ asosida yaratilgan."
-                    )
-                    log.warning(f"[{task_key}] Testcase ⚠ PR topilmadi — TZ asosida davom etilmoqda")
-                    update_status("warning", "PR topilmadi, TZ asosida davom etilmoqda...")
-
-            # 4. TZ uzunlik tekshiruvi
-            tc_settings = self._get_settings()
-            max_test_cases = tc_settings.max_test_cases
-            if self._user_id is not None and self._company_id is not None:
-                from config.app_settings import get_app_settings_for_user
-                min_tz_chars = get_app_settings_for_user(self._user_id, self._company_id).tz_pr_checker.min_tz_description_chars
-            elif self._company_id is not None:
-                from config.app_settings import get_app_settings_for_company
-                min_tz_chars = get_app_settings_for_company(self._company_id).webhook_tz_pr.min_tz_description_chars
-            else:
-                from config.app_settings import get_app_settings
-                min_tz_chars = get_app_settings().tz_pr_checker.min_tz_description_chars
-            if min_tz_chars > 0 and self._is_tz_absent_or_minimal(task_details, min_tz_chars):
-                actual_chars = len((task_details.get('description') or '').strip())
+            # min_tz_check fail → TZ qisqa (modul o'z xato natijasini qaytaradi)
+            if ctx.failed("min_tz_check"):
                 msg = (
                     f"TZ yetarli emas. "
-                    f"(mavjud: {actual_chars} belgi, min: {min_tz_chars} belgi). Servis-2 to'xtatildi."
+                    f"(mavjud: {ctx.tz_chars} belgi, min: {min_tz_chars} belgi). Servis-2 to'xtatildi."
                 )
                 return TestCaseGenerationResult(
                     task_key=task_key,
@@ -300,74 +252,70 @@ class TestCaseGeneratorService(BaseService):
                     error_message=msg
                 )
 
-            # 5. TZ va Comment tahlili
-            log.info(f"[{task_key}] Testcase ▶ TZ formatlanyapti...")
-            update_status("progress", "TZ va comment'lar tahlil qilinmoqda...")
-            if not tc_settings.read_comments_enabled:
-                task_no_comments = dict(task_details)
-                task_no_comments['comments'] = []
-                tz_content, comment_analysis = TZHelper.format_tz_with_comments(task_no_comments)
-            else:
-                max_c = tc_settings.max_comments_to_read if tc_settings.max_comments_to_read > 0 else None
-                tz_content, comment_analysis = TZHelper.format_tz_with_comments(
-                    task_details, max_comments=max_c
-                )
+            tz_content = ctx.tz_content
+            comment_analysis = ctx.comment_analysis
+            overview = ctx.task_overview
             log.info(f"[{task_key}] Testcase ✅ TZ formatlandi ({len(tz_content)} belgi)")
 
-            # 6. Overview yaratish
-            log.info(f"[{task_key}] Testcase ▶ Overview yaratilmoqda...")
-            overview = TZHelper.create_task_overview(
-                task_details,
-                comment_analysis,
-                pr_info
-            )
-
-            log.info(f"[{task_key}] Testcase ▶ AI ga so'rov yuborilmoqda (test turlari: {test_types})...")
-            update_status("progress", "AI test case'lar yaratmoqda...")
-            ai_result = self._generate_with_ai(
-                task_key=task_key,
-                task_details=task_details,
-                tz_content=tz_content,
-                comment_analysis=comment_analysis,
-                pr_info=pr_info,
-                test_types=test_types,
-                custom_context=custom_context,
-                max_test_cases=max_test_cases,
-                dev_objections=dev_objections or []
-            )
-
-            if not ai_result['success']:
-                blocked = build_full_analysis_blocked(
-                    module_name="Test Case Generator",
-                    task_key=task_key,
-                    error_message=ai_result.get("error", "AI full analysis failed"),
-                    files_total=pr_info['files_changed'] if pr_info else 0,
-                    files_included=ai_result.get("files_included", pr_info['files_changed'] if pr_info else 0),
-                    prompt_size_chars=ai_result.get("prompt_size", 0),
-                    model=ai_result.get("model_name"),
+            # 6. AGENT1 — talablar ro'yxati (checker Agent1 kontrakti qayta ishlatiladi)
+            log.info(f"[{task_key}] Testcase ▶ Agent1 (talablar) ishga tushdi...")
+            update_status("progress", "Talablar ajratilmoqda (Agent1)...")
+            try:
+                requirements = self._run_agent1_requirements(task_key, task_details, figma_data)
+            except Exception as agent1_err:
+                log.log_error(task_key, "agent1", str(agent1_err))
+                return self._build_agent_error_result(
+                    task_key, task_details, overview, f"Agent1 ishlamadi: {agent1_err}"
                 )
-                return TestCaseGenerationResult(
+            if not requirements:
+                return self._build_agent_error_result(
+                    task_key, task_details, overview,
+                    "Agent1 talablar ro'yxatini ajrata olmadi (talab topilmadi)."
+                )
+            log.info(f"[{task_key}] Agent1 ✅ {len(requirements)} ta talab ajratildi")
+
+            # 7. AGENT2 — talablar asosida test case (BITTA chaqiruv)
+            update_status("progress", "AI test case'lar yozmoqda (Agent2)...")
+            try:
+                raw_response = self._run_agent2_testcases(
                     task_key=task_key,
-                    task_summary=task_details['summary'],
-                    task_full_details=task_details,
-                    task_overview=overview,
-                    success=False,
-                    error_message=blocked["error_message"],
-                    status_banner=blocked["status_banner"],
-                    ai_prompt_size=ai_result.get("prompt_size", 0),
-                    ai_model=ai_result.get("model_name") or "",
-                    files_analyzed=ai_result.get("files_included", pr_info['files_changed'] if pr_info else 0),
+                    task_details=task_details,
+                    requirements=requirements,
+                    tz_content=tz_content,
+                    comment_analysis=comment_analysis,
+                    figma_data=figma_data,
+                    test_types=test_types,
+                    custom_context=custom_context,
+                    max_test_cases=max_test_cases,
+                    dev_objections=dev_objections or [],
+                )
+            except Exception as agent2_err:
+                log.log_error(task_key, "agent2", str(agent2_err))
+                return self._build_agent_error_result(
+                    task_key, task_details, overview, f"Agent2 ishlamadi: {agent2_err}"
                 )
 
             _ai_sek = round(_time.time() - _t0, 1)
             log.info(f"[{task_key}] Testcase ✅ AI javob olindi ({_ai_sek}s), parse qilinmoqda...")
 
-            # 6. Test case'larni parse qilish
-            test_cases = self._parse_test_cases(ai_result['raw_response'])
+            # 8. Parse + deterministik finalize (dedup, qayta raqamlash, qamrov)
+            test_cases = self._parse_test_cases(raw_response)
+            test_cases, coverage = self._finalize_testcases(test_cases, requirements)
+            if coverage.get("uncovered_ids"):
+                warnings.append("Qoplanmagan talablar: " + ", ".join(coverage["uncovered_ids"]))
+            if coverage.get("trimmed_over_limit"):
+                warnings.append(
+                    f"{coverage['trimmed_over_limit']} ta ortiqcha test case olib tashlandi "
+                    f"(har talabga maksimum {MAX_TC_PER_REQ} ta)."
+                )
 
             if not test_cases:
                 log.warning(
-                    f"[{task_key}] AI javob parse'da 0 test case. Raw response (2000 char): {ai_result['raw_response'][:2000]}"
+                    f"[{task_key}] Agent2 javob parse'da 0 test case. Raw (2000 char): {raw_response[:2000]}"
+                )
+                return self._build_agent_error_result(
+                    task_key, task_details, overview,
+                    "Test case yaratilmadi (Agent2 javobi parse bo'lmadi)."
                 )
 
             # Statistika
@@ -385,9 +333,9 @@ class TestCaseGeneratorService(BaseService):
                 task_summary=task_details['summary'],
                 test_cases=test_cases,
                 tz_content=tz_content,
-                pr_count=pr_info['pr_count'] if pr_info else 0,
-                files_changed=pr_info['files_changed'] if pr_info else 0,
-                pr_details=pr_details_list,  # PR details for Code Changes tab
+                pr_count=0,
+                files_changed=0,
+                pr_details=[],
                 task_full_details=task_details,
                 task_overview=overview,
                 comment_changes_detected=comment_analysis['has_changes'],
@@ -399,9 +347,9 @@ class TestCaseGeneratorService(BaseService):
                 success=True,
                 warnings=warnings,
                 custom_context_used=bool(custom_context),
-                ai_prompt_size=ai_result.get("prompt_size", 0),
-                ai_model=ai_result.get("model_name") or "",
-                files_analyzed=ai_result.get("files_included", pr_info['files_changed'] if pr_info else 0),
+                ai_model=self._last_agent_model(),
+                requirements=requirements,
+                requirement_coverage=coverage,
             )
 
         except Exception as e:
@@ -414,6 +362,261 @@ class TestCaseGeneratorService(BaseService):
                 error_message=str(e)
             )
 
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    #  MULTI-AGENT: Agent1 (reuse) + Agent2 (testcase) yordamchilari
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    @property
+    def agent_gemini(self):
+        """Agent1/Agent2 uchun Gemini helper — model fallback bilan (lazy).
+
+        Asosiy model: kompaniya/user sozlamasidagi model.
+        Fallback model: GEMINI_FALLBACK_MODEL (boshqa modelga o'tish uchun).
+        GeminiHelper o'zi transient retry (5s→10s→20s) + barcha urinishlardan
+        keyin fallback modelga o'tishni bajaradi.
+        """
+        if self._agent_gemini is None:
+            from utils.ai.gemini_helper import GeminiHelper
+            creds = self._get_creds()
+            primary = creds.get('gemini_model') or os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+            fallback = os.getenv('GEMINI_FALLBACK_MODEL', 'gemini-2.5-flash').strip() or 'gemini-2.5-flash'
+            self._agent_gemini = GeminiHelper(
+                api_keys=creds['gemini_keys'],
+                model_name=primary,
+                fallback_model_name=fallback,
+            )
+        return self._agent_gemini
+
+    def _last_agent_model(self) -> str:
+        helper = self._agent_gemini
+        if helper is None:
+            return ""
+        return str(getattr(helper, "last_model_used", "") or getattr(helper, "model_name", "") or "")
+
+    def _build_agent_error_result(
+        self, task_key: str, task_details: Dict, overview: str, error_message: str
+    ) -> "TestCaseGenerationResult":
+        """Agent xatosi: eski monolit usulga QAYTILMAYDI — error + status banner qaytadi."""
+        blocked = build_full_analysis_blocked(
+            module_name="Test Case Generator",
+            task_key=task_key,
+            error_message=error_message,
+            files_total=0,
+            files_included=0,
+            prompt_size_chars=0,
+            model=self._last_agent_model(),
+        )
+        return TestCaseGenerationResult(
+            task_key=task_key,
+            task_summary=task_details.get('summary', ''),
+            task_full_details=task_details,
+            task_overview=overview,
+            success=False,
+            error_message=blocked["error_message"],
+            status_banner=blocked["status_banner"],
+            ai_model=self._last_agent_model(),
+        )
+
+    @staticmethod
+    def _build_figma_summary_text(figma_data: Optional[Dict]) -> str:
+        """Agent2 prompti uchun ishlatsa bo'ladigan Figma summary matni."""
+        if not figma_data:
+            return ""
+        parts = []
+        for item in (figma_data.get('summaries') or []):
+            summary = str(item.get('summary') or "").strip()
+            if not summary:
+                continue
+            low = summary.casefold()
+            if 'error:' in low or 'token topilmadi' in low or "ruxsat yo'q" in low:
+                continue
+            parts.append(f"[{item.get('name') or 'Figma'}]\n{summary}")
+        return "\n\n".join(parts)
+
+    def _build_agent1_input(self, task_details: Dict, figma_data: Optional[Dict]) -> Dict:
+        """Agent1 uchun {tz, comments, figma} input quradi.
+
+        QAT'IY QOIDA: Agent1 ga comment BERILMAYDI (comments=[]). Comment'lar faqat
+        keyingi agent (Agent2) ga uzatiladi — talab inventarizatsiyasini muhokama
+        izohlari buzib yubormasligi uchun.
+        - figma: figma_data dan toza talab-nomzodlar (preflight helperlari reuse).
+        """
+        tz = str(task_details.get('description') or "")
+
+        figma_texts: List[str] = []
+        if figma_data:
+            access = build_figma_access_status(task_details=task_details, figma_data=figma_data)
+            if access.get('has_usable_data'):
+                text_candidates, comment_candidates, _ = extract_figma_requirement_candidates(figma_data)
+                figma_texts = [str(t).strip() for t in (list(text_candidates) + list(comment_candidates)) if str(t).strip()]
+
+        return {"tz": tz, "comments": [], "figma": figma_texts}
+
+    def _run_agent1_requirements(
+        self, task_key: str, task_details: Dict, figma_data: Optional[Dict]
+    ) -> List[Dict]:
+        """Agent1 (checker kontrakti) — talablar ro'yxati [{id, text, source}].
+
+        Gemini hard-fail (barcha kalit/model) bo'lsa RuntimeError ko'tariladi va
+        yuqori darajada xato natijaga aylanadi (eskisiga qaytmaydi).
+        """
+        agent1_input = self._build_agent1_input(task_details, figma_data)
+        if not (str(agent1_input.get('tz') or "").strip() or agent1_input.get('comments') or agent1_input.get('figma')):
+            return []
+
+        prompt = agent1_contract.build_prompt(agent1_input=agent1_input)
+        raw = self.agent_gemini.analyze(
+            prompt,
+            max_output_tokens=AGENT1_MAX_OUTPUT_TOKENS,
+            generation_config_overrides={
+                "response_mime_type": "application/json",
+                "response_schema": agent1_contract.RESPONSE_SCHEMA,
+            },
+        )
+
+        task_summary = str(task_details.get('summary') or "").strip()
+        description = str(task_details.get('description') or "")
+
+        parse_result = parse_gemini_json(raw)
+        if parse_result.ok:
+            validation = agent1_contract.validate_agent1_json(
+                parse_result.data,
+                task_summary=task_summary,
+                description=description,
+                rules=None,  # rules=None → figma-source talablar SAQLANADI
+            )
+            if validation.get('ok'):
+                return list(validation.get('requirements') or [])
+
+        # Fallback: local JSON recover
+        recovered = agent1_contract.recover_incomplete_response(raw)
+        if recovered:
+            contract_out = agent1_contract.normalize_contract_output(recovered)
+            requirements = agent1_contract.refine_requirements(
+                requirements=contract_out['requirements'],
+                task_summary=task_summary,
+                description=description,
+                rules=None,
+            )
+            return list(requirements or [])
+        return []
+
+    def _run_agent2_testcases(
+        self,
+        *,
+        task_key: str,
+        task_details: Dict,
+        requirements: List[Dict],
+        tz_content: str,
+        comment_analysis: Dict,
+        figma_data: Optional[Dict],
+        test_types: List[str],
+        custom_context: str,
+        max_test_cases: int,
+        dev_objections: List[Dict],
+    ) -> str:
+        """Agent2 — talablar asosida test case yozish (bitta Gemini chaqiruvi)."""
+        prompt = agent2_testcase.build_prompt(
+            task_key=task_key,
+            task_summary=task_details.get('summary', ''),
+            task_type=task_details.get('type', ''),
+            task_priority=task_details.get('priority', ''),
+            requirements=requirements,
+            tz_content=tz_content,
+            comment_summary=(comment_analysis.get('summary') if comment_analysis.get('has_changes') else ""),
+            figma_summary=self._build_figma_summary_text(figma_data),
+            custom_context=custom_context,
+            dev_objections=dev_objections or [],
+            test_types=test_types,
+            max_test_cases=max_test_cases,
+        )
+
+        text_info = self._calculate_text_length(prompt)
+        if not text_info['within_limit']:
+            # FULL-only policy: prompt qisqartirilmaydi.
+            raise RuntimeError("AI token limit: prompt too large for full analysis")
+
+        max_tokens = self._get_settings().ai_max_output_tokens
+        log.info(f"[{task_key}] Agent2 ▶ Gemini chaqirildi (max_tokens={max_tokens})...")
+        return self.agent_gemini.analyze(
+            prompt,
+            max_output_tokens=max_tokens,
+            generation_config_overrides={
+                "response_mime_type": "application/json",
+                "response_schema": agent2_testcase.RESPONSE_SCHEMA,
+            },
+        )
+
+    def _finalize_testcases(
+        self, test_cases: List[TestCase], requirements: List[Dict]
+    ) -> tuple:
+        """Deterministik: takror test case'larni olib tashlash, TC-NNN qayta raqamlash,
+        talab qamrovini hisoblash (AI emas)."""
+        seen = set()
+        unique: List[TestCase] = []
+        for tc in test_cases:
+            key = (
+                str(tc.title or "").strip().casefold(),
+                tuple(str(s).strip().casefold() for s in (tc.steps or [])),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(tc)
+
+        before_trim = len(unique)
+        unique = self._enforce_max_per_requirement(unique, requirements)
+        trimmed = before_trim - len(unique)
+
+        for index, tc in enumerate(unique, start=1):
+            tc.id = f"TC-{index:03d}"
+
+        coverage = agent2_testcase.extract_requirement_coverage(unique, requirements)
+        coverage["trimmed_over_limit"] = trimmed
+        return unique, coverage
+
+    def _enforce_max_per_requirement(
+        self, test_cases: List[TestCase], requirements: List[Dict]
+    ) -> List[TestCase]:
+        """Har talab uchun KO'PI BILAN MAX_TC_PER_REQ test case qoldiradi (deterministik).
+
+        Test case bir nechta talabni qoplashi mumkin — shuning uchun olib tashlash faqat
+        o'sha test case qoplagan HAR BIR talab MIN_TC_PER_REQ dan past tushmaganda bajariladi
+        (qoplangan boshqa talab qamrovini buzmaslik uchun).
+        """
+        from collections import defaultdict
+
+        def covers(tc: TestCase) -> List[str]:
+            return [str(x).strip() for x in (tc.requirement_ids or []) if str(x).strip()]
+
+        count: Dict[str, int] = defaultdict(int)
+        for tc in test_cases:
+            for rid in covers(tc):
+                count[rid] += 1
+
+        kept = list(test_cases)
+        while True:
+            over = [rid for rid, n in count.items() if n > MAX_TC_PER_REQ]
+            if not over:
+                break
+            dropped = False
+            for rid in over:
+                for tc in kept:
+                    cov = covers(tc)
+                    if rid not in cov:
+                        continue
+                    if all(count[r] - 1 >= MIN_TC_PER_REQ for r in cov):
+                        for r in cov:
+                            count[r] -= 1
+                        kept.remove(tc)
+                        dropped = True
+                        break
+                if dropped:
+                    break
+            if not dropped:
+                break  # trim qilib bo'lmaydi (boshqa talab min ostiga tushadi)
+        return kept
+
     def _is_tz_absent_or_minimal(self, task_details: Dict, min_description_chars: int = 50) -> bool:
         """
         Taskda batafsil TZ yo'qmi yoki faqat summary bormi aniqlash.
@@ -422,384 +625,6 @@ class TestCaseGeneratorService(BaseService):
         """
         description = task_details.get('description') or ''
         return len(description.strip()) < min_description_chars
-
-    def _generate_with_ai(
-            self,
-            task_key: str,
-            task_details: Dict,
-            tz_content: str,
-            comment_analysis: Dict,
-            pr_info: Optional[Dict],
-            test_types: List[str],
-            custom_context: str = "",
-            max_test_cases: int = 10,
-            dev_objections: Optional[List[Dict]] = None
-    ) -> Dict:
-        """
-        Gemini AI ga prompt yuborish va xom javobni qaytarish.
-
-        Bu metod ``generate_test_cases()`` pipeline'ining 5-bosqichi:
-        prompt yaratiladi → matn hajmi tekshiriladi → AI chaqiriladi.
-
-        Prompt yaratish:
-            ``_create_test_case_prompt()`` chaqiriladi — barcha parametrlar
-            u yerga uzatiladi. Prompt TZ, comment tahlili, PR ma'lumoti va
-            custom context bo'limlarini o'z ichiga oladi.
-
-        Matn hajmi tekshiruvi:
-            ``BaseService._calculate_text_length()`` orqali prompt token hajmi
-            aniqlanadi. Agar limit oshilgan bo'lsa ``BaseService._truncate_text()``
-            orqali prompt qisqartiriladi — bu Gemini kontekst limitiga sig'ish
-            uchun zarur.
-
-        AI chaqiruvi:
-            ``self.gemini.analyze(prompt, max_output_tokens=...)`` chaqiriladi.
-            ``max_output_tokens`` ``app_settings.testcase_generator.ai_max_output_tokens``
-            dan olinadi — bu JSON truncation (kesilish) xatosini oldini oladi.
-
-        Args:
-            task_key: JIRA task identifikatori (log uchun).
-            task_details: JIRA task to'liq ma'lumotlari (summary, type, priority).
-            tz_content: Formatlangan TZ matni.
-            comment_analysis: ``TZHelper.format_tz_with_comments()`` natijasi
-                (``has_changes``, ``summary``, ``important_comments``).
-            pr_info: ``PRHelper.get_pr_full_info()`` natijasi yoki None.
-            test_types: Yaratilishi kerak bo'lgan test turlari.
-            custom_context: Foydalanuvchi qo'shimcha matni (bo'sh bo'lishi mumkin).
-            max_test_cases: AI yaratishi mumkin bo'lgan maksimal test case soni.
-
-        Returns:
-            Dict: Ikki kalitli lug'at:
-                - Muvaffaqiyatli holda:
-                    ``{'success': True, 'raw_response': '<AI xom JSON javobi>'}``
-                - Xato holda:
-                    ``{'success': False, 'error': 'AI xatosi: <sabab>'}``
-        """
-        try:
-            import time as _time
-
-            prompt = self._create_test_case_prompt(
-                task_key=task_key,
-                task_details=task_details,
-                tz_content=tz_content,
-                comment_analysis=comment_analysis,
-                pr_info=pr_info,
-                test_types=test_types,
-                custom_context=custom_context,
-                max_test_cases=max_test_cases,
-                dev_objections=dev_objections or []
-            )
-
-            # Text hajmini tekshirish (BaseService'dan)
-            text_info = self._calculate_text_length(prompt)
-            prompt_chars = len(prompt)
-            prompt_k_tokens = round(prompt_chars / 4000, 1)
-            limit_label = "✅" if text_info["within_limit"] else "⚠ oshdi, FULL policy bo'yicha bloklanadi"
-            log.info(f"[{task_key}] AI prompt: {prompt_chars:,} belgi (~{prompt_k_tokens}K token) | limit: {limit_label}")
-
-            if not text_info['within_limit']:
-                # FULL-only policy: prompt qisqartirilmaydi, aks holda partial analysis bo'ladi.
-                return {
-                    'success': False,
-                    'error': "AI token limit: prompt too large for full analysis",
-                    'prompt_size': prompt_chars,
-                    'model_name': getattr(self.gemini, "model_name", None),
-                    'files_included': pr_info['files_changed'] if pr_info else 0,
-                }
-
-            # AI chaqirish (max_output_tokens — truncation oldini olish uchun)
-            max_tokens = self._get_settings().ai_max_output_tokens
-            log.info(f"[{task_key}] AI ▶ Gemini.generate_content() chaqirildi (max_tokens={max_tokens})...")
-            _t_ai = _time.time()
-            response = self.gemini.analyze(prompt, max_output_tokens=max_tokens)
-            _ai_dur = round(_time.time() - _t_ai, 1)
-            log.info(f"[{task_key}] AI ✅ Gemini javob olindi: {_ai_dur}s | javob: {len(response):,} belgi")
-
-            return {
-                'success': True,
-                'raw_response': response,
-                'prompt_size': prompt_chars,
-                'model_name': getattr(self.gemini, "model_name", None),
-                'files_included': pr_info['files_changed'] if pr_info else 0,
-            }
-
-        except Exception as e:
-            return {
-                'success': False,
-                'error': f"AI xatosi: {str(e)}",
-                'prompt_size': len(prompt) if 'prompt' in locals() else 0,
-                'model_name': getattr(getattr(self, "_gemini_helper", None), "model_name", None),
-                'files_included': pr_info['files_changed'] if pr_info else 0,
-            }
-
-    def _create_test_case_prompt(
-            self,
-            task_key: str,
-            task_details: Dict,
-            tz_content: str,
-            comment_analysis: Dict,
-            pr_info: Optional[Dict],
-            test_types: List[str],
-            custom_context: str = "",
-            max_test_cases: int = 10,
-            dev_objections: Optional[List[Dict]] = None
-    ) -> str:
-        """
-        Gemini AI uchun testcase generation promptini yig'ish.
-
-        Prompt dinamik ravishda bo'limlardan tuziladi — ba'zi bo'limlar
-        faqat ma'lumot mavjud bo'lganda kiritiladi:
-
-        Har doim kiritilgan bo'limlar:
-            1. TASK MA'LUMOTLARI — task_key, summary, type, priority.
-            2. TEXNIK TOPSHIRIQ (TZ) — ``tz_content`` to'liq matni.
-            3. TEST CASE TALABLARI — test turlari va sifat ko'rsatmalari.
-            4. JAVOB FORMATI (JSON) — AI javob strukturasi namunasi.
-
-        Shartli bo'limlar (mavjud bo'lganda qo'shiladi):
-            - QO'SHIMCHA MA'LUMOTLAR: ``custom_context`` bo'sh bo'lmasa,
-              alohida bo'lim sifatida kiritiladi. AI ga ``ALBATTA ishlat``
-              ko'rsatmasi beriladi — product nomlari, narxlar, domenga xos
-              ma'lumotlar test datalarida aks ettiriladi.
-            - MUHIM: COMMENT'LARDA O'ZGARISHLAR: ``comment_analysis['has_changes']``
-              True bo'lsa, comment tahlili kiritiladi.
-            - KOD O'ZGARISHLARI: ``pr_info`` mavjud bo'lsa, PR statistikasi
-              (PR soni, fayl soni, qo'shilgan/o'chirilgan qatorlar) kiritiladi.
-
-        Prompt formati:
-            - O'zbek tilida yoziladi (AI javobi ham O'zbek tilida bo'ladi)
-            - Unicode vizual ajratgichlar (═══) bo'limlar chegarasini belgilaydi
-            - JSON namunasi ``{{}}`` escape bilan f-string ichida beriladi
-            - ``max_test_cases`` va ``len(test_types)`` dinamik kiritiladi
-
-        Args:
-            task_key: JIRA task identifikatori (prompt sarlavhasida ko'rsatiladi).
-            task_details: JIRA task ma'lumotlari (summary, type, priority kerak).
-            tz_content: Formatlangan TZ matni (prompt markaziy bo'limi).
-            comment_analysis: Comment tahlili natijasi.
-            pr_info: PR ma'lumotlari lug'ati yoki None.
-            test_types: Yaratilishi kerak bo'lgan test turlari ro'yxati.
-            custom_context: Foydalanuvchi qo'shimcha matni (bo'sh bo'lsa bo'lim qo'shilmaydi).
-            max_test_cases: Maksimal test case soni (prompt ichiga kiritiladi).
-
-        Returns:
-            str: Gemini AI ga yuborish uchun tayyor prompt matni.
-        """
-        # Test types description
-        test_types_desc = {
-            'positive': 'To\'g\'ri ma\'lumotlar bilan ishlash',
-            'negative': 'Noto\'g\'ri ma\'lumotlar, xato holatlar',
-            'boundary': 'Limit qiymatlari (min/max)',
-            'edge': 'Maxsus/chekka holatlar',
-            'integration': 'Tizim integratsiyasi',
-            'regression': 'Regression testing'
-        }
-
-        types_text = ', '.join([f"{t} ({test_types_desc.get(t, t)})" for t in test_types])
-
-        # Bo'limlar matni (sozlamadagi tartib bo'yicha — servis qat'iy amal qiladi)
-        tz_block = f"""
-═══════════════════════════════════════════════════════════════════════════════
-📝 TEXNIK TOPSHIRIQ (TZ)
-═══════════════════════════════════════════════════════════════════════════════
-
-{tz_content}
-"""
-        comments_block = ""
-        if comment_analysis['has_changes']:
-            comments_block = f"""
-═══════════════════════════════════════════════════════════════════════════════
-⚠️ MUHIM: COMMENT'LARDA O'ZGARISHLAR ANIQLANDI
-═══════════════════════════════════════════════════════════════════════════════
-
-{comment_analysis['summary']}
-
-Comment'lardagi o'zgarishlar test case'larda ALBATTA hisobga olinishi kerak!
-"""
-        custom_context_block = ""
-        if custom_context:
-            custom_context_block = f"""
-═══════════════════════════════════════════════════════════════════════════════
-💬 QO'SHIMCHA MA'LUMOTLAR (FOYDALANUVCHIDAN)
-═══════════════════════════════════════════════════════════════════════════════
-
-{custom_context}
-
-⚠️ **MUHIM:** Yuqoridagi qo'shimcha ma'lumotlarni test case'larda ALBATTA ishlatish kerak!
-- Product nomlari, narxlar va boshqa ma'lumotlarni test datalarida ishlating
-- Chegirmalar, limitlar va maxsus shartlarni test scenario'larda qamrab oling
-- Foydalanuvchi aytgan barcha narsalarni hisobga oling
-"""
-        dev_objections_block = ""
-        if dev_objections:
-            objection_lines = []
-            for c in dev_objections:
-                author = c.get('author', 'Dev')
-                created = c.get('created', '')[:10]
-                body = c.get('body', '').strip()
-                objection_lines.append(f"  • {author} ({created}): {body}")
-            objections_text = "\n".join(objection_lines)
-            dev_objections_block = f"""
-═══════════════════════════════════════════════════════════════════════════════
-⚡ DEVELOPER ETIROZLARI (tahlildan KEYIN yozilgan)
-═══════════════════════════════════════════════════════════════════════════════
-
-{objections_text}
-
-Ko'rsatma: Testcase'larni yozishda bu izohlarni hisobga ol.
-Developer to'g'ri qayta bajargan funksiyalar uchun test yoz.
-"""
-        code_block = ""
-        if pr_info:
-            # Kod o'zgarishlari bo'limi: servis-1 dagi kabi, ammo testcase uchun qisqaroq format
-            lines = []
-            lines.append("📊 PR Summary:")
-            lines.append(f"   PR Count: {pr_info['pr_count']}")
-            lines.append(f"   Files Changed: {pr_info['files_changed']}")
-            lines.append(f"   Additions: +{pr_info['total_additions']}")
-            lines.append(f"   Deletions: -{pr_info['total_deletions']}")
-            lines.append("")
-
-            files_to_show = pr_info["files_changed"]
-
-            shown_files = 0
-            for pr in pr_info["pr_details"]:
-                lines.append(f"🔗 PR: {pr['title']}")
-                lines.append(f"   URL: {pr['url']}")
-                lines.append(f"   Files: {len(pr['files'])}")
-                lines.append("")
-
-                for file_data in pr["files"]:
-                    if shown_files >= files_to_show:
-                        break
-
-                    lines.append(f"📄 File: {file_data.get('filename', '')}")
-                    lines.append(f"   Status: {file_data.get('status', '')}")
-                    lines.append(f"   Changes: +{file_data.get('additions', 0)} -{file_data.get('deletions', 0)}")
-
-                    smart_ctx = file_data.get("smart_context")
-                    patch = file_data.get("patch")
-                    if smart_ctx:
-                        lines.append("")
-                        lines.append("   Smart Patch (kod konteksti):")
-                        lines.append(smart_ctx)
-                    elif patch:
-                        lines.append("")
-                        lines.append("   Patch:")
-                        lines.append(patch)
-
-                    lines.append("")
-                    shown_files += 1
-                    if shown_files >= files_to_show:
-                        break
-
-            lines_text = "\n".join(lines)
-            code_block = (
-                "═══════════════════════════════════════════════════════════════════════════════\n"
-                "💻 KOD O'ZGARISHLARI (PR dan olingan)\n"
-                "═══════════════════════════════════════════════════════════════════════════════\n\n"
-                f"{lines_text}\n\n"
-                "Test case'larni yozayotganda yuqoridagi kod o'zgarishlaridagi har bir funksionalni qamrab ol.\n"
-            )
-
-        order = self._get_settings().ai_data_section_order or [
-            "tz", "comments", "custom_context", "dev_objections", "code"
-        ]
-        sections_map = {
-            "tz": tz_block,
-            "comments": comments_block,
-            "custom_context": custom_context_block,
-            "dev_objections": dev_objections_block,
-            "code": code_block,
-        }
-        data_sections_body_parts = []
-        for key in order:
-            if key not in sections_map:
-                continue
-            part = (sections_map[key] or "").strip()
-            if part:
-                data_sections_body_parts.append(part)
-        data_sections_body = "\n".join(data_sections_body_parts)
-
-        prompt = f"""
-**VAZIFA:** JIRA task uchun QA test case'lar yaratish (O'ZBEK TILIDA)
-
-═══════════════════════════════════════════════════════════════════════════════
-📋 TASK MA'LUMOTLARI
-═══════════════════════════════════════════════════════════════════════════════
-
-**Task Key:** {task_key}
-**Summary:** {task_details['summary']}
-**Type:** {task_details['type']}
-**Priority:** {task_details['priority']}
-
-{data_sections_body}
-
-═══════════════════════════════════════════════════════════════════════════════
-🎯 TEST CASE TALABLARI
-═══════════════════════════════════════════════════════════════════════════════
-
-"""
-        prompt += f"""
-**Test turlari:** {types_text}
-
-**Har bir test case uchun:**
-1. TZ'dagi barcha talablarni qamrab olish
-2. Comment'lardagi o'zgarishlarni hisobga olish
-3. Kod o'zgarishlarini test qilish
-4. Edge case'larni tekshirish
-{"5. QO'SHIMCHA MA'LUMOTLARDAGI barcha shartlarni test qilish" if custom_context else ""}
-
-**Sifat talablari:**
-1. Har bir test case TO'LIQ va ANIQ bo'lishi kerak
-2. Steps BATAFSIL (har bir qadam alohida)
-3. Expected result ANIQ (nima kutiladi)
-4. O'zbek tilida, tushunarli
-5. Haqiqiy test scenario'lar (copy-paste emas!)
-{"6. QO'SHIMCHA MA'LUMOTLARDAGI product nomlari va narxlarni ishlatish" if custom_context else ""}
-
-═══════════════════════════════════════════════════════════════════════════════
-📊 JAVOB FORMATI (JSON)
-═══════════════════════════════════════════════════════════════════════════════
-
-Javobni FAQAT JSON formatda bering, boshqa hech narsa yo'q:
-
-```json
-{{
-  "test_cases": [
-    {{
-      "id": "TC-001",
-      "title": "Test case nomi (qisqa va aniq)",
-      "description": "Test case tavsifi (nima test qilinadi)",
-      "preconditions": "Boshlang'ich shartlar (system holati, ma'lumotlar)",
-      "steps": [
-        "1. Birinchi qadam (batafsil)",
-        "2. Ikkinchi qadam (batafsil)",
-        "3. Uchinchi qadam (batafsil)"
-      ],
-      "expected_result": "Kutilayotgan natija (aniq)",
-      "test_type": "positive/negative/boundary/edge",
-      "priority": "High/Medium/Low",
-      "severity": "Critical/Major/Minor",
-      "tags": ["tag1", "tag2"]
-    }}
-  ]
-}}
-```
-
-**MUHIM:**
-- Kamida {len(test_types)} ta test case yarating (har bir type uchun kamida 1 ta)
-- Har bir test type uchun kamida 1 ta test case
-- Eng ko'pi {max_test_cases} ta test case yarating
-- JSON to'g'ri formatda bo'lishi kerak
-- Steps ro'yxat (list) bo'lishi kerak
-- Har bir step alohida element
-{"- QO'SHIMCHA MA'LUMOTLARDAGI ma'lumotlarni test data sifatida ishlating" if custom_context else ""}
-
-Endi {len(test_types)} xil test ({types_text}) uchun test case'lar yarating!
-"""
-
-        return prompt
 
     def _parse_test_cases(self, raw_response: str) -> List[TestCase]:
         """
@@ -881,7 +706,8 @@ Endi {len(test_types)} xil test ({types_text}) uchun test case'lar yarating!
                         test_type=tc_data.get('test_type', 'positive'),
                         priority=tc_data.get('priority', 'Medium'),
                         severity=tc_data.get('severity', 'Major'),
-                        tags=tc_data.get('tags', [])
+                        tags=tc_data.get('tags', []),
+                        requirement_ids=tc_data.get('requirement_ids', [])
                     )
                     test_cases.append(test_case)
                 except Exception as e:
@@ -916,7 +742,8 @@ Endi {len(test_types)} xil test ({types_text}) uchun test case'lar yarating!
                                 test_type=tc_data.get('test_type', 'positive'),
                                 priority=tc_data.get('priority', 'Medium'),
                                 severity=tc_data.get('severity', 'Major'),
-                                tags=tc_data.get('tags', [])
+                                tags=tc_data.get('tags', []),
+                                requirement_ids=tc_data.get('requirement_ids', [])
                             )
                             test_cases.append(test_case)
                         except Exception as parse_err:

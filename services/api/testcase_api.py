@@ -3,30 +3,40 @@ Internal Test Case Generator API endpoints.
 """
 from __future__ import annotations
 
-from dataclasses import asdict
+import os
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from services.generators.testcase_generator import TestCaseGeneratorService
+from services.generators.testcase_run import create_testcase_run, execute_testcase_run
 from services.api.session_scope import load_api_session, require_customer_scope
+from utils.database.analysis_run_db import get_analysis_run_snapshot
+from utils.database.task_db import enqueue_background_job
 
 router = APIRouter(prefix="/api/testcase", tags=["testcase"])
 
+# Worker queue job turi (services/worker/main.py bilan bir xil bo'lishi shart).
+JOB_TESTCASE_MULTI_AGENT_RUN = "testcase_multi_agent_run"
 
-class GenerateRequest(BaseModel):
+
+class CreateTestcaseRunRequest(BaseModel):
     task_key: str
     user_id: int | None = None
     company_id: int | None = None
-    include_pr: bool = True
-    use_smart_patch: bool = False
     test_types: list[str] = Field(default_factory=list)
     custom_context: str = ""
+    output_profile: str | None = None
 
 
-@router.post("/generate")
-async def generate_testcases(
-    payload: GenerateRequest,
+def _worker_queue_enabled() -> bool:
+    raw = (os.getenv("APP_WEBHOOK_EXECUTION_MODE") or "inline").strip().lower()
+    return raw == "queue"
+
+
+@router.post("/runs")
+async def create_testcase_run_endpoint(
+    payload: CreateTestcaseRunRequest,
+    background_tasks: BackgroundTasks,
     x_session_id: str | None = Header(default=None, alias="X-Session-ID"),
 ):
     try:
@@ -37,17 +47,66 @@ async def generate_testcases(
             payload.company_id,
             module_key="testcase_generator",
         )
-        service = TestCaseGeneratorService(user_id=user_id, company_id=company_id)
-        result = service.generate_test_cases(
-            task_key=payload.task_key.strip().upper(),
-            include_pr=payload.include_pr,
-            use_smart_patch=payload.use_smart_patch,
+        task_key = payload.task_key.strip().upper()
+        run = create_testcase_run(
+            task_key=task_key,
+            company_id=company_id,
+            user_id=user_id,
+            source="manual",
             test_types=payload.test_types,
             custom_context=payload.custom_context,
-            status_callback=None,
+            output_profile=(payload.output_profile or "ui").strip().lower() or "ui",
         )
-        return asdict(result)
+        run_id = str(run.get("run_id") or "")
+        if not run_id:
+            raise RuntimeError("Run yaratilmadi")
+
+        if _worker_queue_enabled():
+            enqueue_background_job(
+                JOB_TESTCASE_MULTI_AGENT_RUN,
+                task_key,
+                company_id=company_id,
+                payload={"run_id": run_id, "task_key": task_key},
+                dedupe_key=f"{JOB_TESTCASE_MULTI_AGENT_RUN}:{run_id}",
+                max_attempts=3,
+            )
+        else:
+            background_tasks.add_task(execute_testcase_run, run_id)
+
+        snapshot = get_analysis_run_snapshot(run_id)
+        return snapshot or run
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Testcase generation error: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Testcase run create error: {exc}") from exc
+
+
+@router.get("/runs/{run_id}")
+async def get_testcase_run_endpoint(
+    run_id: str,
+    x_session_id: str | None = Header(default=None, alias="X-Session-ID"),
+):
+    try:
+        session = load_api_session(x_session_id, allowed_roles={"super_admin", "company_admin", "user"})
+        scoped_user_id, scoped_company_id = require_customer_scope(
+            session,
+            None,
+            None,
+            module_key="testcase_generator",
+        )
+        snapshot = get_analysis_run_snapshot(run_id.strip())
+        if not snapshot:
+            raise HTTPException(status_code=404, detail="Testcase run topilmadi")
+        role = str(((session or {}).get("auth") or {}).get("role") or "").strip().lower()
+        if role != "super_admin":
+            run_company_id = snapshot.get("company_id")
+            run_user_id = snapshot.get("user_id")
+            if scoped_company_id not in (None, run_company_id):
+                raise HTTPException(status_code=403, detail="Bu testcase run scope sizga tegishli emas")
+            if role == "user" and scoped_user_id not in (None, run_user_id):
+                raise HTTPException(status_code=403, detail="Bu testcase run user scope sizga tegishli emas")
+        return snapshot
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Testcase run read error: {exc}") from exc

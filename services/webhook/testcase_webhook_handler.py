@@ -17,7 +17,6 @@ log = get_logger("testcase.webhook")
 async def check_and_generate_testcases(
         task_key: str,
         new_status: str,
-        include_pr: Optional[bool] = None,
         company_id: Optional[int] = None,
 ) -> Tuple[bool, str]:
     """
@@ -26,7 +25,6 @@ async def check_and_generate_testcases(
     Args:
         task_key: JIRA task key (masalan: DEV-1234)
         new_status: Yangi status nomi
-        include_pr: PR ni hisobga olish (None = settingsdan, False = TZ-only)
         company_id: Kompaniya ID si (None bo'lsa global settings)
 
     Returns:
@@ -57,9 +55,6 @@ async def check_and_generate_testcases(
         log.status_ignored(task_key, new_status, f"not in trigger list: {trigger_statuses}")
         return False, f"Status '{new_status}' is not a trigger"
 
-    # include_pr: None → settingsdan, False → TZ-only
-    use_pr = include_pr if include_pr is not None else tc_settings.default_include_pr
-
     try:
         # 3. Test case'lar yaratish
         from services.generators.testcase_generator import TestCaseGeneratorService
@@ -78,8 +73,6 @@ async def check_and_generate_testcases(
 
         result = service.generate_test_cases(
             task_key=task_key,
-            include_pr=use_pr,
-            use_smart_patch=False,
             test_types=tc_settings.default_test_types,
             custom_context="",
             status_callback=lambda t, m: log.info(f"[{task_key}] {t.upper()} -> {m}")

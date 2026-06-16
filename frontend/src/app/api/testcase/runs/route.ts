@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 
-import { generateTestCasesWithBackend } from "@/lib/backend";
+import { createTestcaseRunWithBackend } from "@/lib/backend";
 import { getOptionalSession } from "@/lib/session";
+import type { TestcaseCreateRunRequest } from "@/lib/types";
 
 export async function POST(request: Request) {
   const session = await getOptionalSession();
@@ -26,15 +27,8 @@ export async function POST(request: Request) {
   }
 
   try {
-    const payload = (await request.json()) as {
-      custom_context?: string;
-      include_pr?: boolean;
-      task_key?: string;
-      test_types?: string[];
-      use_smart_patch?: boolean;
-    };
-
-    const taskKey = (payload.task_key || "").trim().toUpperCase();
+    const payload = (await request.json().catch(() => null)) as TestcaseCreateRunRequest | null;
+    const taskKey = (payload?.task_key || "").trim().toUpperCase();
     if (!taskKey) {
       return NextResponse.json(
         { success: false, error: "Task key majburiy." },
@@ -43,20 +37,19 @@ export async function POST(request: Request) {
     }
 
     const scopedToCustomer = role === "company_admin" || role === "user";
-    const result = await generateTestCasesWithBackend({
+    const result = await createTestcaseRunWithBackend({
       task_key: taskKey,
       user_id: scopedToCustomer ? session.auth.user_id || null : null,
       company_id: scopedToCustomer ? session.auth.company_id || null : null,
-      include_pr: payload.include_pr ?? true,
-      use_smart_patch: payload.use_smart_patch ?? false,
-      test_types: payload.test_types || ["positive", "negative"],
-      custom_context: payload.custom_context || "",
+      test_types: payload?.test_types || ["positive", "negative"],
+      custom_context: payload?.custom_context || "",
+      output_profile: payload?.output_profile ?? "ui",
     });
 
     return NextResponse.json(result);
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "Testcase backend request xatosi.";
+      error instanceof Error ? error.message : "Testcase run yaratishda xato.";
     return NextResponse.json({ success: false, error: message }, { status: 500 });
   }
 }

@@ -561,6 +561,19 @@ export type GeneratedTestCase = {
   priority: string;
   severity: string;
   tags?: string[];
+  requirement_ids?: string[];
+};
+
+export type TestcaseRequirement = {
+  id: string;
+  text: string;
+  source: string;
+};
+
+export type TestcaseRequirementCoverage = {
+  total_requirements?: number;
+  covered_count?: number;
+  uncovered_ids?: string[];
 };
 
 export type TestCaseGenerationResult = {
@@ -569,10 +582,6 @@ export type TestCaseGenerationResult = {
   task_summary?: string | null;
   test_cases?: GeneratedTestCase[];
   tz_content?: string | null;
-  pr_count?: number | null;
-  files_changed?: number | null;
-  pr_details?: TZPRPullRequestDetail[];
-  pr_selection?: TZPRPullRequestSelection | null;
   task_full_details?: Record<string, unknown>;
   task_overview?: string | null;
   comment_changes_detected?: boolean;
@@ -585,17 +594,38 @@ export type TestCaseGenerationResult = {
   warnings?: string[];
   custom_context_used?: boolean;
   status_banner?: AnalysisStatusBanner | null;
-  ai_prompt_size?: number | null;
   ai_model?: string | null;
-  files_analyzed?: number | null;
+  requirements?: TestcaseRequirement[];
+  requirement_coverage?: TestcaseRequirementCoverage;
 };
 
-export type TestCaseGenerateRequest = {
+export type TestcaseCreateRunRequest = {
   task_key: string;
-  include_pr?: boolean;
-  use_smart_patch?: boolean;
   test_types?: string[];
   custom_context?: string;
+  output_profile?: string | null;
+};
+
+export type TestcaseRunSnapshot = {
+  run_id: string;
+  task_key: string;
+  company_id?: number | null;
+  user_id?: number | null;
+  source?: "manual" | "webhook" | string;
+  execution_mode?: string;
+  run_state?: TZPRRunState;
+  active_phase?: string | null;
+  status_message?: string | null;
+  requested_output_profile?: string | null;
+  request_payload?: Record<string, unknown> | null;
+  final_result?: TestCaseGenerationResult | null;
+  error_message?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  agent_runs?: TZPRAgentRunSnapshot[];
+  run_events?: TZPRRunEvent[];
 };
 
 export type SettingsIntegrationStatus = {
@@ -665,7 +695,6 @@ export type CheckerModuleSettings = {
 };
 
 export type TestcaseModuleSettings = {
-  default_include_pr: boolean;
   default_test_types: string[];
   max_test_cases: number;
   ai_data_section_order: string[];
@@ -722,7 +751,6 @@ export type WebhookSettingsView = {
     testcase_auto_comment_enabled: boolean;
     testcase_auto_comment_trigger_status: string;
     testcase_auto_comment_trigger_aliases: string;
-    testcase_default_include_pr: boolean;
     testcase_default_test_types: string[];
     testcase_max_test_cases: number;
     testcase_ai_data_section_order: string[];
@@ -760,7 +788,6 @@ export type WebhookSettingsSaveRequest = {
   testcase_auto_comment_enabled: boolean;
   testcase_auto_comment_trigger_status: string;
   testcase_auto_comment_trigger_aliases: string;
-  testcase_default_include_pr: boolean;
   testcase_default_test_types: string[];
   testcase_max_test_cases: number;
   testcase_ai_data_section_order: string[];
