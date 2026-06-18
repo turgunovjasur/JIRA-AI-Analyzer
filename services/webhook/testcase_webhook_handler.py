@@ -192,7 +192,8 @@ def _write_testcases_comment(
                 footer_text=_tc_footer,
                 pr_details=pr_details or [],
                 pr_count=pr_count,
-                files_changed=files_changed
+                files_changed=files_changed,
+                test_scenarios=getattr(result, "test_scenarios", []),
             )
             success = writer.add_comment_adf(task_key, adf_doc)
 
@@ -201,14 +202,16 @@ def _write_testcases_comment(
                 log.warning(f"[{task_key}] ADF failed, falling back to simple format")
                 simple_comment = formatter.build_simple_comment(
                     task_key=task_key,
-                    test_cases=result.test_cases
+                    test_cases=result.test_cases,
+                    test_scenarios=getattr(result, "test_scenarios", []),
                 )
                 success = writer.add_comment(task_key, simple_comment)
         else:
             # Simple format
             simple_comment = formatter.build_simple_comment(
                 task_key=task_key,
-                test_cases=result.test_cases
+                test_cases=result.test_cases,
+                test_scenarios=getattr(result, "test_scenarios", []),
             )
             success = writer.add_comment(task_key, simple_comment)
 

@@ -82,14 +82,26 @@ class RpcRequest(BaseModel):
 
 
 def _build_app_settings_from_dict(payload: dict[str, Any]) -> AppSettings:
+    def _testcase_settings(key: str) -> TestcaseGeneratorSettings:
+        data = dict(payload.get(key, {}) or {})
+        for legacy_key in (
+            "max_test_cases",
+            "default_include_pr",
+            "default_include_comments",
+            "default_include_code",
+            "default_include_figma",
+        ):
+            data.pop(legacy_key, None)
+        return TestcaseGeneratorSettings(**data)
+
     return AppSettings(
         modules=ModuleVisibility(**payload.get("modules", {})),
         bug_analyzer=BugAnalyzerSettings(**payload.get("bug_analyzer", {})),
         statistics=StatisticsSettings(**payload.get("statistics", {})),
         tz_pr_checker=TZPRCheckerSettings(**payload.get("tz_pr_checker", {})),
         webhook_tz_pr=TZPRCheckerSettings(**payload.get("webhook_tz_pr", {})),
-        testcase_generator=TestcaseGeneratorSettings(**payload.get("testcase_generator", {})),
-        webhook_testcase=TestcaseGeneratorSettings(**payload.get("webhook_testcase", {})),
+        testcase_generator=_testcase_settings("testcase_generator"),
+        webhook_testcase=_testcase_settings("webhook_testcase"),
         queue=QueueSettings(**payload.get("queue", {})),
     )
 

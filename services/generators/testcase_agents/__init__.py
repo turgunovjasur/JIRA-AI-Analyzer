@@ -5,6 +5,6 @@ Agent1 (talab ajratish) checker modulidan qayta ishlatiladi
 Agent2 (testcase yozuvchi) kontrakti turadi.
 """
 
-from services.generators.testcase_agents import agent2_testcase
+from services.generators.testcase_agents import agent2_testcase, agent3_testcase_auditor
 
-__all__ = ["agent2_testcase"]
+__all__ = ["agent2_testcase", "agent3_testcase_auditor"]

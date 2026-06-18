@@ -359,8 +359,8 @@ class TestcaseGeneratorSettings:
     # Default qiymatlar
     # Faqat positive va negative test types qoldirildi (boundary va edge olib tashlandi)
     default_test_types: List[str] = field(default_factory=lambda: ['positive', 'negative'])
-    # AI yaratadigan maksimal test case soni
-    max_test_cases: int = 10
+    # Har requirement uchun target/maksimum test case soni
+    testcases_per_requirement: int = 3
     # AI javob uchun maksimal token soni (truncation oldini olish uchun)
     ai_max_output_tokens: int = TESTCASE_MAX_OUTPUT_TOKENS
 
@@ -391,7 +391,7 @@ class TestcaseGeneratorSettings:
 
     # Yordam matnlari
     test_types_help: str = "Default test turlari: positive (asosiy), negative (xato holatlari)"
-    max_test_cases_help: str = "AI yaratadigan maksimal test case soni (1-30)"
+    testcases_per_requirement_help: str = "Har bir talab uchun yoziladigan test case soni (1-3). Default: 3"
     ai_max_output_tokens_help: str = "AI javob uchun maksimal token soni (platform policy bo'yicha boshqariladi)"
     ai_data_section_order_help: str = (
         "AI ga ma'lumotlar qaysi tartibda berilishi. Birinchi o'rinda eng ustun. "
@@ -411,10 +411,14 @@ class TestcaseGeneratorSettings:
 
     def __post_init__(self):
         """Sozlamalar validatsiyasi — noto'g'ri qiymatlar exception chiqaradi"""
-        if self.max_test_cases < 1 or self.max_test_cases > 50:
-            raise ValueError(
-                f"max_test_cases {self.max_test_cases} noto'g'ri: 1-50 oralig'ida bo'lishi kerak"
-            )
+        try:
+            self.testcases_per_requirement = int(self.testcases_per_requirement)
+        except (TypeError, ValueError):
+            self.testcases_per_requirement = 3
+        if self.testcases_per_requirement < 1:
+            self.testcases_per_requirement = 1
+        if self.testcases_per_requirement > 3:
+            self.testcases_per_requirement = 3
         # ai_data_section_order: faqat ruxsat etilgan qiymatlar
         order = list(dict.fromkeys(self.ai_data_section_order or []))
         invalid = [x for x in order if x not in self._AI_DATA_ORDER_ALLOWED]
@@ -702,6 +706,20 @@ class AppSettingsManager:
                     data['webhook_tz_pr'] = dict(data.get('tz_pr_checker', {}))
                 if 'webhook_testcase' not in data:
                     data['webhook_testcase'] = dict(data.get('testcase_generator', {}))
+
+                testcase_legacy_keys = (
+                    'max_test_cases',
+                    'default_include_pr',
+                    'default_include_comments',
+                    'default_include_code',
+                    'default_include_figma',
+                )
+                for testcase_key in ('testcase_generator', 'webhook_testcase'):
+                    testcase_data = data.get(testcase_key, {})
+                    if isinstance(testcase_data, dict):
+                        for legacy_key in testcase_legacy_keys:
+                            testcase_data.pop(legacy_key, None)
+                        data[testcase_key] = testcase_data
 
                 # Nested dataclass'larni yaratish
                 settings = AppSettings(

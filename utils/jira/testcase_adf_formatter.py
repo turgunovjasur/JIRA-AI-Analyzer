@@ -82,7 +82,8 @@ class TestcaseADFFormatter(BaseADFFormatter):
             footer_text: Optional[str] = None,
             pr_details: Optional[List[Dict]] = None,
             pr_count: int = 0,
-            files_changed: int = 0
+            files_changed: int = 0,
+            test_scenarios: Optional[List[Any]] = None,
     ) -> Dict:
         """
         Test case'lar uchun to'liq ADF document yaratish
@@ -176,17 +177,29 @@ class TestcaseADFFormatter(BaseADFFormatter):
         # ━━━ TEST CASE'LAR (EXPAND PANELS) ━━━
         content.append(self._heading("📋 Test Case'lar", 3))
 
-        for tc in test_cases:
-            tc_id = getattr(tc, 'id', 'TC-000')
-            tc_title = getattr(tc, 'title', 'Nomsiz test')
-            tc_priority = getattr(tc, 'priority', 'Medium')
-            tc_type = getattr(tc, 'test_type', 'positive')
-
-            type_emoji = self._get_type_emoji(tc_type)
-            panel_title = f"{type_emoji} {tc_id}: {tc_title} [{tc_priority}]"
-
-            panel_content = self._build_testcase_panel_content(tc)
-            content.append(self._expand_panel(panel_title, panel_content))
+        scenarios = [s for s in (test_scenarios or []) if getattr(s, 'test_cases', None)]
+        if scenarios:
+            for scenario in scenarios:
+                title = getattr(scenario, 'scenario_title', '') or "Test scenario"
+                flow = getattr(scenario, 'screen_or_flow', '') or ""
+                req_ids = getattr(scenario, 'requirement_ids', []) or []
+                subtitle = f" — {flow}" if flow else ""
+                content.append(self._heading(f"🧩 {title}{subtitle}", 4))
+                if req_ids:
+                    content.append(self._paragraph([
+                        self._colored_text("REQ: " + ", ".join(req_ids), "#8b949e")
+                    ]))
+                for tc in getattr(scenario, 'test_cases', []) or []:
+                    content.append(self._expand_panel(
+                        self._testcase_panel_title(tc),
+                        self._build_testcase_panel_content(tc),
+                    ))
+        else:
+            for tc in test_cases:
+                content.append(self._expand_panel(
+                    self._testcase_panel_title(tc),
+                    self._build_testcase_panel_content(tc),
+                ))
 
         content.append(self._rule())
 
@@ -198,6 +211,14 @@ class TestcaseADFFormatter(BaseADFFormatter):
         content.append(self._paragraph([self._italic_text(actual_footer)]))
 
         return {"version": 1, "type": "doc", "content": content}
+
+    def _testcase_panel_title(self, tc: Any) -> str:
+        tc_id = getattr(tc, 'id', 'TC-000')
+        tc_title = getattr(tc, 'title', 'Nomsiz test')
+        tc_priority = getattr(tc, 'priority', 'Medium')
+        tc_type = getattr(tc, 'test_type', 'positive')
+        type_emoji = self._get_type_emoji(tc_type)
+        return f"{type_emoji} {tc_id}: {tc_title} [{tc_priority}]"
 
     def _build_testcase_panel_content(self, tc: Any) -> List[Dict]:
         """
@@ -258,7 +279,8 @@ class TestcaseADFFormatter(BaseADFFormatter):
     def build_simple_comment(
             self,
             task_key: str,
-            test_cases: List[Any]
+            test_cases: List[Any],
+            test_scenarios: Optional[List[Any]] = None,
     ) -> str:
         """
         Oddiy Jira Markup formatda comment (ADF ishlamasa)
@@ -277,7 +299,13 @@ class TestcaseADFFormatter(BaseADFFormatter):
         lines.append("----")
 
         by_type = {}
-        for tc in test_cases:
+        scenarios = [s for s in (test_scenarios or []) if getattr(s, 'test_cases', None)]
+        flat_items: List[Any] = [
+            tc
+            for scenario in scenarios
+            for tc in (getattr(scenario, 'test_cases', []) or [])
+        ] if scenarios else list(test_cases or [])
+        for tc in flat_items:
             t = getattr(tc, 'test_type', 'unknown')
             by_type[t] = by_type.get(t, 0) + 1
 
@@ -290,7 +318,7 @@ class TestcaseADFFormatter(BaseADFFormatter):
         lines.append("*📋 Test Case'lar:*")
         lines.append("")
 
-        for tc in test_cases:
+        def append_tc(tc: Any) -> None:
             tc_id = getattr(tc, 'id', 'TC-000')
             tc_title = getattr(tc, 'title', 'Nomsiz test')
             tc_priority = getattr(tc, 'priority', 'Medium')
@@ -318,6 +346,20 @@ class TestcaseADFFormatter(BaseADFFormatter):
                 lines.append(f"_Kutilgan natija:_ {expected}")
 
             lines.append("")
+
+        if scenarios:
+            for scenario in scenarios:
+                title = getattr(scenario, 'scenario_title', '') or "Test scenario"
+                flow = getattr(scenario, 'screen_or_flow', '') or ""
+                req_ids = getattr(scenario, 'requirement_ids', []) or []
+                lines.append(f"*🧩 {title}{(' — ' + flow) if flow else ''}*")
+                if req_ids:
+                    lines.append(f"_REQ:_ {', '.join(req_ids)}")
+                for tc in getattr(scenario, 'test_cases', []) or []:
+                    append_tc(tc)
+        else:
+            for tc in test_cases:
+                append_tc(tc)
 
         lines.append("----")
         lines.append("_🤖 Test case'lar AI tomonidan avtomatik yaratilgan._")

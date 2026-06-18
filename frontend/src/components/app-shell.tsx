@@ -116,7 +116,9 @@ function getPageMeta(pathname: string) {
     "/settings": { kicker: "Configuration", title: "Settings" },
     "/monitoring": { kicker: "Operations", title: "Monitoring" },
     "/tzpr": { kicker: "Quality", title: "TZ-PR Checker" },
+    "/tzpr/history": { kicker: "Quality", title: "TZ-PR History" },
     "/testcase": { kicker: "Quality", title: "Test Case Generator" },
+    "/testcase/history": { kicker: "Quality", title: "Testcase History" },
     "/team": { kicker: "Administration", title: "Team" },
   };
   return map[pathname] ?? { kicker: "Workspace", title: pathname.slice(1) || "Dashboard" };
@@ -205,7 +207,7 @@ export function AppShell({ children, session }: AppShellProps) {
                 <span className="qa-nav-section-label">{section}</span>
                 <div className="qa-nav-list">
                   {items.map((item) => {
-                    const active = pathname === item.href;
+                    const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
                     return (
                       <Link
                         key={item.href}

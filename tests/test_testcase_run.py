@@ -55,7 +55,9 @@ def test_create_testcase_run_builds_record(monkeypatch):
     assert captured["task_key"] == "DEV-1"
     assert captured["request_payload"]["test_types"] == ["positive"]
     assert captured["request_payload"]["custom_context"] == "ctx"
-    assert [a["agent_key"] for a in captured["agents"]] == ["agent1_requirements", "agent2_testcase"]
+    assert [a["agent_key"] for a in captured["agents"]] == [
+        "agent1_requirements", "agent2_testcase", "agent3_audit"
+    ]
 
 
 def test_execute_success_marks_completed(monkeypatch):
@@ -67,6 +69,7 @@ def test_execute_success_marks_completed(monkeypatch):
     _patch_service(monkeypatch, _FakeResult(True), status_msgs=[
         ("progress", "Talablar ajratilmoqda (Agent1)..."),
         ("progress", "AI test case'lar yozmoqda (Agent2)..."),
+        ("progress", "Test case'lar audit va grouping qilinmoqda (Agent3)..."),
     ])
 
     tr.execute_testcase_run("tc-x")
@@ -74,12 +77,12 @@ def test_execute_success_marks_completed(monkeypatch):
     # running → completed
     assert any(f.get("run_state") == "running" for f in calls["run_updates"])
     assert calls["final"][-1]["run_state"] == "completed"
-    # ikkala agent ham completed bo'ldi
+    # barcha agentlar completed bo'ldi
     completed = [ak for ak, f in calls["agent_updates"] if f.get("state") == "completed"]
-    assert "agent1_requirements" in completed and "agent2_testcase" in completed
+    assert "agent1_requirements" in completed and "agent2_testcase" in completed and "agent3_audit" in completed
     # agentlar running ga ham o'tdi (progress matnlaridan)
     running = [ak for ak, f in calls["agent_updates"] if f.get("state") == "running"]
-    assert "agent1_requirements" in running and "agent2_testcase" in running
+    assert "agent1_requirements" in running and "agent2_testcase" in running and "agent3_audit" in running
 
 
 def test_execute_failure_marks_error(monkeypatch):

@@ -12,7 +12,7 @@ OPTIMIZED VERSION:
 Author: JASUR TURGUNOV
 Version: 6.0 CUSTOM CONTEXT
 """
-from typing import Dict, List, Optional, Callable
+from typing import Any, Dict, List, Optional, Callable
 from dataclasses import dataclass, field
 import json
 import os
@@ -30,7 +30,7 @@ from services.checkers.tzpr_preflight import (
     build_figma_access_status,
     extract_figma_requirement_candidates,
 )
-from services.generators.testcase_agents import agent2_testcase
+from services.generators.testcase_agents import agent2_testcase, agent3_testcase_auditor
 from utils.ai.gemini_json import parse_gemini_json
 
 log = get_logger("testcase.gen")
@@ -74,6 +74,15 @@ class TestCase:
 
 
 @dataclass
+class TestScenario:
+    """Agent3 grouped scenario structure."""
+    scenario_title: str
+    screen_or_flow: str = ""
+    requirement_ids: List[str] = field(default_factory=list)
+    test_cases: List[TestCase] = field(default_factory=list)
+
+
+@dataclass
 class TestCaseGenerationResult:
     """Test case generation natijasi"""
     task_key: str
@@ -102,6 +111,9 @@ class TestCaseGenerationResult:
     # Multi-agent: Agent1 ajratgan talablar va Agent2 qamrovi
     requirements: List[Dict] = field(default_factory=list)
     requirement_coverage: Dict = field(default_factory=dict)
+    # Agent3 grouped view va audit izohlari
+    test_scenarios: List[TestScenario] = field(default_factory=list)
+    audit_findings: List[Dict] = field(default_factory=list)
 
 
 class TestCaseGeneratorService(BaseService):
@@ -123,7 +135,7 @@ class TestCaseGeneratorService(BaseService):
         """
         super().__init__(company_id=company_id, user_id=user_id)
         self._pr_helper = None
-        # Agent1/Agent2 uchun model fallback'li Gemini helper (lazy)
+        # Agent1/Agent2/Agent3 uchun model fallback'li Gemini helper (lazy)
         self._agent_gemini = None
 
     def _get_settings(self):
@@ -167,9 +179,9 @@ class TestCaseGeneratorService(BaseService):
             dev_objections: Optional[List[Dict]] = None
     ) -> TestCaseGenerationResult:
         """
-        Testcase generation — 2-agentli pipeline (Agent1 → Agent2).
+        Testcase generation — multi-agent pipeline (Agent1 → Agent2 → Agent3).
 
-        Manbalar: JIRA TZ + comment + Figma. PR ISHLATILMAYDI. Natija
+        Manbalar: JIRA TZ + Agent1 requirements + user custom context. PR ISHLATILMAYDI. Natija
         ``TestCaseGenerationResult`` sifatida qaytadi.
 
         Ishlash bosqichlari:
@@ -177,9 +189,12 @@ class TestCaseGeneratorService(BaseService):
                min TZ tekshiruvi, Figma (settingdan: "figma" ai_data_section_order da),
                TZ + comment formatlash.
             2. Agent1 (checker kontrakti) — TZ + Figma'dan talablar ro'yxati (comment YO'Q).
-            3. Agent2 — talablar + TZ + comment + Figma asosida test case (bitta chaqiruv).
-            4. Deterministik finalize: dedup, har talabga max 3 test case, TC-NNN qayta
-               raqamlash, talab qamrovini hisoblash.
+            3. Agent2 — talablar + real TZ + custom context asosida test case (bitta chaqiruv).
+            4. Backend validation — qamrov/count/schema tekshiruvi.
+            5. Agent2 repair — faqat missing requirementlar uchun.
+            6. Agent3 — audit va scenario grouping.
+            7. Deterministik finalize: dedup, har talabga setting bo'yicha max test case,
+               TC-NNN qayta raqamlash, talab qamrovini hisoblash.
 
         Custom context (qo'shimcha kontekst):
             ``custom_context`` bo'sh bo'lmasa, Agent2 promtiga alohida bo'lim sifatida
@@ -190,7 +205,7 @@ class TestCaseGeneratorService(BaseService):
             test_types: Test turlari ro'yxati. Default: ``['positive', 'negative']``.
             custom_context: Qo'shimcha kontekst matni (bo'sh bo'lsa e'tiborga olinmaydi).
             status_callback: Har bosqichda chaqiriladigan callback ``(status, message)``.
-            dev_objections: Developer etirozlari (ixtiyoriy).
+            dev_objections: Deprecated/unused; eski chaqiruvchilar bilan moslik uchun qoldirilgan.
 
         Returns:
             TestCaseGenerationResult: ``test_cases``, ``total_test_cases``, ``by_type``,
@@ -209,7 +224,7 @@ class TestCaseGeneratorService(BaseService):
 
             warnings = []
             tc_settings = self._get_settings()
-            max_test_cases = tc_settings.max_test_cases
+            testcases_per_requirement = self._resolve_testcases_per_requirement(tc_settings)
             min_tz_chars = self._resolve_min_tz_chars()
             # Figma checker kabi settingdan boshqariladi: "figma" ai_data_section_order da bo'lsa olinadi.
             figma_enabled = "figma" in (getattr(tc_settings, "ai_data_section_order", None) or [])
@@ -273,21 +288,17 @@ class TestCaseGeneratorService(BaseService):
                     "Agent1 talablar ro'yxatini ajrata olmadi (talab topilmadi)."
                 )
             log.info(f"[{task_key}] Agent1 ✅ {len(requirements)} ta talab ajratildi")
+            update_status("progress", f"{len(requirements)} ta talab ajratildi (Agent1).")
 
             # 7. AGENT2 — talablar asosida test case (BITTA chaqiruv)
             update_status("progress", "AI test case'lar yozmoqda (Agent2)...")
             try:
                 raw_response = self._run_agent2_testcases(
                     task_key=task_key,
-                    task_details=task_details,
                     requirements=requirements,
                     tz_content=tz_content,
-                    comment_analysis=comment_analysis,
-                    figma_data=figma_data,
-                    test_types=test_types,
                     custom_context=custom_context,
-                    max_test_cases=max_test_cases,
-                    dev_objections=dev_objections or [],
+                    testcases_per_requirement=testcases_per_requirement,
                 )
             except Exception as agent2_err:
                 log.log_error(task_key, "agent2", str(agent2_err))
@@ -297,17 +308,63 @@ class TestCaseGeneratorService(BaseService):
 
             _ai_sek = round(_time.time() - _t0, 1)
             log.info(f"[{task_key}] Testcase ✅ AI javob olindi ({_ai_sek}s), parse qilinmoqda...")
+            update_status("progress", f"Agent2 javobi olindi ({_ai_sek}s), JSON parse va backend validation qilinmoqda (Agent2).")
 
-            # 8. Parse + deterministik finalize (dedup, qayta raqamlash, qamrov)
+            # 8. Parse + backend validation #1
             test_cases = self._parse_test_cases(raw_response)
-            test_cases, coverage = self._finalize_testcases(test_cases, requirements)
-            if coverage.get("uncovered_ids"):
-                warnings.append("Qoplanmagan talablar: " + ", ".join(coverage["uncovered_ids"]))
-            if coverage.get("trimmed_over_limit"):
+            test_cases, coverage, validation = self._validate_and_finalize_agent2_output(
+                test_cases,
+                requirements,
+                testcases_per_requirement,
+            )
+            warnings.extend(validation.get("warnings") or [])
+            validation_level = "warning" if validation.get("missing_requirement_ids") or validation.get("warnings") else "progress"
+            update_status(
+                validation_level,
+                (
+                    f"Agent2 validation: {len(test_cases)} ta testcase, "
+                    f"coverage {coverage.get('covered_count', 0)}/{coverage.get('total_requirements', len(requirements))} talab."
+                ),
+            )
+
+            # 9. Agent2 repair — faqat umuman qoplanmagan requirementlar uchun
+            missing_ids = list(validation.get("missing_requirement_ids") or [])
+            if missing_ids:
                 warnings.append(
-                    f"{coverage['trimmed_over_limit']} ta ortiqcha test case olib tashlandi "
-                    f"(har talabga maksimum {MAX_TC_PER_REQ} ta)."
+                    "Agent2 ayrim talablar uchun testcase yozmadi. Repair mode ishga tushdi: "
+                    + ", ".join(missing_ids)
                 )
+                update_status("progress", "Qoplanmagan talablar uchun test case yozilmoqda (Agent2 repair)...")
+                try:
+                    repair_raw = self._run_agent2_testcases(
+                        task_key=task_key,
+                        requirements=[r for r in requirements if str(r.get("id") or "").strip() in set(missing_ids)],
+                        tz_content=tz_content,
+                        custom_context=custom_context,
+                        testcases_per_requirement=testcases_per_requirement,
+                        mode="repair_missing_requirements",
+                    )
+                    repair_cases = self._parse_test_cases(repair_raw)
+                    test_cases = self._merge_testcase_batches(test_cases, repair_cases)
+                    test_cases, coverage, validation = self._validate_and_finalize_agent2_output(
+                        test_cases,
+                        requirements,
+                        testcases_per_requirement,
+                    )
+                    warnings.extend(validation.get("warnings") or [])
+                    update_status(
+                        "progress",
+                        (
+                            f"Agent2 repair yakunlandi: {len(test_cases)} ta testcase, "
+                            f"coverage {coverage.get('covered_count', 0)}/{coverage.get('total_requirements', len(requirements))} talab."
+                        ),
+                    )
+                except Exception as repair_err:
+                    log.log_error(task_key, "agent2_repair", str(repair_err))
+                    warnings.append(f"Agent2 repair ishlamadi: {repair_err}")
+            remaining_missing = list(validation.get("missing_requirement_ids") or [])
+            if remaining_missing:
+                warnings.append("Qoplanmagan talablar: " + ", ".join(remaining_missing))
 
             if not test_cases:
                 log.warning(
@@ -318,6 +375,49 @@ class TestCaseGeneratorService(BaseService):
                     "Test case yaratilmadi (Agent2 javobi parse bo'lmadi)."
                 )
 
+            # 10. Agent3 — audit/grouping; xato bo'lsa flat Agent2 natijasi fallback
+            test_scenarios = self._build_default_scenarios(test_cases, requirements)
+            audit_findings: List[Dict] = []
+            update_status("progress", "Test case'lar audit va grouping qilinmoqda (Agent3)...")
+            try:
+                agent3_raw = self._run_agent3_audit(
+                    task_key=task_key,
+                    requirements=requirements,
+                    test_cases=test_cases,
+                )
+                parsed_scenarios, parsed_findings = self._parse_agent3_result(agent3_raw)
+                accepted_cases, accepted_scenarios, accepted_findings, agent3_warnings = self._validate_agent3_output(
+                    parsed_scenarios,
+                    parsed_findings,
+                    requirements,
+                    testcases_per_requirement,
+                    fallback_test_cases=test_cases,
+                )
+                test_cases = accepted_cases
+                test_scenarios = accepted_scenarios
+                audit_findings = accepted_findings
+                warnings.extend(agent3_warnings)
+                update_status(
+                    "progress",
+                    f"Agent3 audit yakunlandi: {len(test_scenarios)} ta scenario, {len(audit_findings)} ta finding.",
+                )
+                test_cases, coverage = self._finalize_testcases(
+                    test_cases,
+                    requirements,
+                    testcases_per_requirement,
+                )
+                test_scenarios = self._sync_scenarios_with_final_cases(test_scenarios, test_cases)
+            except Exception as agent3_err:
+                log.log_error(task_key, "agent3", str(agent3_err))
+                warnings.append(f"Agent3 audit ishlamadi, Agent2 flat output ishlatildi: {agent3_err}")
+                test_cases, coverage = self._finalize_testcases(
+                    test_cases,
+                    requirements,
+                    testcases_per_requirement,
+                )
+                test_scenarios = self._build_default_scenarios(test_cases, requirements)
+                audit_findings = []
+
             # Statistika
             by_type = {}
             by_priority = {}
@@ -327,6 +427,10 @@ class TestCaseGeneratorService(BaseService):
 
             _total_sek = round(_time.time() - _t0, 1)
             log.info(f"[{task_key}] Testcase ✅ {len(test_cases)} ta test case yaratildi | jami: {_total_sek}s | {by_type}")
+            update_status(
+                "progress",
+                f"Yakuniy testcase natijasi yig'ildi: {len(test_cases)} ta testcase, jami {_total_sek}s.",
+            )
 
             return TestCaseGenerationResult(
                 task_key=task_key,
@@ -350,6 +454,8 @@ class TestCaseGeneratorService(BaseService):
                 ai_model=self._last_agent_model(),
                 requirements=requirements,
                 requirement_coverage=coverage,
+                test_scenarios=test_scenarios,
+                audit_findings=audit_findings,
             )
 
         except Exception as e:
@@ -368,7 +474,7 @@ class TestCaseGeneratorService(BaseService):
 
     @property
     def agent_gemini(self):
-        """Agent1/Agent2 uchun Gemini helper — model fallback bilan (lazy).
+        """Agent1/Agent2/Agent3 uchun Gemini helper — model fallback bilan (lazy).
 
         Asosiy model: kompaniya/user sozlamasidagi model.
         Fallback model: GEMINI_FALLBACK_MODEL (boshqa modelga o'tish uchun).
@@ -418,8 +524,22 @@ class TestCaseGeneratorService(BaseService):
         )
 
     @staticmethod
+    def _normalize_testcases_per_requirement(value: Any = None) -> int:
+        try:
+            n = int(value if value is not None else 3)
+        except (TypeError, ValueError):
+            n = 3
+        return max(1, min(3, n))
+
+    def _resolve_testcases_per_requirement(self, settings: Any = None) -> int:
+        settings = settings or self._get_settings()
+        return self._normalize_testcases_per_requirement(
+            getattr(settings, "testcases_per_requirement", 3)
+        )
+
+    @staticmethod
     def _build_figma_summary_text(figma_data: Optional[Dict]) -> str:
-        """Agent2 prompti uchun ishlatsa bo'ladigan Figma summary matni."""
+        """Legacy helper: yangi Agent2 kontrakti raw Figma summary olmaydi."""
         if not figma_data:
             return ""
         parts = []
@@ -436,9 +556,9 @@ class TestCaseGeneratorService(BaseService):
     def _build_agent1_input(self, task_details: Dict, figma_data: Optional[Dict]) -> Dict:
         """Agent1 uchun {tz, comments, figma} input quradi.
 
-        QAT'IY QOIDA: Agent1 ga comment BERILMAYDI (comments=[]). Comment'lar faqat
-        keyingi agent (Agent2) ga uzatiladi — talab inventarizatsiyasini muhokama
-        izohlari buzib yubormasligi uchun.
+        QAT'IY QOIDA: Agent1 ga comment BERILMAYDI (comments=[]). Testcase Agent2
+        ham comment/Figma raw context olmaydi; Agent2 uchun source of truth — Agent1
+        requirements + real TZ + user custom context.
         - figma: figma_data dan toza talab-nomzodlar (preflight helperlari reuse).
         """
         tz = str(task_details.get('description') or "")
@@ -505,30 +625,19 @@ class TestCaseGeneratorService(BaseService):
         self,
         *,
         task_key: str,
-        task_details: Dict,
         requirements: List[Dict],
         tz_content: str,
-        comment_analysis: Dict,
-        figma_data: Optional[Dict],
-        test_types: List[str],
         custom_context: str,
-        max_test_cases: int,
-        dev_objections: List[Dict],
+        testcases_per_requirement: int,
+        mode: str = "initial",
     ) -> str:
         """Agent2 — talablar asosida test case yozish (bitta Gemini chaqiruvi)."""
         prompt = agent2_testcase.build_prompt(
-            task_key=task_key,
-            task_summary=task_details.get('summary', ''),
-            task_type=task_details.get('type', ''),
-            task_priority=task_details.get('priority', ''),
             requirements=requirements,
             tz_content=tz_content,
-            comment_summary=(comment_analysis.get('summary') if comment_analysis.get('has_changes') else ""),
-            figma_summary=self._build_figma_summary_text(figma_data),
             custom_context=custom_context,
-            dev_objections=dev_objections or [],
-            test_types=test_types,
-            max_test_cases=max_test_cases,
+            testcases_per_requirement=testcases_per_requirement,
+            mode=mode,
         )
 
         text_info = self._calculate_text_length(prompt)
@@ -537,7 +646,7 @@ class TestCaseGeneratorService(BaseService):
             raise RuntimeError("AI token limit: prompt too large for full analysis")
 
         max_tokens = self._get_settings().ai_max_output_tokens
-        log.info(f"[{task_key}] Agent2 ▶ Gemini chaqirildi (max_tokens={max_tokens})...")
+        log.info(f"[{task_key}] Agent2 ▶ Gemini chaqirildi (mode={mode}, max_tokens={max_tokens})...")
         return self.agent_gemini.analyze(
             prompt,
             max_output_tokens=max_tokens,
@@ -547,25 +656,326 @@ class TestCaseGeneratorService(BaseService):
             },
         )
 
+    def _run_agent3_audit(
+        self,
+        *,
+        task_key: str,
+        requirements: List[Dict],
+        test_cases: List[TestCase],
+    ) -> str:
+        """Agent3 — Agent2 outputini audit/grouping qiladi."""
+        prompt = agent3_testcase_auditor.build_prompt(
+            requirements=requirements,
+            test_cases=test_cases,
+        )
+
+        text_info = self._calculate_text_length(prompt)
+        if not text_info['within_limit']:
+            raise RuntimeError("AI token limit: agent3 prompt too large for full analysis")
+
+        max_tokens = self._get_settings().ai_max_output_tokens
+        log.info(f"[{task_key}] Agent3 ▶ Gemini chaqirildi (max_tokens={max_tokens})...")
+        return self.agent_gemini.analyze(
+            prompt,
+            max_output_tokens=max_tokens,
+            generation_config_overrides={
+                "response_mime_type": "application/json",
+                "response_schema": agent3_testcase_auditor.RESPONSE_SCHEMA,
+            },
+        )
+
+    @staticmethod
+    def _requirement_ids(requirements: List[Dict]) -> List[str]:
+        return [
+            str(r.get("id") or "").strip()
+            for r in (requirements or [])
+            if str(r.get("id") or "").strip()
+        ]
+
+    @staticmethod
+    def _as_string_list(value: Any) -> List[str]:
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        if isinstance(value, tuple):
+            return [str(item).strip() for item in value if str(item).strip()]
+        text = str(value or "").strip()
+        return [text] if text else []
+
+    def _normalize_test_case(self, tc: TestCase, valid_requirement_ids: set[str]) -> TestCase:
+        tc.title = str(tc.title or "").strip() or "Nomsiz test case"
+        tc.description = str(tc.description or "").strip()
+        tc.preconditions = str(tc.preconditions or "").strip()
+        tc.steps = self._as_string_list(tc.steps)
+        tc.expected_result = str(tc.expected_result or "").strip()
+        tc.test_type = str(tc.test_type or "positive").strip() or "positive"
+        tc.priority = str(tc.priority or "Medium").strip() or "Medium"
+        tc.severity = str(tc.severity or "Major").strip() or "Major"
+        tc.tags = self._as_string_list(tc.tags)
+        req_ids = self._as_string_list(tc.requirement_ids)
+        tc.requirement_ids = [rid for rid in req_ids if rid in valid_requirement_ids]
+        return tc
+
+    def _filter_invalid_testcases(
+        self,
+        test_cases: List[TestCase],
+        requirements: List[Dict],
+    ) -> tuple[List[TestCase], List[str]]:
+        valid_requirement_ids = set(self._requirement_ids(requirements))
+        valid: List[TestCase] = []
+        invalid_reasons: List[str] = []
+        for index, tc in enumerate(test_cases or [], start=1):
+            tc = self._normalize_test_case(tc, valid_requirement_ids)
+            if not tc.requirement_ids:
+                invalid_reasons.append(f"TC#{index}: requirement_ids yo'q yoki noma'lum")
+                continue
+            if not tc.steps:
+                invalid_reasons.append(f"TC#{index}: steps bo'sh")
+                continue
+            if not tc.expected_result:
+                invalid_reasons.append(f"TC#{index}: expected_result bo'sh")
+                continue
+            valid.append(tc)
+        return valid, invalid_reasons
+
+    def _validate_and_finalize_agent2_output(
+        self,
+        test_cases: List[TestCase],
+        requirements: List[Dict],
+        testcases_per_requirement: int,
+    ) -> tuple[List[TestCase], Dict, Dict]:
+        testcases_per_requirement = self._normalize_testcases_per_requirement(testcases_per_requirement)
+        valid_cases, invalid_reasons = self._filter_invalid_testcases(test_cases, requirements)
+        finalized, coverage = self._finalize_testcases(
+            valid_cases,
+            requirements,
+            testcases_per_requirement,
+        )
+
+        req_ids = self._requirement_ids(requirements)
+        counts = {rid: 0 for rid in req_ids}
+        for tc in finalized:
+            for rid in tc.requirement_ids or []:
+                if rid in counts:
+                    counts[rid] += 1
+
+        missing = [rid for rid, count in counts.items() if count == 0]
+        underfilled = [
+            rid for rid, count in counts.items()
+            if 0 < count < testcases_per_requirement
+        ]
+
+        warnings: List[str] = []
+        if invalid_reasons:
+            warnings.append(
+                f"{len(invalid_reasons)} ta yaroqsiz test case olib tashlandi: "
+                + "; ".join(invalid_reasons[:5])
+            )
+        if underfilled:
+            warnings.append(
+                f"{testcases_per_requirement} ta targetdan kam testcase yozilgan talablar: "
+                + ", ".join(underfilled)
+            )
+        if coverage.get("trimmed_over_limit"):
+            warnings.append(
+                f"{coverage['trimmed_over_limit']} ta ortiqcha test case olib tashlandi "
+                f"(har talabga maksimum {testcases_per_requirement} ta)."
+            )
+
+        validation = {
+            "missing_requirement_ids": missing,
+            "underfilled_requirement_ids": underfilled,
+            "invalid_test_cases": invalid_reasons,
+            "warnings": warnings,
+        }
+        return finalized, coverage, validation
+
+    def _merge_testcase_batches(
+        self,
+        initial_cases: List[TestCase],
+        repair_cases: List[TestCase],
+    ) -> List[TestCase]:
+        return list(initial_cases or []) + list(repair_cases or [])
+
+    @staticmethod
+    def _testcase_identity_key(tc: TestCase) -> tuple:
+        return (
+            tuple(sorted(str(rid).strip() for rid in (tc.requirement_ids or []) if str(rid).strip())),
+            str(tc.test_type or "").strip().casefold(),
+            str(tc.title or "").strip().casefold(),
+            tuple(str(step).strip().casefold() for step in (tc.steps or [])),
+            str(tc.expected_result or "").strip().casefold(),
+        )
+
+    def _testcase_from_dict(self, data: Dict[str, Any]) -> TestCase:
+        return TestCase(
+            id=str(data.get("id") or "TC-XXX"),
+            title=str(data.get("title") or ""),
+            description=str(data.get("description") or ""),
+            preconditions=str(data.get("preconditions") or ""),
+            steps=self._as_string_list(data.get("steps") or []),
+            expected_result=str(data.get("expected_result") or ""),
+            test_type=str(data.get("test_type") or "positive"),
+            priority=str(data.get("priority") or "Medium"),
+            severity=str(data.get("severity") or "Major"),
+            tags=self._as_string_list(data.get("tags") or []),
+            requirement_ids=self._as_string_list(data.get("requirement_ids") or []),
+        )
+
+    def _parse_agent3_result(self, raw_response: str) -> tuple[List[TestScenario], List[Dict]]:
+        parse_result = parse_gemini_json(raw_response)
+        data = parse_result.data if parse_result.ok and isinstance(parse_result.data, dict) else None
+        if data is None:
+            json_start = raw_response.find('{')
+            json_end = raw_response.rfind('}') + 1
+            if json_start == -1 or json_end == 0:
+                return [], []
+            data = json.loads(self._sanitize_json_escapes(raw_response[json_start:json_end]))
+
+        raw_scenarios = data.get("test_scenarios") or data.get("scenarios") or []
+        scenarios: List[TestScenario] = []
+        for idx, scenario_data in enumerate(raw_scenarios, start=1):
+            if not isinstance(scenario_data, dict):
+                continue
+            cases = []
+            for tc_data in scenario_data.get("test_cases") or []:
+                if isinstance(tc_data, dict):
+                    cases.append(self._testcase_from_dict(tc_data))
+            if not cases:
+                continue
+            req_ids = self._as_string_list(scenario_data.get("requirement_ids") or [])
+            if not req_ids:
+                req_ids = sorted({
+                    rid for tc in cases for rid in (tc.requirement_ids or [])
+                    if str(rid).strip()
+                })
+            scenarios.append(TestScenario(
+                scenario_title=str(scenario_data.get("scenario_title") or f"Scenario {idx}").strip(),
+                screen_or_flow=str(scenario_data.get("screen_or_flow") or "").strip(),
+                requirement_ids=req_ids,
+                test_cases=cases,
+            ))
+
+        findings: List[Dict] = []
+        for item in data.get("audit_findings") or []:
+            if not isinstance(item, dict):
+                continue
+            reason = str(item.get("reason") or "").strip()
+            if not reason:
+                continue
+            findings.append({
+                "type": str(item.get("type") or "note").strip() or "note",
+                "requirement_ids": self._as_string_list(item.get("requirement_ids") or item.get("requirement_id") or []),
+                "reason": reason,
+            })
+        return scenarios, findings
+
+    @staticmethod
+    def _flatten_scenarios(scenarios: List[TestScenario]) -> List[TestCase]:
+        return [tc for scenario in (scenarios or []) for tc in (scenario.test_cases or [])]
+
+    def _build_default_scenarios(
+        self,
+        test_cases: List[TestCase],
+        requirements: List[Dict],
+    ) -> List[TestScenario]:
+        if not test_cases:
+            return []
+        req_ids = sorted({
+            rid for tc in test_cases for rid in (tc.requirement_ids or [])
+            if str(rid).strip()
+        }) or self._requirement_ids(requirements)
+        return [TestScenario(
+            scenario_title="Yaratilgan test case'lar",
+            screen_or_flow="General",
+            requirement_ids=req_ids,
+            test_cases=list(test_cases),
+        )]
+
+    def _validate_agent3_output(
+        self,
+        scenarios: List[TestScenario],
+        audit_findings: List[Dict],
+        requirements: List[Dict],
+        testcases_per_requirement: int,
+        *,
+        fallback_test_cases: List[TestCase],
+    ) -> tuple[List[TestCase], List[TestScenario], List[Dict], List[str]]:
+        warnings: List[str] = []
+        fallback_cases, fallback_coverage = self._finalize_testcases(
+            list(fallback_test_cases or []),
+            requirements,
+            testcases_per_requirement,
+        )
+        if not scenarios:
+            warnings.append("Agent3 grouped scenario qaytarmadi, Agent2 flat output ishlatildi.")
+            return fallback_cases, self._build_default_scenarios(fallback_cases, requirements), [], warnings
+
+        flattened = self._flatten_scenarios(scenarios)
+        accepted_cases, accepted_coverage, validation = self._validate_and_finalize_agent2_output(
+            flattened,
+            requirements,
+            testcases_per_requirement,
+        )
+        accepted_missing = set(accepted_coverage.get("uncovered_ids") or [])
+        fallback_missing = set(fallback_coverage.get("uncovered_ids") or [])
+        if not accepted_cases or not accepted_missing.issubset(fallback_missing):
+            warnings.append("Agent3 grouping coverage'ni buzdi, Agent2 flat output ishlatildi.")
+            return fallback_cases, self._build_default_scenarios(fallback_cases, requirements), [], warnings
+
+        warnings.extend(validation.get("warnings") or [])
+        synced = self._sync_scenarios_with_final_cases(scenarios, accepted_cases)
+        if not synced:
+            synced = self._build_default_scenarios(accepted_cases, requirements)
+        return accepted_cases, synced, list(audit_findings or []), warnings
+
+    def _sync_scenarios_with_final_cases(
+        self,
+        scenarios: List[TestScenario],
+        final_cases: List[TestCase],
+    ) -> List[TestScenario]:
+        from collections import Counter
+
+        remaining = Counter(self._testcase_identity_key(tc) for tc in (final_cases or []))
+        synced: List[TestScenario] = []
+        for scenario in scenarios or []:
+            kept: List[TestCase] = []
+            for tc in scenario.test_cases or []:
+                key = self._testcase_identity_key(tc)
+                if remaining.get(key, 0) <= 0:
+                    continue
+                remaining[key] -= 1
+                kept.append(tc)
+            if not kept:
+                continue
+            req_ids = sorted({
+                rid for tc in kept for rid in (tc.requirement_ids or [])
+                if str(rid).strip()
+            })
+            synced.append(TestScenario(
+                scenario_title=scenario.scenario_title,
+                screen_or_flow=scenario.screen_or_flow,
+                requirement_ids=req_ids,
+                test_cases=kept,
+            ))
+        return synced
+
     def _finalize_testcases(
-        self, test_cases: List[TestCase], requirements: List[Dict]
+        self, test_cases: List[TestCase], requirements: List[Dict], max_per_requirement: int | None = None
     ) -> tuple:
         """Deterministik: takror test case'larni olib tashlash, TC-NNN qayta raqamlash,
         talab qamrovini hisoblash (AI emas)."""
+        max_per_requirement = self._normalize_testcases_per_requirement(max_per_requirement)
         seen = set()
         unique: List[TestCase] = []
         for tc in test_cases:
-            key = (
-                str(tc.title or "").strip().casefold(),
-                tuple(str(s).strip().casefold() for s in (tc.steps or [])),
-            )
+            key = self._testcase_identity_key(tc)
             if key in seen:
                 continue
             seen.add(key)
             unique.append(tc)
 
         before_trim = len(unique)
-        unique = self._enforce_max_per_requirement(unique, requirements)
+        unique = self._enforce_max_per_requirement(unique, requirements, max_per_requirement)
         trimmed = before_trim - len(unique)
 
         for index, tc in enumerate(unique, start=1):
@@ -576,7 +986,7 @@ class TestCaseGeneratorService(BaseService):
         return unique, coverage
 
     def _enforce_max_per_requirement(
-        self, test_cases: List[TestCase], requirements: List[Dict]
+        self, test_cases: List[TestCase], requirements: List[Dict], max_per_requirement: int | None = None
     ) -> List[TestCase]:
         """Har talab uchun KO'PI BILAN MAX_TC_PER_REQ test case qoldiradi (deterministik).
 
@@ -585,6 +995,7 @@ class TestCaseGeneratorService(BaseService):
         (qoplangan boshqa talab qamrovini buzmaslik uchun).
         """
         from collections import defaultdict
+        max_per_requirement = self._normalize_testcases_per_requirement(max_per_requirement)
 
         def covers(tc: TestCase) -> List[str]:
             return [str(x).strip() for x in (tc.requirement_ids or []) if str(x).strip()]
@@ -596,7 +1007,7 @@ class TestCaseGeneratorService(BaseService):
 
         kept = list(test_cases)
         while True:
-            over = [rid for rid, n in count.items() if n > MAX_TC_PER_REQ]
+            over = [rid for rid, n in count.items() if n > max_per_requirement]
             if not over:
                 break
             dropped = False

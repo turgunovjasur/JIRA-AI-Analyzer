@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import Link from "next/link";
 import {
   Activity,
   AlertTriangle,
@@ -50,6 +51,7 @@ type RequirementFilter = "all" | "completed" | "failed" | "skipped" | "extra";
 
 const DEFAULT_EXECUTION_MODE: TZPRExecutionMode = "multi_agent";
 const RUN_POLL_INTERVAL_MS = 2000;
+const HISTORY_OPEN_STORAGE_KEY = "qa.open-run.tz_pr_checker";
 
 const FALLBACK_AGENTS: TZPRAgentRunSnapshot[] = [
   {
@@ -150,14 +152,6 @@ function getVerdictTone(result?: TZPRAnalysisResult | null): "success" | "warnin
   if (score >= 80) return "success";
   if (score >= 60) return "warning";
   return "danger";
-}
-
-function getRecentRunTone(value?: string | null): "soft" | "success" | "warning" | "danger" {
-  const normalized = (value || "").toLowerCase();
-  if (normalized === "completed") return "success";
-  if (normalized === "manual_review") return "warning";
-  if (normalized === "blocked" || normalized === "failed" || normalized === "error") return "danger";
-  return "soft";
 }
 
 function getRequirementCounts(result?: TZPRAnalysisResult | null) {
@@ -847,6 +841,20 @@ export function TZPRChecker() {
     setCopyState("idle");
   }, [agentPanelRun?.run_id, agentPanelRun?.updated_at]);
 
+  useEffect(() => {
+    try {
+      const raw = window.sessionStorage.getItem(HISTORY_OPEN_STORAGE_KEY);
+      if (!raw) return;
+      window.sessionStorage.removeItem(HISTORY_OPEN_STORAGE_KEY);
+      const entry = JSON.parse(raw) as RecentRun | null;
+      if (entry?.run_id?.trim()) {
+        void reopenRun(entry);
+      }
+    } catch {
+      /* Historydan auto-open bo'lmasa, sahifa oddiy holatda qoladi. */
+    }
+  }, []);
+
   function rememberRun(snapshot: TZPRRunSnapshot) {
     const runId = snapshot.run_id?.trim();
     const runTaskKey = (snapshot.task_key || snapshot.final_result?.task_key || taskKey).trim().toUpperCase();
@@ -993,6 +1001,17 @@ export function TZPRChecker() {
     await startRun();
   }
 
+  function resetView() {
+    if (agentPanelRun) {
+      rememberRun(agentPanelRun);
+    }
+    setResult(null);
+    setActiveRun(null);
+    setError(null);
+    setRequirementFilter("all");
+    setCopyState("idle");
+  }
+
   const pageTitle = result?.task_key || agentPanelRun?.task_key || "Multi-agent Checker";
   const pageSubtitle = runInProgress
     ? `${progress}% · ${agentPanelRun?.status_message || "Agentlar ishlamoqda"}`
@@ -1003,6 +1022,7 @@ export function TZPRChecker() {
   const prFoundCount = prSelection?.found_count ?? result?.pr_details?.length ?? result?.pr_count ?? 0;
   const prMergedCount = prSelection?.merged_count ?? result?.pr_count ?? result?.pr_details?.length ?? 0;
   const prSkippedCount = prSelection?.skipped_count ?? 0;
+  const showRunCard = !submitting && !agentPanelRun && !result;
 
   return (
     <div className="grid gap-5">
@@ -1020,85 +1040,77 @@ export function TZPRChecker() {
           <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">{pageSubtitle}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Button asChild size="sm" type="button" variant="ghost">
+            <Link href="/tzpr/history">
+              <Clock3 size={14} />
+              History
+              <Badge tone="soft">{recent.length}</Badge>
+            </Link>
+          </Button>
           {agentPanelRun ? (
             <Button onClick={() => void copyDebugJson()} size="sm" type="button" variant="ghost">
               <Copy size={14} />
-              {copyState === "copied" ? "Nusxalandi" : copyState === "error" ? "Copy xatosi" : "Run JSON"}
+              {copyState === "copied" ? "Nusxalandi" : copyState === "error" ? "Copy xatosi" : "Copy JSON"}
             </Button>
           ) : null}
-          {result ? (
-            <Button onClick={() => setResult(null)} size="sm" type="button" variant="ghost">
+          {agentPanelRun || result ? (
+            <Button
+              className="bg-primary !text-white hover:bg-[color:var(--brand-strong)] hover:!text-white"
+              onClick={resetView}
+              size="sm"
+              type="button"
+            >
               <ChevronLeft size={14} />
-              Yangi task
+              New Task
             </Button>
           ) : null}
         </div>
       </div>
 
-      <Card as="form" className="mx-auto grid w-full max-w-2xl gap-5 p-7" onSubmit={onSubmit}>
-        <div className="text-center">
-          <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-[13px] bg-primary text-white shadow-sm">
-            <Play size={18} fill="currentColor" />
-          </div>
-          <h2 className="mt-4 text-lg font-semibold text-foreground">Tahlilni boshlash</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Multi-agent run ochiladi va har bir bosqich holati jonli ko'rinadi.
-          </p>
-        </div>
+      {showRunCard ? (
+        <section className="grid gap-4">
+          <Card
+            as="form"
+            className="mx-auto grid w-full max-w-2xl gap-5 p-7"
+            onSubmit={onSubmit}
+          >
+            <div className="text-center">
+              <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-[13px] bg-primary text-white shadow-sm">
+                <Play size={18} fill="currentColor" />
+              </div>
+              <h2 className="mt-4 text-lg font-semibold text-foreground">Tahlilni boshlash</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Multi-agent run ochiladi va har bir bosqich holati jonli ko'rinadi.
+              </p>
+            </div>
 
-        <Field label="JIRA Task Key">
-          <Input
-            autoFocus={!result && !agentPanelRun}
-            className="font-mono text-base"
-            onChange={(event) => setTaskKey(event.target.value.toUpperCase())}
-            placeholder="DEV-1234"
-            value={taskKey}
-          />
-        </Field>
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_170px] sm:items-end">
+              <Field label="JIRA Task Key">
+                <Input
+                  autoFocus={showRunCard}
+                  className="font-mono text-base"
+                  onChange={(event) => setTaskKey(event.target.value.toUpperCase())}
+                  placeholder="DEV-1234"
+                  value={taskKey}
+                />
+              </Field>
 
-        <Button disabled={submitting || runInProgress} fullWidth type="submit">
-          {submitting || runInProgress ? (
-            <>
-              <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-              Tekshirilmoqda...
-            </>
-          ) : (
-            <>
-              <Play size={15} fill="currentColor" />
-              Tahlilni boshlash
-            </>
-          )}
-        </Button>
-      </Card>
-
-      {recent.length && !runInProgress ? (
-        <SettingsBaseCard
-          header={(
-            <SectionHeader
-              action={<Badge tone="soft">oxirgi {recent.length} ta</Badge>}
-              eyebrow="History"
-              title="So'nggi tekshiruvlar"
-            />
-          )}
-        >
-          <div className="mt-4 grid gap-2">
-            {recent.map((entry) => (
-              <button
-                className="flex items-center justify-between gap-3 rounded-[10px] border border-border bg-[color:var(--bg-layer)] px-4 py-3 text-left transition-colors hover:bg-card disabled:opacity-50"
-                disabled={submitting}
-                key={entry.run_id}
-                onClick={() => void reopenRun(entry)}
-                type="button"
-              >
-                <span className="inline-flex items-center gap-2">
-                  <Clock3 className="text-muted-foreground" size={14} />
-                  <span className="font-mono text-sm font-semibold text-foreground">{entry.task_key}</span>
-                </span>
-                <Badge tone={getRecentRunTone(entry.run_state)}>{entry.run_state || "—"}</Badge>
-              </button>
-            ))}
-          </div>
-        </SettingsBaseCard>
+              <Button disabled={submitting || runInProgress} fullWidth type="submit">
+                {submitting || runInProgress ? (
+                  <>
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                    Tekshirilmoqda...
+                  </>
+                ) : (
+                  <>
+                    <Play size={15} fill="currentColor" />
+                    Boshlash
+                  </>
+                )}
+              </Button>
+            </div>
+          </Card>
+        </section>
       ) : null}
 
       {agentPanelRun ? (

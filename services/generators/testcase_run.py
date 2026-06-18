@@ -30,11 +30,18 @@ log = get_logger("testcase.run")
 MODULE_KEY = "testcase_generator"
 EXECUTION_MODE = "multi_agent"
 
-# Seed qilinadigan agentlar (testcase 2-agentli: talab ajratuvchi + test case yozuvchi).
+# Seed qilinadigan agentlar (testcase: talab ajratuvchi + test case yozuvchi + auditor).
 _AGENTS = [
     {"agent_key": "agent1_requirements", "agent_label": "Agent1 — Talablar", "agent_order": 1, "state": "pending"},
     {"agent_key": "agent2_testcase", "agent_label": "Agent2 — Test case", "agent_order": 2, "state": "pending"},
+    {"agent_key": "agent3_audit", "agent_label": "Agent3 — Audit", "agent_order": 3, "state": "pending"},
 ]
+
+_AGENT_INPUT_SUMMARIES = {
+    "agent1_requirements": "Real JIRA TZ va Figma talab-nomzodlari asosida talablar ajratiladi.",
+    "agent2_testcase": "Agent1 ajratgan talablar, real TZ va user qo'shimcha buyrug'i asosida testcase yoziladi.",
+    "agent3_audit": "Agent2 yozgan testcase'lar duplicate, expected result va scenario grouping bo'yicha tekshiriladi.",
+}
 
 
 def _now() -> str:
@@ -89,6 +96,8 @@ class _TestcaseRunExecutor:
         self.task_key = snapshot.get("task_key")
         self._agent1_started = False
         self._agent2_started = False
+        self._agent3_started = False
+        self._agent_events: dict[str, list[dict[str, str]]] = {item["agent_key"]: [] for item in _AGENTS}
 
     def run(self) -> dict[str, Any] | None:
         update_analysis_run_record(
@@ -125,37 +134,214 @@ class _TestcaseRunExecutor:
                 error_message=getattr(result, "error_message", "") or "Testcase yaratilmadi",
             )
 
-        # Muvaffaqiyat: ikkala agent ham tugadi
-        for agent_key in ("agent1_requirements", "agent2_testcase"):
-            update_analysis_agent_record(self.run_id, agent_key, state="completed", finished_at=_now())
-        return self._finish(run_state="completed", final_result=_result_to_dict(result), error_message=None)
+        # Muvaffaqiyat: barcha agentlar tugadi, cardlarda ko'rinadigan summary/metrics yoziladi.
+        final_result = _result_to_dict(result)
+        self._finish_success_agents(final_result)
+        return self._finish(run_state="completed", final_result=final_result, error_message=None)
 
     def _on_status(self, status_type: str, message: str) -> None:
         """generate_test_cases status_callback → event + agent holati.
 
         Agent chegaralari testcase_generator progress matnlaridan aniqlanadi
-        ("(Agent1)" / "(Agent2)") — matnlar o'zgarsa shu yer yangilanadi.
+        ("(Agent1)" / "(Agent2)" / "(Agent3)") — matnlar o'zgarsa shu yer yangilanadi.
         """
         msg = str(message or "")
         level = "warning" if str(status_type).lower() == "warning" else "info"
-        append_analysis_run_event(run_id=self.run_id, level=level, event_type="progress", message=msg[:500])
+        agent_key = self._agent_key_for_message(msg)
+        append_analysis_run_event(
+            run_id=self.run_id,
+            level=level,
+            event_type="progress",
+            message=msg[:500],
+            agent_key=agent_key,
+            meta={"status_type": str(status_type or "progress")},
+        )
         try:
-            if "(Agent1)" in msg and not self._agent1_started:
+            if agent_key == "agent1_requirements" and not self._agent1_started:
                 self._agent1_started = True
                 update_analysis_run_record(self.run_id, active_phase="agent1_requirements", status_message=msg[:300])
-                update_analysis_agent_record(self.run_id, "agent1_requirements", state="running", started_at=_now())
-            elif "(Agent2)" in msg and not self._agent2_started:
+                self._start_agent("agent1_requirements", msg)
+            elif agent_key == "agent2_testcase" and not self._agent2_started:
                 self._agent2_started = True
-                update_analysis_agent_record(self.run_id, "agent1_requirements", state="completed", finished_at=_now())
+                self._complete_agent_step("agent1_requirements", "Talablar ajratildi, Agent2 ga uzatildi.")
                 update_analysis_run_record(self.run_id, active_phase="agent2_testcase", status_message=msg[:300])
-                update_analysis_agent_record(self.run_id, "agent2_testcase", state="running", started_at=_now())
+                self._start_agent("agent2_testcase", msg)
+            elif agent_key == "agent3_audit" and not self._agent3_started:
+                self._agent3_started = True
+                self._complete_agent_step("agent2_testcase", "Testcase'lar yozildi va backend validationdan o'tkazildi.")
+                update_analysis_run_record(self.run_id, active_phase="agent3_audit", status_message=msg[:300])
+                self._start_agent("agent3_audit", msg)
             else:
                 update_analysis_run_record(self.run_id, status_message=msg[:300])
+                if agent_key:
+                    self._update_agent_progress(agent_key, msg)
         except Exception as exc:  # progress yangilanishi run'ni yiqitmasin
             log.warning(f"[{self.run_id}] progress update xatosi: {exc}")
 
+    @staticmethod
+    def _agent_key_for_message(message: str) -> str | None:
+        text = str(message or "").casefold()
+        if "agent1" in text:
+            return "agent1_requirements"
+        if "agent2" in text:
+            return "agent2_testcase"
+        if "agent3" in text:
+            return "agent3_audit"
+        return None
+
+    def _remember_agent_event(self, agent_key: str, message: str) -> list[dict[str, str]]:
+        events = self._agent_events.setdefault(agent_key, [])
+        events.append({"at": _now(), "message": str(message or "")[:300]})
+        del events[:-6]
+        return list(events)
+
+    def _start_agent(self, agent_key: str, message: str) -> None:
+        activity = self._remember_agent_event(agent_key, message)
+        update_analysis_agent_record(
+            self.run_id,
+            agent_key,
+            state="running",
+            started_at=_now(),
+            attempts=1,
+            input_summary=_AGENT_INPUT_SUMMARIES.get(agent_key, "Agent bosqichi boshlandi."),
+            output_summary=str(message or "")[:500],
+            artifact_json={"activity": activity, "metrics": {"event_count": len(activity)}},
+        )
+
+    def _update_agent_progress(self, agent_key: str, message: str) -> None:
+        activity = self._remember_agent_event(agent_key, message)
+        update_analysis_agent_record(
+            self.run_id,
+            agent_key,
+            output_summary=str(message or "")[:500],
+            artifact_json={"activity": activity, "metrics": {"event_count": len(activity)}},
+        )
+
+    def _complete_agent_step(self, agent_key: str, message: str) -> None:
+        activity = self._remember_agent_event(agent_key, message)
+        update_analysis_agent_record(
+            self.run_id,
+            agent_key,
+            state="completed",
+            output_summary=message[:500],
+            artifact_json={"activity": activity, "metrics": {"event_count": len(activity)}},
+            finished_at=_now(),
+        )
+
+    def _finish_success_agents(self, final_result: dict[str, Any]) -> None:
+        requirements = list(final_result.get("requirements") or [])
+        test_cases = list(final_result.get("test_cases") or [])
+        coverage = dict(final_result.get("requirement_coverage") or {})
+        scenarios = list(final_result.get("test_scenarios") or [])
+        audit_findings = list(final_result.get("audit_findings") or [])
+        warnings = [str(item) for item in (final_result.get("warnings") or []) if str(item).strip()]
+        ai_model = str(final_result.get("ai_model") or "").strip()
+
+        uncovered = list(coverage.get("uncovered_ids") or [])
+        covered_count = int(coverage.get("covered_count") or 0)
+        total_requirements = int(coverage.get("total_requirements") or len(requirements))
+        repair_count = len([item for item in warnings if "repair" in item.casefold()])
+
+        agent2_warnings = [
+            item for item in warnings
+            if any(token in item.casefold() for token in ("agent2", "qoplanmagan", "targetdan kam", "yaroqsiz", "ortiqcha"))
+        ]
+        agent3_warnings = [
+            item for item in warnings
+            if any(token in item.casefold() for token in ("agent3", "grouping", "scenario", "audit"))
+        ]
+
+        update_analysis_agent_record(
+            self.run_id,
+            "agent1_requirements",
+            state="completed",
+            actual_model=ai_model,
+            primary_model=ai_model,
+            input_summary=_AGENT_INPUT_SUMMARIES["agent1_requirements"],
+            output_summary=f"{len(requirements)} ta talab ajratildi.",
+            artifact_json={
+                "activity": self._agent_events.get("agent1_requirements", []),
+                "metrics": {"requirement_count": len(requirements)},
+                "requirements_preview": requirements[:8],
+            },
+            finished_at=_now(),
+        )
+        update_analysis_agent_record(
+            self.run_id,
+            "agent2_testcase",
+            state="completed",
+            actual_model=ai_model,
+            primary_model=ai_model,
+            input_summary=_AGENT_INPUT_SUMMARIES["agent2_testcase"],
+            output_summary=(
+                f"{len(test_cases)} ta testcase yaratildi. "
+                f"Coverage: {covered_count}/{total_requirements} talab."
+                + (f" Qoplanmagan: {', '.join(uncovered)}." if uncovered else "")
+            ),
+            warnings_json=agent2_warnings,
+            artifact_json={
+                "activity": self._agent_events.get("agent2_testcase", []),
+                "metrics": {
+                    "requirement_count": total_requirements,
+                    "test_case_count": len(test_cases),
+                    "covered_requirement_count": covered_count,
+                    "missing_requirement_count": len(uncovered),
+                    "repair_count": repair_count,
+                },
+                "coverage": coverage,
+                "testcase_preview": [
+                    {
+                        "id": item.get("id"),
+                        "title": item.get("title"),
+                        "test_type": item.get("test_type"),
+                        "requirement_ids": item.get("requirement_ids"),
+                    }
+                    for item in test_cases[:8]
+                    if isinstance(item, dict)
+                ],
+            },
+            finished_at=_now(),
+        )
+        update_analysis_agent_record(
+            self.run_id,
+            "agent3_audit",
+            state="completed",
+            actual_model=ai_model,
+            primary_model=ai_model,
+            input_summary=_AGENT_INPUT_SUMMARIES["agent3_audit"],
+            output_summary=(
+                f"{len(scenarios)} ta scenario shakllantirildi, "
+                f"{len(audit_findings)} ta audit finding qaytdi."
+            ),
+            warnings_json=agent3_warnings,
+            artifact_json={
+                "activity": self._agent_events.get("agent3_audit", []),
+                "metrics": {
+                    "scenario_count": len(scenarios),
+                    "audit_finding_count": len(audit_findings),
+                    "test_case_count": len(test_cases),
+                },
+                "scenario_preview": [
+                    {
+                        "scenario_title": item.get("scenario_title"),
+                        "screen_or_flow": item.get("screen_or_flow"),
+                        "requirement_ids": item.get("requirement_ids"),
+                        "test_case_count": len(item.get("test_cases") or []),
+                    }
+                    for item in scenarios[:8]
+                    if isinstance(item, dict)
+                ],
+                "audit_findings_preview": audit_findings[:8],
+            },
+            finished_at=_now(),
+        )
+
     def _fail_active_agent(self, error_text: str) -> None:
-        agent_key = "agent2_testcase" if self._agent2_started else "agent1_requirements"
+        agent_key = (
+            "agent3_audit"
+            if self._agent3_started
+            else "agent2_testcase" if self._agent2_started else "agent1_requirements"
+        )
         try:
             update_analysis_agent_record(
                 self.run_id, agent_key, state="failed", error_text=(error_text or "")[:1000], finished_at=_now()

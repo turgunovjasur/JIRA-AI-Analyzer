@@ -2430,7 +2430,7 @@ body {
 }
 
 .dark .base-card {
-  --bc-hd-bg: #0a1018;
+  --bc-hd-bg: var(--surface-strong);
   --bc-hd-line: rgba(255, 255, 255, 0.14);
 }
 

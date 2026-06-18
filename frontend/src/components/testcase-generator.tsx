@@ -1,79 +1,76 @@
 "use client";
 
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import Link from "next/link";
 import {
   Activity,
+  AlertTriangle,
+  ArrowRight,
+  Check,
   ChevronLeft,
+  Clock3,
   ClipboardList,
+  Copy,
+  Database,
   FileCode2,
   Layers3,
   ListChecks,
+  Play,
+  RefreshCw,
   ShieldCheck,
+  Sparkles,
+  XCircle,
 } from "lucide-react";
 
 import { AnalysisStatusBannerView } from "@/components/analysis-status-banner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { BaseCard, Card } from "@/components/ui/card";
+import { Field } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
 import { SectionHeader } from "@/components/ui/section-header";
-import {
-  BaseCheckGroup,
-  BaseInputField,
-  BaseTextAreaField,
-  SettingsBaseCard,
-} from "@/components/settings/base-card-system";
+import { Textarea } from "@/components/ui/textarea";
+import { SettingsBaseCard } from "@/components/settings/base-card-system";
 import { cn } from "@/lib/cn";
 import type {
   GeneratedTestCase,
   TestCaseGenerationResult,
+  TestcaseScenario,
   TestcaseRunSnapshot,
   TZPRAgentRunSnapshot,
+  TZPRRunEvent,
 } from "@/lib/types";
 import { useRecentRuns, type RecentRun } from "@/lib/use-recent-runs";
 
-const TEST_TYPE_OPTIONS = [
-  { value: "positive", label: "Positive" },
-  { value: "negative", label: "Negative" },
-  { value: "boundary", label: "Chegara" },
-  { value: "edge", label: "Ekstremal" },
+type PipelineState = "pending" | "running" | "completed" | "failed";
+
+const RUN_POLL_INTERVAL_MS = 2000;
+const HISTORY_OPEN_STORAGE_KEY = "qa.open-run.testcase_generator";
+
+const FALLBACK_TESTCASE_AGENTS: TZPRAgentRunSnapshot[] = [
+  {
+    agent_key: "agent1_requirements",
+    agent_label: "Talablar",
+    agent_order: 1,
+    primary_model: "gemini",
+    state: "pending",
+  },
+  {
+    agent_key: "agent2_testcase",
+    agent_label: "Testcase writer",
+    agent_order: 2,
+    primary_model: "gemini",
+    state: "pending",
+  },
+  {
+    agent_key: "agent3_audit",
+    agent_label: "Audit",
+    agent_order: 3,
+    primary_model: "gemini",
+    state: "pending",
+  },
 ];
-
-const TEST_TYPE_CHECK_OPTIONS = TEST_TYPE_OPTIONS.map((item) => ({
-  badge: item.value,
-  key: item.value,
-  label: item.label,
-}));
-const SETTINGS_INPUT_CLASS = "settings-form-input";
-
-const TERMINAL_RUN_STATES = new Set(["completed", "error", "failed", "blocked", "manual_review"]);
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-// Run tugaguncha (terminal holatgacha) snapshot'ni so'rab turadi (~2s interval).
-async function pollTestcaseRun(
-  runId: string,
-  onTick: (snapshot: TestcaseRunSnapshot) => void,
-): Promise<TestcaseRunSnapshot> {
-  for (let attempt = 0; attempt < 150; attempt += 1) {
-    const res = await fetch(`/api/testcase/runs/${encodeURIComponent(runId)}`, {
-      cache: "no-store",
-    });
-    const snap = (await res.json().catch(() => null)) as
-      | (TestcaseRunSnapshot & { error?: string })
-      | null;
-    if (!res.ok) {
-      throw new Error(snap?.error || "Testcase run holatini o'qishda xato.");
-    }
-    if (snap?.run_state) {
-      onTick(snap);
-      if (TERMINAL_RUN_STATES.has(snap.run_state)) {
-        return snap;
-      }
-    }
-    await sleep(2000);
-  }
-  throw new Error("Testcase run juda uzoq davom etdi (timeout).");
-}
 
 type CoverageFilter = "all" | "covered" | "uncovered";
 
@@ -83,7 +80,188 @@ function priorityTone(priority: string): "danger" | "warning" | "soft" {
   return "soft";
 }
 
-function StatusDot({ covered }: { covered: boolean }) {
+function isTerminalRunState(value?: string | null) {
+  return ["completed", "manual_review", "blocked", "failed", "error"].includes((value || "").toLowerCase());
+}
+
+function isResolvedRunSnapshot(run?: TestcaseRunSnapshot | null) {
+  return Boolean(run && (isTerminalRunState(run.run_state) || run.finished_at || run.final_result));
+}
+
+function deriveResultError(result: TestCaseGenerationResult) {
+  if (result.success || result.status_banner) return null;
+  return result.error_message || "Testcase generation muvaffaqiyatsiz tugadi.";
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return "Noma'lum";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Noma'lum";
+  return new Intl.DateTimeFormat("uz-UZ", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(date);
+}
+
+function formatAgentDuration(agent?: TZPRAgentRunSnapshot | null) {
+  const started = agent?.started_at ? new Date(agent.started_at).getTime() : null;
+  const finished = agent?.finished_at ? new Date(agent.finished_at).getTime() : null;
+  if (!started) return "Boshlanmagan";
+  const end = finished && finished >= started ? finished : Date.now();
+  return `${Math.max(0, Math.round((end - started) / 1000))}s`;
+}
+
+function getAgentTone(value?: string | null): "soft" | "success" | "warning" | "danger" {
+  const normalized = (value || "").toLowerCase();
+  if (normalized === "completed" || normalized === "skipped") return "success";
+  if (normalized === "running" || normalized === "pending") return "warning";
+  if (normalized === "failed" || normalized === "blocked" || normalized === "error") return "danger";
+  return "soft";
+}
+
+function normalizePipelineState(value?: string | null): PipelineState {
+  const normalized = (value || "").toLowerCase();
+  if (normalized === "completed" || normalized === "skipped") return "completed";
+  if (normalized === "running") return "running";
+  if (normalized === "failed" || normalized === "blocked" || normalized === "error") return "failed";
+  return "pending";
+}
+
+function getRunProgress(run?: TestcaseRunSnapshot | null, result?: TestCaseGenerationResult | null) {
+  if (result?.success || run?.final_result || run?.finished_at || run?.run_state === "completed") return 100;
+  const agents = run?.agent_runs || [];
+  if (!agents.length) return run?.run_state === "running" ? 18 : 0;
+  const completed = agents.filter((agent) => normalizePipelineState(agent.state) === "completed").length;
+  const running = agents.some((agent) => normalizePipelineState(agent.state) === "running");
+  return Math.min(96, Math.round((completed / Math.max(agents.length, 1)) * 100) + (running ? 12 : 0));
+}
+
+function getPipelineAgents(run?: TestcaseRunSnapshot | null) {
+  const actual = run?.agent_runs || [];
+  const agents = actual.length ? actual : FALLBACK_TESTCASE_AGENTS;
+  return [...agents].sort((left, right) => (left.agent_order || 99) - (right.agent_order || 99));
+}
+
+function getAgentShortLabel(agent: TZPRAgentRunSnapshot, index: number) {
+  const label = agent.agent_label || agent.agent_key || `Agent ${index + 1}`;
+  return label
+    .replace(/^Agent\s*\d+\s*[·:-]\s*/i, "")
+    .replace(/^agent\d+[_-]?/i, "")
+    .replace(/_/g, " ");
+}
+
+function getAgentSubLabel(index: number) {
+  if (index === 0) return "TZ matnidan talablar ajratiladi";
+  if (index === 1) return "Testcase yoziladi, missing requirement bo'lsa repair ishlaydi";
+  if (index === 2) return "Duplicate audit va scenario grouping bajariladi";
+  return "Multi-agent bosqichi";
+}
+
+function shortModelName(model?: string | null) {
+  const value = (model || "").trim();
+  if (!value) return "";
+  if (/flash/i.test(value)) return "Flash";
+  if (/\bpro\b/i.test(value)) return "Pro";
+  return value.replace(/^gemini-?/i, "");
+}
+
+function getAgentMetrics(agent: TZPRAgentRunSnapshot) {
+  const artifact = (agent.artifact ?? null) as Record<string, unknown> | null;
+  const metrics = (artifact?.metrics ?? {}) as Record<string, unknown>;
+  const num = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+  return {
+    retry: num(metrics.retry_count),
+    technical: num(metrics.technical_failure_count),
+    fallback: num(metrics.fallback_model_call_count),
+    requirements: num(metrics.requirement_count),
+    testCases: num(metrics.test_case_count),
+    covered: num(metrics.covered_requirement_count),
+    missing: num(metrics.missing_requirement_count),
+    repairs: num(metrics.repair_count),
+    scenarios: num(metrics.scenario_count),
+    findings: num(metrics.audit_finding_count),
+  };
+}
+
+function getEventAgentKey(event: TZPRRunEvent) {
+  const direct = (event.agent_key || "").trim();
+  if (direct) return direct;
+  const text = `${event.message || ""} ${event.event_type || ""}`.toLowerCase();
+  if (text.includes("agent1")) return "agent1_requirements";
+  if (text.includes("agent2")) return "agent2_testcase";
+  if (text.includes("agent3")) return "agent3_audit";
+  return "";
+}
+
+function AgentActivityList({ events }: { events: TZPRRunEvent[] }) {
+  if (!events.length) return null;
+  return (
+    <BaseCard as="div" className="mt-3 px-3 py-2" padding="none" tone="soft">
+      <div className="text-xs font-semibold text-foreground">Jarayonlar</div>
+      <div className="mt-2 grid gap-2 text-xs leading-5">
+        {events.slice(-4).map((event, index) => (
+          <div className="grid grid-cols-[64px_minmax(0,1fr)] gap-2" key={`${event.id || index}-${event.created_at || ""}`}>
+            <span className="text-muted-foreground">{formatDateTime(event.created_at)}</span>
+            <span className={cn("min-w-0 text-muted-foreground", event.level === "error" && "text-[color:var(--error)]")}>
+              {event.message || event.event_type || "Event tafsiloti qaytmadi."}
+            </span>
+          </div>
+        ))}
+      </div>
+    </BaseCard>
+  );
+}
+
+function EventLog({ events }: { events: TZPRRunEvent[] }) {
+  return (
+    <BaseCard as="div" className="max-h-64 overflow-y-auto font-mono text-xs" padding="none" tone="soft">
+      {events.length ? events.slice(-8).reverse().map((event, index) => (
+        <div
+          className="grid grid-cols-[92px_minmax(0,1fr)] gap-3 border-b border-border px-4 py-3 last:border-0"
+          key={`${event.id || index}-${event.created_at || ""}`}
+        >
+          <span className="text-muted-foreground">{formatDateTime(event.created_at)}</span>
+          <span className={cn("min-w-0 text-foreground", event.level === "error" && "text-[color:var(--error)]")}>
+            {getEventAgentKey(event) ? <strong>{getEventAgentKey(event)}: </strong> : null}
+            {event.message || event.event_type || "Event tafsiloti qaytmadi."}
+          </span>
+        </div>
+      )) : (
+        <div className="px-4 py-4 text-muted-foreground">Eventlar hali qaytmadi.</div>
+      )}
+    </BaseCard>
+  );
+}
+
+function getAgentModelInfo(agent: TZPRAgentRunSnapshot) {
+  const primary = (agent.primary_model || "").trim();
+  const actual = (agent.actual_model || primary || "").trim();
+  const metrics = getAgentMetrics(agent);
+  const fallbackUsed =
+    Boolean(agent.used_fallback) ||
+    metrics.fallback > 0 ||
+    (Boolean(primary) && Boolean(actual) && primary !== actual);
+  const transitioned = Boolean(primary) && Boolean(actual) && primary !== actual;
+  return { primary, actual, fallbackUsed, transitioned };
+}
+
+function getAgentPhaseText(agent: TZPRAgentRunSnapshot, index: number, state: PipelineState) {
+  if (state === "running") {
+    if (index === 0) return "Agent1 talablarni ajratmoqda...";
+    if (index === 1) return "Agent2 testcase yaratmoqda...";
+    if (index === 2) return "Agent3 audit va grouping qilmoqda...";
+    return "Bajarilmoqda...";
+  }
+  if (state === "failed") {
+    return agent.error_text || agent.output_summary || "Xatolik bilan to'xtadi.";
+  }
+  if (state === "pending") {
+    return "Navbatda - oldingi bosqich tugashini kutmoqda.";
+  }
+  return agent.output_summary || agent.input_summary || getAgentSubLabel(index);
+}
+
+function RequirementStatusDot({ covered }: { covered: boolean }) {
   return (
     <span
       className={cn(
@@ -92,6 +270,31 @@ function StatusDot({ covered }: { covered: boolean }) {
       )}
     />
   );
+}
+
+function AgentStatusDot({ state }: { state: PipelineState }) {
+  return (
+    <span
+      className={cn(
+        "h-2 w-2 shrink-0 rounded-full",
+        state === "pending" && "bg-zinc-400",
+        state === "running" && "animate-pulse bg-primary shadow-[0_0_0_4px_var(--accent-soft)]",
+        state === "completed" && "bg-[color:var(--success)]",
+        state === "failed" && "bg-[color:var(--error)]",
+      )}
+    />
+  );
+}
+
+function AgentIcon({ state, index }: { state: PipelineState; index: number }) {
+  if (state === "running") {
+    return <span className="h-4 w-4 animate-spin rounded-full border-2 border-primary/20 border-t-primary" />;
+  }
+  if (state === "completed") return <Check size={15} strokeWidth={2.5} />;
+  if (state === "failed") return <XCircle size={15} strokeWidth={2.5} />;
+  if (index === 0) return <Layers3 size={15} />;
+  if (index === 1) return <Activity size={15} />;
+  return <Sparkles size={15} />;
 }
 
 function StatCard({
@@ -117,78 +320,126 @@ function StatCard({
   );
 }
 
-const AGENT_STATE_META: Record<
-  string,
-  { badge: "success" | "warning" | "danger" | "soft"; label: string }
-> = {
-  pending: { badge: "soft", label: "kutmoqda" },
-  running: { badge: "warning", label: "ishlamoqda" },
-  completed: { badge: "success", label: "tugadi" },
-  failed: { badge: "danger", label: "xato" },
-  blocked: { badge: "danger", label: "bloklandi" },
-  skipped: { badge: "soft", label: "o'tkazildi" },
-};
-
-const AGENT_ICONS = [<Layers3 key="a1" size={15} />, <Activity key="a2" size={15} />];
-
-// Run snapshot'idagi agent holatlarini JONLI ko'rsatadi (kutmoqda → ishlamoqda → tugadi/xato).
-function AgentRunFlow({ agentRuns }: { agentRuns: TZPRAgentRunSnapshot[] }) {
-  const sorted = [...agentRuns].sort(
-    (a, b) => (a.agent_order ?? 0) - (b.agent_order ?? 0),
-  );
+function AgentPipeline({ run }: { run: TestcaseRunSnapshot | null }) {
+  const agents = getPipelineAgents(run).slice(0, 3);
+  const events = run?.run_events || [];
   return (
     <BaseCard
       as="div"
-      className="grid gap-3 p-4 lg:grid-cols-[minmax(0,1fr)_32px_minmax(0,1fr)] lg:items-stretch"
+      className="grid gap-3 p-4 lg:grid-cols-[minmax(0,1fr)_32px_minmax(0,1fr)_32px_minmax(0,1fr)] lg:items-stretch"
       padding="none"
     >
-      {sorted.map((agent, index) => {
-        const state = agent.state || "pending";
-        const meta = AGENT_STATE_META[state] || AGENT_STATE_META.pending;
-        const done = state === "completed";
-        const active = state === "running";
+      {agents.map((agent, index) => {
+        const state = normalizePipelineState(agent.state);
+        const nextState = normalizePipelineState(agents[index + 1]?.state);
+        const connectorDone = state === "completed";
+        const connectorActive = state === "completed" && nextState === "running";
+        const agentEvents = events.filter((event) => getEventAgentKey(event) === agent.agent_key);
+
         return (
-          <div className="contents" key={agent.agent_key}>
+          <div className="contents" key={agent.agent_key || index}>
             <BaseCard
               as="div"
-              className="px-4 py-4"
+              className={cn(
+                "px-4 py-4 transition-colors",
+                state === "pending" && "opacity-70",
+              )}
               padding="none"
-              tone={done ? "success" : undefined}
+              tone={state === "completed" ? "success" : state === "failed" ? "danger" : state === "running" ? "warning" : "soft"}
             >
               <div className="flex min-w-0 items-start gap-3">
                 <div
                   className={cn(
-                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] border",
-                    done
-                      ? "border-[color:var(--success)] bg-[color:var(--success)] text-white"
-                      : active
-                        ? "border-primary text-primary"
-                        : "border-border text-muted-foreground",
+                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] border bg-card text-muted-foreground",
+                    state === "running" && "border-primary bg-primary text-white",
+                    state === "completed" && "border-[color:var(--success)] bg-[color:var(--success)] text-white",
+                    state === "failed" && "border-[color:var(--error)] bg-[color:var(--error)] text-white",
                   )}
                 >
-                  {AGENT_ICONS[index] || <Activity size={15} />}
+                  <AgentIcon index={index} state={state} />
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-semibold text-foreground">
-                    {agent.agent_label || agent.agent_key}
+                    Agent {index + 1} - {getAgentShortLabel(agent, index)}
                   </p>
-                  {agent.error_text ? (
-                    <p className="mt-1 text-xs leading-5 text-[color:var(--error)]">{agent.error_text}</p>
-                  ) : null}
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                    {getAgentPhaseText(agent, index, state)}
+                  </p>
                 </div>
               </div>
+
               <div className="mt-4 flex flex-wrap items-center gap-2">
-                {active ? (
-                  <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-primary" />
-                ) : null}
-                <Badge tone={meta.badge}>{meta.label}</Badge>
+                <Badge tone={getAgentTone(agent.state)}>{agent.state || "pending"}</Badge>
+                {(() => {
+                  const model = getAgentModelInfo(agent);
+                  if (model.fallbackUsed && model.transitioned) {
+                    return (
+                      <Badge tone="warning" className="inline-flex items-center gap-1">
+                        <RefreshCw size={11} />
+                        {shortModelName(model.primary)}
+                        <ArrowRight size={10} />
+                        {shortModelName(model.actual)}
+                      </Badge>
+                    );
+                  }
+                  return <Badge tone="soft">{shortModelName(model.actual) || "model"}</Badge>;
+                })()}
+                <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                  <Clock3 size={12} />
+                  {formatAgentDuration(agent)}
+                </span>
+                {(() => {
+                  const metrics = getAgentMetrics(agent);
+                  return (
+                    <>
+                      {metrics.fallback > 0 ? <Badge tone="warning">{metrics.fallback}x fallback</Badge> : null}
+                      {metrics.retry > 0 ? <Badge tone="soft">{metrics.retry} qayta urinish</Badge> : null}
+                      {metrics.technical > 0 ? <Badge tone="danger">{metrics.technical} texnik xato</Badge> : null}
+                      {metrics.requirements > 0 ? <Badge tone="soft">{metrics.requirements} talab</Badge> : null}
+                      {metrics.testCases > 0 ? <Badge tone="soft">{metrics.testCases} TC</Badge> : null}
+                      {metrics.scenarios > 0 ? <Badge tone="soft">{metrics.scenarios} scenario</Badge> : null}
+                      {metrics.missing > 0 ? <Badge tone="danger">{metrics.missing} qoplanmagan</Badge> : null}
+                      {metrics.repairs > 0 ? <Badge tone="warning">{metrics.repairs} repair</Badge> : null}
+                      {metrics.findings > 0 ? <Badge tone="warning">{metrics.findings} finding</Badge> : null}
+                    </>
+                  );
+                })()}
               </div>
+
+              <AgentActivityList events={agentEvents} />
+
+              {agent.error_text ? (
+                <BaseCard as="div" className="mt-3 px-3 py-2 text-xs leading-5 text-[color:var(--error)]" padding="none" tone="danger">
+                  {agent.error_text}
+                </BaseCard>
+              ) : null}
+
+              {(agent.warnings || []).length ? (
+                <BaseCard as="div" className="mt-2 px-3 py-2" padding="none" tone="warning">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-[color:var(--warning)]">
+                    <AlertTriangle size={12} />
+                    Nima bo'ldi?
+                  </div>
+                  <ul className="mt-1 space-y-1 text-xs leading-5 text-muted-foreground">
+                    {(agent.warnings || []).slice(0, 3).map((warning, warnIndex) => (
+                      <li key={warnIndex}>- {warning}</li>
+                    ))}
+                    {(agent.warnings || []).length > 3 ? (
+                      <li className="text-muted-foreground/70">
+                        +{(agent.warnings || []).length - 3} ta yana
+                      </li>
+                    ) : null}
+                  </ul>
+                </BaseCard>
+              ) : null}
             </BaseCard>
-            {index < sorted.length - 1 ? (
+            {index < agents.length - 1 ? (
               <div
                 className={cn(
                   "hidden self-center rounded-full lg:block lg:h-1",
-                  done ? "bg-[color:var(--success)]" : "bg-border",
+                  connectorDone && "bg-[color:var(--success)]",
+                  connectorActive && "bg-primary",
+                  !connectorDone && "bg-border",
                 )}
               />
             ) : null}
@@ -263,7 +514,7 @@ function RequirementsCoverage({
             return (
               <details className="group" key={req.id || index}>
                 <summary className="grid cursor-pointer list-none grid-cols-[18px_minmax(0,1fr)_auto] items-center gap-3 px-5 py-4 transition-colors hover:bg-[color:var(--bg-layer)]">
-                  <StatusDot covered={isCovered} />
+                  <RequirementStatusDot covered={isCovered} />
                   <span className="min-w-0 text-sm leading-6 text-foreground">
                     <span className="mr-1 font-mono text-xs text-muted-foreground">{req.id}</span>
                     {req.text}
@@ -379,50 +630,147 @@ function renderTestCaseCard(testCase: GeneratedTestCase) {
   );
 }
 
+function renderScenarioCard(scenario: TestcaseScenario, index: number) {
+  const cases = scenario.test_cases || [];
+  return (
+    <BaseCard
+      as="details"
+      className="qa-tc-card"
+      key={`${scenario.scenario_title}-${index}`}
+      padding="none"
+    >
+      <summary>
+        <span className="qa-tc-id">SC-{String(index + 1).padStart(2, "0")}</span>
+        <span className="flex-1 text-sm font-semibold text-foreground">
+          {scenario.scenario_title || "Test scenario"}
+        </span>
+        <div className="flex shrink-0 gap-2">
+          <Badge tone="soft">{cases.length} ta TC</Badge>
+          {scenario.screen_or_flow ? <Badge tone="soft">{scenario.screen_or_flow}</Badge> : null}
+        </div>
+      </summary>
+
+      <div className="qa-tc-body">
+        {scenario.requirement_ids?.length ? (
+          <div className="qa-tag-row">
+            {scenario.requirement_ids.map((rid) => (
+              <Badge key={`${scenario.scenario_title}-${rid}`} tone="success">{rid}</Badge>
+            ))}
+          </div>
+        ) : null}
+        <div className="grid gap-3">
+          {cases.map((testCase) => renderTestCaseCard(testCase))}
+        </div>
+      </div>
+    </BaseCard>
+  );
+}
+
 export function TestCaseGenerator() {
   const [taskKey, setTaskKey] = useState("");
   const [customContext, setCustomContext] = useState("");
-  const [selectedTypes, setSelectedTypes] = useState<string[]>(["positive", "negative"]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<TestCaseGenerationResult | null>(null);
   const [coverageFilter, setCoverageFilter] = useState<CoverageFilter>("all");
-  const [progress, setProgress] = useState<{ state?: string; message?: string | null } | null>(null);
   const [activeRun, setActiveRun] = useState<TestcaseRunSnapshot | null>(null);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   const { recent, addRecent } = useRecentRuns("testcase_generator");
 
-  function applyFinalSnapshot(snapshot: TestcaseRunSnapshot) {
-    setActiveRun(snapshot);
-    const finalResult = snapshot.final_result || null;
-    if (finalResult) {
-      setResult(finalResult);
-    }
-    const ok = snapshot.run_state === "completed" && Boolean(finalResult?.success);
-    if (!ok && !finalResult?.status_banner) {
-      setError(
-        snapshot.error_message
-          || finalResult?.error_message
-          || "Testcase run muvaffaqiyatsiz tugadi.",
-      );
-    }
-  }
+  const agentPanelRun = activeRun;
+  const runInProgress = Boolean(activeRun?.run_id) && !isResolvedRunSnapshot(activeRun);
+  const progress = getRunProgress(agentPanelRun, result);
+  const runEvents = agentPanelRun?.run_events || [];
+  const debugJson = agentPanelRun ? JSON.stringify(agentPanelRun, null, 2) : "";
 
-  async function trackRun(runId: string, runTaskKey: string) {
-    const snapshot = await pollTestcaseRun(runId, (snap) => {
-      setProgress({ state: snap.run_state, message: snap.status_message });
-      setActiveRun(snap);
-    });
-    applyFinalSnapshot(snapshot);
+  useEffect(() => {
+    const runId = activeRun?.run_id;
+    if (!runId || isResolvedRunSnapshot(activeRun)) return undefined;
+
+    let cancelled = false;
+    const intervalId = window.setInterval(async () => {
+      try {
+        const response = await fetch(`/api/testcase/runs/${encodeURIComponent(runId)}`, {
+          cache: "no-store",
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | (TestcaseRunSnapshot & { error?: string })
+          | null;
+
+        if (!response.ok) {
+          if (!cancelled) setError(payload?.error || "Testcase run polling xatosi.");
+          return;
+        }
+        if (!payload || cancelled) return;
+
+        applyRunSnapshot(payload, {
+          persistFinal: isResolvedRunSnapshot(payload) || isTerminalRunState(payload.run_state),
+        });
+      } catch (pollError) {
+        if (!cancelled) {
+          setError(
+            pollError instanceof Error
+              ? pollError.message
+              : "Testcase run polling vaqtida xato yuz berdi.",
+          );
+        }
+      }
+    }, RUN_POLL_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [activeRun?.run_id, activeRun?.run_state, activeRun?.finished_at, Boolean(activeRun?.final_result)]);
+
+  useEffect(() => {
+    setCopyState("idle");
+  }, [agentPanelRun?.run_id, agentPanelRun?.updated_at]);
+
+  useEffect(() => {
+    try {
+      const raw = window.sessionStorage.getItem(HISTORY_OPEN_STORAGE_KEY);
+      if (!raw) return;
+      window.sessionStorage.removeItem(HISTORY_OPEN_STORAGE_KEY);
+      const entry = JSON.parse(raw) as RecentRun | null;
+      if (entry?.run_id?.trim()) {
+        void reopenRun(entry);
+      }
+    } catch {
+      /* Historydan auto-open bo'lmasa, sahifa oddiy holatda qoladi. */
+    }
+  }, []);
+
+  function rememberRun(snapshot: TestcaseRunSnapshot) {
+    const runId = snapshot.run_id?.trim();
+    const runTaskKey = (snapshot.task_key || snapshot.final_result?.task_key || taskKey).trim().toUpperCase();
+    if (!runId || !runTaskKey) return;
     addRecent({
       run_id: runId,
       task_key: runTaskKey,
       saved_at: Date.now(),
-      run_state: snapshot.run_state,
+      run_state: snapshot.run_state || undefined,
     });
   }
 
-  async function onSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  function applyRunSnapshot(snapshot: TestcaseRunSnapshot, options?: { persistFinal?: boolean }) {
+    setActiveRun(snapshot);
+    rememberRun(snapshot);
+
+    const finalResult = snapshot.final_result || null;
+    if (finalResult) {
+      setResult(finalResult);
+      setError(deriveResultError(finalResult));
+      return;
+    }
+
+    if (options?.persistFinal && snapshot.error_message?.trim()) {
+      setError(snapshot.error_message);
+    }
+  }
+
+  async function startRun() {
+    if (submitting || runInProgress) return;
     const normalizedTaskKey = taskKey.trim().toUpperCase();
     if (!normalizedTaskKey) {
       setError("Task key kiriting.");
@@ -433,7 +781,6 @@ export function TestCaseGenerator() {
     setError(null);
     setResult(null);
     setCoverageFilter("all");
-    setProgress({ state: "queued", message: "Run yaratilmoqda..." });
     setActiveRun(null);
 
     try {
@@ -442,7 +789,6 @@ export function TestCaseGenerator() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           task_key: normalizedTaskKey,
-          test_types: selectedTypes,
           custom_context: customContext.trim(),
         }),
       });
@@ -458,8 +804,9 @@ export function TestCaseGenerator() {
         setError("Backend run id qaytarmadi.");
         return;
       }
-      setActiveRun(created);
-      await trackRun(runId, normalizedTaskKey);
+      applyRunSnapshot(created, {
+        persistFinal: isResolvedRunSnapshot(created) || isTerminalRunState(created.run_state),
+      });
     } catch (submitError) {
       const message =
         submitError instanceof Error
@@ -468,21 +815,66 @@ export function TestCaseGenerator() {
       setError(message);
     } finally {
       setSubmitting(false);
-      setProgress(null);
     }
   }
 
+  async function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await startRun();
+  }
+
+  async function copyDebugJson() {
+    if (!debugJson.trim()) {
+      setCopyState("error");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(debugJson);
+      setCopyState("copied");
+      window.setTimeout(() => setCopyState("idle"), 1600);
+    } catch {
+      setCopyState("error");
+    }
+  }
+
+  function resetView() {
+    if (agentPanelRun) {
+      rememberRun(agentPanelRun);
+    }
+    setResult(null);
+    setActiveRun(null);
+    setError(null);
+    setCoverageFilter("all");
+    setCopyState("idle");
+  }
+
   async function reopenRun(entry: RecentRun) {
-    if (submitting) return;
+    if (submitting || runInProgress) return;
     setSubmitting(true);
     setError(null);
     setResult(null);
     setCoverageFilter("all");
     setActiveRun(null);
     setTaskKey(entry.task_key);
-    setProgress({ state: "loading", message: "Eski natija yuklanmoqda..." });
     try {
-      await trackRun(entry.run_id, entry.task_key);
+      const response = await fetch(`/api/testcase/runs/${encodeURIComponent(entry.run_id)}`, {
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | (TestcaseRunSnapshot & { error?: string })
+        | null;
+      if (!response.ok) {
+        setError(payload?.error || "Eski runni yuklab bo'lmadi.");
+        return;
+      }
+      if (!payload) {
+        setError("Eski run uchun bo'sh javob qaytdi.");
+        return;
+      }
+      applyRunSnapshot(payload, {
+        persistFinal: isResolvedRunSnapshot(payload) || isTerminalRunState(payload.run_state),
+      });
     } catch (reopenError) {
       setError(
         reopenError instanceof Error
@@ -491,101 +883,168 @@ export function TestCaseGenerator() {
       );
     } finally {
       setSubmitting(false);
-      setProgress(null);
     }
   }
 
   const total = result?.requirement_coverage?.total_requirements ?? result?.requirements?.length ?? 0;
   const coveredCount = result?.requirement_coverage?.covered_count ?? 0;
   const testCaseCount = result?.total_test_cases ?? result?.test_cases?.length ?? 0;
+  const pageTitle = result?.task_key || agentPanelRun?.task_key || "Test Case Generator";
+  const pageSubtitle = runInProgress
+    ? `${progress}% · ${agentPanelRun?.status_message || "Agentlar testcase yaratmoqda"}`
+    : result?.success
+      ? "Agentlar yaratgan testcase va scenario grouping natijasi"
+      : "JIRA task asosida requirement coverage bilan testcase generatsiya qiling.";
+  const showRunCard = !submitting && !agentPanelRun && !result;
 
   return (
-    <>
-      <SettingsBaseCard
-        header={(
-          <SectionHeader
-            action={<Badge tone="soft">Agent1 → Agent2</Badge>}
-            eyebrow="Generate"
-            title="Task yuborish"
-          />
-        )}
-      >
-        <form className="grid gap-5" onSubmit={onSubmit}>
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_180px] lg:items-end">
-            <BaseInputField
-              className={SETTINGS_INPUT_CLASS}
-              label="Task Key"
-              onChange={(value) => setTaskKey(value.toUpperCase())}
-              placeholder="DEV-1234"
-              value={taskKey}
-            />
-            <Button disabled={submitting} type="submit">
-              {submitting ? "Yaratilmoqda..." : "Generate"}
+    <div className="grid gap-5">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-primary">
+            <ClipboardList size={14} />
+            Test Case Generator
+          </div>
+          <h1 className="mt-2 flex flex-wrap items-center gap-3 text-2xl font-semibold tracking-tight text-foreground">
+            <span className="min-w-0 break-words">{pageTitle}</span>
+            {runInProgress ? <Badge tone="warning"><AgentStatusDot state="running" /> Jonli</Badge> : null}
+          </h1>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">{pageSubtitle}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button asChild size="sm" type="button" variant="ghost">
+            <Link href="/testcase/history">
+              <Clock3 size={14} />
+              History
+              <Badge tone="soft">{recent.length}</Badge>
+            </Link>
+          </Button>
+          {agentPanelRun ? (
+            <Button onClick={() => void copyDebugJson()} size="sm" type="button" variant="ghost">
+              <Copy size={14} />
+              {copyState === "copied" ? "Nusxalandi" : copyState === "error" ? "Copy xatosi" : "Copy JSON"}
             </Button>
-          </div>
+          ) : null}
+          {agentPanelRun || result ? (
+            <Button
+              className="bg-primary !text-white hover:bg-[color:var(--brand-strong)] hover:!text-white"
+              onClick={resetView}
+              size="sm"
+              type="button"
+            >
+              <ChevronLeft size={14} />
+              New Task
+            </Button>
+          ) : null}
+        </div>
+      </div>
 
-          <BaseCheckGroup
-            onChange={(nextValues) => {
-              setSelectedTypes((current) => (nextValues.length ? nextValues : current));
-            }}
-            options={TEST_TYPE_CHECK_OPTIONS}
-            value={selectedTypes}
-          />
+      {showRunCard ? (
+        <section className="grid gap-4">
+          <Card
+            as="form"
+            className="mx-auto grid w-full max-w-2xl gap-5 p-7"
+            onSubmit={onSubmit}
+          >
+            <div className="text-center">
+              <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-[13px] bg-primary text-white shadow-sm">
+                <Play size={18} fill="currentColor" />
+              </div>
+              <h2 className="mt-4 text-lg font-semibold text-foreground">Testcase generatsiyani boshlash</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Agent1 talablarni ajratadi, Agent2 testcase yozadi, Agent3 audit va scenario grouping qiladi.
+              </p>
+            </div>
 
-          <BaseTextAreaField
-            label="Qo'shimcha buyruq (ixtiyoriy)"
-            onChange={setCustomContext}
-            placeholder="Mahsulot, narx, limit, maxsus biznes qoidalarini yozing..."
-            rows={5}
-            value={customContext}
-          />
-        </form>
-      </SettingsBaseCard>
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_170px] sm:items-end">
+              <Field label="JIRA Task Key">
+                <Input
+                  autoFocus={showRunCard}
+                  className="font-mono text-base"
+                  onChange={(event) => setTaskKey(event.target.value.toUpperCase())}
+                  placeholder="DEV-1234"
+                  value={taskKey}
+                />
+              </Field>
 
-      {recent.length ? (
-        <SettingsBaseCard
-          header={<SectionHeader eyebrow="History" title="So'nggi tekshiruvlar" />}
-        >
-          <div className="mt-4 grid gap-2">
-            {recent.map((entry) => (
-              <button
-                className="flex items-center justify-between gap-3 rounded-[10px] border border-border bg-[color:var(--bg-layer)] px-4 py-3 text-left transition-colors hover:bg-card disabled:opacity-50"
-                disabled={submitting}
-                key={entry.run_id}
-                onClick={() => reopenRun(entry)}
-                type="button"
-              >
-                <span className="font-mono text-sm font-semibold text-foreground">{entry.task_key}</span>
-                <Badge
-                  tone={
-                    entry.run_state === "completed"
-                      ? "success"
-                      : entry.run_state === "error" || entry.run_state === "failed"
-                        ? "danger"
-                        : "soft"
-                  }
-                >
-                  {entry.run_state || "—"}
-                </Badge>
-              </button>
-            ))}
-          </div>
-        </SettingsBaseCard>
+              <Button disabled={submitting || runInProgress} fullWidth type="submit">
+                {submitting || runInProgress ? (
+                  <>
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                    Yaratilmoqda...
+                  </>
+                ) : (
+                  <>
+                    <Play size={15} fill="currentColor" />
+                    Generate
+                  </>
+                )}
+              </Button>
+            </div>
+
+            <div className="grid gap-4 rounded-[12px] border border-border bg-[color:var(--bg-layer)] p-4">
+              <div className="grid gap-2">
+                <Field label="Qo'shimcha buyruq (ixtiyoriy)">
+                  <Textarea
+                    onChange={(event) => setCustomContext(event.target.value)}
+                    placeholder="Mahsulot, narx, limit, maxsus biznes qoidalarini yozing..."
+                    rows={5}
+                    value={customContext}
+                  />
+                </Field>
+              </div>
+            </div>
+          </Card>
+        </section>
       ) : null}
 
-      {submitting ? (
-        <Card className="px-5 py-4">
-          <div className="flex items-center gap-3 text-sm text-muted-foreground">
-            <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-primary" />
-            <span>
-              {progress?.message || "Testcase yaratilmoqda..."}
-              {progress?.state ? ` · ${progress.state}` : ""}
-            </span>
-          </div>
-        </Card>
-      ) : null}
+      {agentPanelRun ? (
+        <div className="grid gap-4">
+          <AgentPipeline run={agentPanelRun} />
 
-      {activeRun?.agent_runs?.length ? <AgentRunFlow agentRuns={activeRun.agent_runs} /> : null}
+          {runInProgress ? (
+            <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
+              <Card>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="inline-flex items-center gap-2 text-sm font-semibold text-foreground">
+                    <AgentStatusDot state="running" />
+                    <Activity size={15} />
+                    Umumiy progress
+                  </div>
+                  <span className="font-mono text-sm font-semibold text-foreground">{progress}%</span>
+                </div>
+                <div className="mt-4 h-2 overflow-hidden rounded-full bg-[color:var(--bg-strong)]">
+                  <div className="h-full rounded-full bg-primary transition-all duration-300" style={{ width: `${progress}%` }} />
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                  <BaseCard as="div" className="px-3 py-3" padding="none" tone="soft">
+                    <p className="text-xs text-muted-foreground">Run state</p>
+                    <p className="mt-1 font-semibold text-foreground">{agentPanelRun.run_state || "queued"}</p>
+                  </BaseCard>
+                  <BaseCard as="div" className="px-3 py-3" padding="none" tone="soft">
+                    <p className="text-xs text-muted-foreground">Bosqich</p>
+                    <p className="mt-1 font-semibold text-foreground">{agentPanelRun.active_phase || "queued"}</p>
+                  </BaseCard>
+                  <BaseCard as="div" className="px-3 py-3" padding="none" tone="soft">
+                    <p className="text-xs text-muted-foreground">Yangilandi</p>
+                    <p className="mt-1 font-semibold text-foreground">{formatDateTime(agentPanelRun.updated_at)}</p>
+                  </BaseCard>
+                </div>
+              </Card>
+              <Card>
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <div className="inline-flex items-center gap-2 text-sm font-semibold text-foreground">
+                    <Database size={15} />
+                    Jonli event log
+                  </div>
+                  <AgentStatusDot state="running" />
+                </div>
+                <EventLog events={runEvents} />
+              </Card>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {error ? <Notice tone="error">{error}</Notice> : null}
       {result?.status_banner ? <AnalysisStatusBannerView banner={result.status_banner} /> : null}
@@ -631,6 +1090,20 @@ export function TestCaseGenerator() {
             </SettingsBaseCard>
           ) : null}
 
+          {result.audit_findings?.length ? (
+            <SettingsBaseCard
+              header={<SectionHeader eyebrow="Agent3" title="Audit izohlari" />}
+            >
+              <div className="mt-4 grid gap-2">
+                {result.audit_findings.map((finding, index) => (
+                  <div key={index} className="qa-warning-item">
+                    <strong>{finding.type}</strong>: {finding.reason}
+                  </div>
+                ))}
+              </div>
+            </SettingsBaseCard>
+          ) : null}
+
           <RequirementsCoverage
             filter={coverageFilter}
             onFilterChange={setCoverageFilter}
@@ -646,7 +1119,11 @@ export function TestCaseGenerator() {
               />
             )}
           >
-            {result.test_cases?.length ? (
+            {result.test_scenarios?.length ? (
+              <div className="mt-5 grid gap-3">
+                {result.test_scenarios.map((scenario, index) => renderScenarioCard(scenario, index))}
+              </div>
+            ) : result.test_cases?.length ? (
               <div className="mt-5 grid gap-3">
                 {result.test_cases.map((testCase) => renderTestCaseCard(testCase))}
               </div>
@@ -682,6 +1159,6 @@ export function TestCaseGenerator() {
           ) : null}
         </SettingsBaseCard>
       ) : null}
-    </>
+    </div>
   );
 }

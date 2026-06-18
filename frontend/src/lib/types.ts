@@ -564,6 +564,20 @@ export type GeneratedTestCase = {
   requirement_ids?: string[];
 };
 
+export type TestcaseScenario = {
+  scenario_title: string;
+  screen_or_flow?: string;
+  requirement_ids?: string[];
+  test_cases?: GeneratedTestCase[];
+};
+
+export type TestcaseAuditFinding = {
+  type: string;
+  requirement_ids?: string[];
+  requirement_id?: string;
+  reason: string;
+};
+
 export type TestcaseRequirement = {
   id: string;
   text: string;
@@ -597,6 +611,8 @@ export type TestCaseGenerationResult = {
   ai_model?: string | null;
   requirements?: TestcaseRequirement[];
   requirement_coverage?: TestcaseRequirementCoverage;
+  test_scenarios?: TestcaseScenario[];
+  audit_findings?: TestcaseAuditFinding[];
 };
 
 export type TestcaseCreateRunRequest = {
@@ -696,7 +712,7 @@ export type CheckerModuleSettings = {
 
 export type TestcaseModuleSettings = {
   default_test_types: string[];
-  max_test_cases: number;
+  testcases_per_requirement: number;
   ai_data_section_order: string[];
   read_comments_enabled: boolean;
   max_comments_to_read: number;
@@ -752,7 +768,7 @@ export type WebhookSettingsView = {
     testcase_auto_comment_trigger_status: string;
     testcase_auto_comment_trigger_aliases: string;
     testcase_default_test_types: string[];
-    testcase_max_test_cases: number;
+    testcase_testcases_per_requirement: number;
     testcase_ai_data_section_order: string[];
     testcase_read_comments_enabled: boolean;
     testcase_max_comments_to_read: number;
@@ -789,7 +805,7 @@ export type WebhookSettingsSaveRequest = {
   testcase_auto_comment_trigger_status: string;
   testcase_auto_comment_trigger_aliases: string;
   testcase_default_test_types: string[];
-  testcase_max_test_cases: number;
+  testcase_testcases_per_requirement: number;
   testcase_ai_data_section_order: string[];
   testcase_read_comments_enabled: boolean;
   testcase_max_comments_to_read: number;

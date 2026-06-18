@@ -372,7 +372,7 @@ async def read_webhook_config(
             "testcase_auto_comment_trigger_status": webhook_testcase.auto_comment_trigger_status,
             "testcase_auto_comment_trigger_aliases": webhook_testcase.auto_comment_trigger_aliases,
             "testcase_default_test_types": list(webhook_testcase.default_test_types or []),
-            "testcase_max_test_cases": int(webhook_testcase.max_test_cases),
+            "testcase_testcases_per_requirement": int(getattr(webhook_testcase, "testcases_per_requirement", 3) or 3),
             "testcase_ai_data_section_order": list(webhook_testcase.ai_data_section_order or []),
             "testcase_read_comments_enabled": bool(webhook_testcase.read_comments_enabled),
             "testcase_max_comments_to_read": int(webhook_testcase.max_comments_to_read),
@@ -594,7 +594,12 @@ async def save_webhook_config(
                 required_items=(),
                 default=["positive", "negative"],
             ),
-            "max_test_cases": _tc_positive_int("testcase_max_test_cases", 10, min_value=1, max_value=50),
+            "testcases_per_requirement": _tc_positive_int(
+                "testcase_testcases_per_requirement",
+                3,
+                min_value=1,
+                max_value=3,
+            ),
             "ai_data_section_order": _tc_ordered_list(
                 "testcase_ai_data_section_order",
                 _TESTCASE_AI_ORDER_ALLOWED,
@@ -809,7 +814,7 @@ async def read_module_config(
             },
             "testcase": {
                 "default_test_types": list(testcase.default_test_types or []),
-                "max_test_cases": int(testcase.max_test_cases),
+                "testcases_per_requirement": int(getattr(testcase, "testcases_per_requirement", 3) or 3),
                 "ai_data_section_order": list(testcase.ai_data_section_order or []),
                 "read_comments_enabled": bool(testcase.read_comments_enabled),
                 "max_comments_to_read": int(testcase.max_comments_to_read),
@@ -886,11 +891,11 @@ async def save_module_config(
             "testcase.default_test_types",
             _TESTCASE_TYPES_ALLOWED,
         ),
-        "max_test_cases": _parse_positive_int(
-            testcase_raw.get("max_test_cases"),
-            "testcase.max_test_cases",
+        "testcases_per_requirement": _parse_positive_int(
+            testcase_raw.get("testcases_per_requirement", 3),
+            "testcase.testcases_per_requirement",
             min_value=1,
-            max_value=50,
+            max_value=3,
         ),
         "ai_data_section_order": _parse_ordered_list(
             testcase_raw.get("ai_data_section_order"),

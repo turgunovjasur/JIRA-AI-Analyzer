@@ -5,7 +5,8 @@ bir-biriga o'xshamagan (takrorsiz) test case'lar yozadi. BITTA Gemini
 chaqiruvi: butun ro'yxat bitta promptga beriladi, hamma test case bitta
 javobda qaytadi — shuning uchun AI butun ro'yxatni ko'rib, takrorni kamaytiradi.
 
-PR (kod) BU YERDA ISHLATILMAYDI. Manbalar: talablar + TZ + Figma + comment.
+PR (kod), comment va Figma BU YERDA ISHLATILMAYDI. Agent2 manbalari:
+Agent1 requirements + real TZ + user custom context.
 """
 from __future__ import annotations
 
@@ -33,7 +34,6 @@ RESPONSE_SCHEMA = {
                     "requirement_ids": {"type": "array", "items": {"type": "string"}},
                 },
                 "required": [
-                    "id",
                     "title",
                     "steps",
                     "expected_result",
@@ -68,22 +68,19 @@ def _section(title: str, body: str) -> str:
 
 def build_prompt(
     *,
-    task_key: str,
-    task_summary: str,
-    task_type: str,
-    task_priority: str,
     requirements: List[Dict[str, Any]],
     tz_content: str,
-    comment_summary: str = "",
-    figma_summary: str = "",
     custom_context: str = "",
-    dev_objections: List[Dict[str, Any]] | None = None,
-    test_types: List[str] | None = None,
-    max_test_cases: int = 10,
+    testcases_per_requirement: int = 3,
+    mode: str = "initial",
 ) -> str:
     """Agent2 uchun talab-drayverli prompt yig'ish."""
-    test_types = test_types or ["positive", "negative"]
-    types_text = ", ".join(f"{t} ({TEST_TYPE_DESC.get(t, t)})" for t in test_types)
+    try:
+        testcases_per_requirement = int(testcases_per_requirement)
+    except (TypeError, ValueError):
+        testcases_per_requirement = 3
+    testcases_per_requirement = max(1, min(3, testcases_per_requirement))
+    allowed_types = ", ".join(f"{t} ({desc})" for t, desc in TEST_TYPE_DESC.items())
 
     req_lines = "\n".join(
         f"- {str(r.get('id') or '').strip()}: {str(r.get('text') or '').strip()} "
@@ -96,21 +93,13 @@ def build_prompt(
         "🎯 TALABLAR RO'YXATI (Agent1 ajratgan — ASOSIY MANBA)",
         f"{req_lines}\n\n"
         "Ko'rsatma:\n"
-        "- Har bir REQ uchun KAMIDA 1 ta, KO'PI BILAN 3 ta test case yozing (majburiy chegara).\n"
+        f"- Har bir REQ uchun KAMIDA 1 ta, KO'PI BILAN {testcases_per_requirement} ta test case yozing.\n"
         "- Har test case `requirement_ids` maydonida qaysi REQ(lar)ni qoplashini ko'rsating.\n"
         "- Talablararo bir xil test case'larni TAKRORLAMANG — har biri o'ziga xos bo'lsin.\n"
-        "- Bir talab uchun kerak bo'lsa bir nechta test turini (positive/negative/edge) qo'llang, lekin 3 tadan oshmang.",
+        f"- Bir talab uchun kerak bo'lsa bir nechta test turini qo'llang, lekin {testcases_per_requirement} tadan oshmang.",
     )
 
-    tz_block = _section("📝 TEXNIK TOPSHIRIQ (TZ) — qo'shimcha kontekst", tz_content)
-    figma_block = _section("🎨 FIGMA DIZAYN MA'LUMOTLARI", figma_summary)
-
-    comments_block = ""
-    if comment_summary:
-        comments_block = _section(
-            "⚠️ MUHIM: COMMENT'LARDA O'ZGARISHLAR ANIQLANDI",
-            f"{comment_summary}\n\nBu o'zgarishlar test case'larda ALBATTA hisobga olinishi kerak!",
-        )
+    tz_block = _section("📝 REAL TEXNIK TOPSHIRIQ (TZ)", tz_content)
 
     custom_block = ""
     if custom_context:
@@ -121,43 +110,28 @@ def build_prompt(
             "test datalarida ALBATTA ishlating.",
         )
 
-    objections_block = ""
-    if dev_objections:
-        lines = []
-        for c in dev_objections:
-            author = c.get("author", "Dev")
-            created = str(c.get("created", ""))[:10]
-            body = str(c.get("body", "")).strip()
-            lines.append(f"  • {author} ({created}): {body}")
-        objections_block = _section(
-            "⚡ DEVELOPER ETIROZLARI (tahlildan KEYIN yozilgan)",
-            "\n".join(lines) + "\n\nTest case'larni yozishda bu izohlarni hisobga oling.",
-        )
-
     body_parts = [
         p
-        for p in (requirements_block, tz_block, figma_block, comments_block, custom_block, objections_block)
+        for p in (requirements_block, tz_block, custom_block)
         if p
     ]
     data_body = "\n".join(body_parts)
+    mode_instruction = ""
+    if str(mode or "").strip() == "repair_missing_requirements":
+        mode_instruction = (
+            "\n**REPAIR MODE:** Faqat yuqorida berilgan missing REQlar uchun test case yozing. "
+            "Boshqa requirementlar uchun test case yozmang.\n"
+        )
 
     return f"""**VAZIFA:** JIRA task uchun QA test case'lar yaratish (O'ZBEK TILIDA)
 
-{_LINE}
-📋 TASK MA'LUMOTLARI
-{_LINE}
-
-**Task Key:** {task_key}
-**Summary:** {task_summary}
-**Type:** {task_type}
-**Priority:** {task_priority}
-
 {data_body}
+{mode_instruction}
 {_LINE}
 🎯 SIFAT TALABLARI
 {_LINE}
 
-**Test turlari:** {types_text}
+**Test turlari:** {allowed_types}
 
 1. Har bir test case TO'LIQ va ANIQ bo'lsin (title, steps, expected_result).
 2. Steps batafsil — har bir qadam alohida element.
@@ -176,7 +150,6 @@ Javobni FAQAT JSON formatda bering, boshqa hech narsa yo'q:
 {{
   "test_cases": [
     {{
-      "id": "TC-001",
       "title": "Test case nomi (qisqa va aniq)",
       "description": "Nima test qilinadi",
       "preconditions": "Boshlang'ich shartlar",
@@ -193,10 +166,10 @@ Javobni FAQAT JSON formatda bering, boshqa hech narsa yo'q:
 ```
 
 **MUHIM:**
-- Har bir talab (REQ) KAMIDA 1 ta, KO'PI BILAN 3 ta test case bilan qoplansin (majburiy).
-- Eng ko'pi {max_test_cases} ta test case yarating.
+- Har bir talab (REQ) KAMIDA 1 ta, KO'PI BILAN {testcases_per_requirement} ta test case bilan qoplansin.
 - `steps` ro'yxat (list) bo'lsin, har bir step alohida.
 - `requirement_ids` har test case'da to'ldirilsin.
+- `id` qaytarish shart emas — backend final TC-001 raqamlashni o'zi qiladi.
 
 Endi talablar ro'yxati asosida test case'lar yarating!
 """

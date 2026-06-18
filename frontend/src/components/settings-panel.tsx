@@ -84,7 +84,7 @@ type WebhookFormState = {
   testcase_auto_comment_trigger_status: string;
   testcase_auto_comment_trigger_aliases: string;
   testcase_default_test_types: string[];
-  testcase_max_test_cases: string;
+  testcase_testcases_per_requirement: string;
   testcase_ai_data_section_order: string[];
   testcase_read_comments_enabled: boolean;
   testcase_max_comments_to_read: string;
@@ -127,7 +127,7 @@ type ModuleFormState = {
   };
   testcase: {
     default_test_types: string[];
-    max_test_cases: string;
+    testcases_per_requirement: string;
     ai_data_section_order: string[];
     read_comments_enabled: boolean;
     max_comments_to_read: string;
@@ -173,7 +173,7 @@ const EMPTY_WEBHOOK_FORM: WebhookFormState = {
   testcase_auto_comment_trigger_status: "READY TO TEST",
   testcase_auto_comment_trigger_aliases: "Ready To Test,READY TO TEST",
   testcase_default_test_types: ["positive", "negative"],
-  testcase_max_test_cases: "10",
+  testcase_testcases_per_requirement: "3",
   testcase_ai_data_section_order: ["tz", "comments", "custom_context", "code"],
   testcase_read_comments_enabled: true,
   testcase_max_comments_to_read: "0",
@@ -223,7 +223,7 @@ const EMPTY_MODULE_FORM: ModuleFormState = {
   },
   testcase: {
     default_test_types: ["positive", "negative"],
-    max_test_cases: "10",
+    testcases_per_requirement: "3",
     ai_data_section_order: ["tz", "comments", "custom_context", "code"],
     read_comments_enabled: true,
     max_comments_to_read: "0",
@@ -290,8 +290,8 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
   const checkerBatchError = Number(moduleForm.checker.agent2_batch_size || "0") < 1
     || Number(moduleForm.checker.agent2_batch_size || "0") > 20;
   const testcaseOrderError = !moduleForm.testcase.ai_data_section_order.includes("tz");
-  const testcaseCountError = Number(moduleForm.testcase.max_test_cases || "0") < 1
-    || Number(moduleForm.testcase.max_test_cases || "0") > 50;
+  const testcaseCountError = Number(moduleForm.testcase.testcases_per_requirement || "0") < 1
+    || Number(moduleForm.testcase.testcases_per_requirement || "0") > 3;
   const moduleHasError = checkerOrderError || checkerBatchError || testcaseOrderError || testcaseCountError;
   const whThresholdError = webhookForm.auto_return_enabled
     && (Number(webhookForm.return_threshold || "0") < 0
@@ -305,8 +305,8 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
     && Number(webhookForm.max_comments_to_read || "0") < 0;
   const whMaxSkipError = Boolean(webhookForm.skip_code.trim()) && Number(webhookForm.max_skip_check_comments || "0") < 1;
   const whTcMaxCasesError = webhookForm.testcase_auto_comment_enabled
-    && (Number(webhookForm.testcase_max_test_cases || "0") < 1
-      || Number(webhookForm.testcase_max_test_cases || "0") > 50);
+    && (Number(webhookForm.testcase_testcases_per_requirement || "0") < 1
+      || Number(webhookForm.testcase_testcases_per_requirement || "0") > 3);
   const whTcMaxCommentsError = webhookForm.testcase_auto_comment_enabled
     && webhookForm.testcase_read_comments_enabled
     && Number(webhookForm.testcase_max_comments_to_read || "0") < 0;
@@ -355,7 +355,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
     "testcase_auto_comment_trigger_status",
     "testcase_auto_comment_trigger_aliases",
     "testcase_default_test_types",
-    "testcase_max_test_cases",
+    "testcase_testcases_per_requirement",
     "testcase_ai_data_section_order",
     "testcase_read_comments_enabled",
     "testcase_max_comments_to_read",
@@ -389,13 +389,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
     || sysRetryDelayError
     || (systemForm.queue_enabled && sysGeminiIntervalError)
     || sysBlockedCheckError;
-
-  const testcaseTypeLabels: Record<string, string> = {
-    positive: "Ijobiy — to'g'ri ma'lumotlar bilan muvaffaqiyatli bajarilish",
-    negative: "Salbiy — noto'g'ri ma'lumotlar bilan rad etilish",
-    boundary: "Chegara — qiymatlarning chegaralari",
-    edge: "Ekstremal — nostandart holatlar",
-  };
 
   useEffect(() => {
     let cancelled = false;
@@ -488,7 +481,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                   testcase_auto_comment_trigger_status?: string;
                   testcase_auto_comment_trigger_aliases?: string;
                   testcase_default_test_types?: string[];
-                  testcase_max_test_cases?: number;
+                  testcase_testcases_per_requirement?: number;
                   testcase_ai_data_section_order?: string[];
                   testcase_read_comments_enabled?: boolean;
                   testcase_max_comments_to_read?: number;
@@ -541,7 +534,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
               testcase_auto_comment_trigger_status: String(data.testcase_auto_comment_trigger_status || "READY TO TEST"),
               testcase_auto_comment_trigger_aliases: String(data.testcase_auto_comment_trigger_aliases || "Ready To Test,READY TO TEST"),
               testcase_default_test_types: Array.isArray(data.testcase_default_test_types) ? data.testcase_default_test_types : ["positive", "negative"],
-              testcase_max_test_cases: String(data.testcase_max_test_cases ?? 10),
+              testcase_testcases_per_requirement: String(data.testcase_testcases_per_requirement ?? 3),
               testcase_ai_data_section_order: Array.isArray(data.testcase_ai_data_section_order) ? data.testcase_ai_data_section_order : ["tz", "comments", "custom_context", "code"],
               testcase_read_comments_enabled: Boolean(data.testcase_read_comments_enabled ?? true),
               testcase_max_comments_to_read: String(data.testcase_max_comments_to_read ?? 0),
@@ -581,7 +574,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
               testcase_auto_comment_trigger_status: String(data.testcase_auto_comment_trigger_status || "READY TO TEST"),
               testcase_auto_comment_trigger_aliases: String(data.testcase_auto_comment_trigger_aliases || "Ready To Test,READY TO TEST"),
               testcase_default_test_types: Array.isArray(data.testcase_default_test_types) ? data.testcase_default_test_types : ["positive", "negative"],
-              testcase_max_test_cases: String(data.testcase_max_test_cases ?? 10),
+              testcase_testcases_per_requirement: String(data.testcase_testcases_per_requirement ?? 3),
               testcase_ai_data_section_order: Array.isArray(data.testcase_ai_data_section_order) ? data.testcase_ai_data_section_order : ["tz", "comments", "custom_context", "code"],
               testcase_read_comments_enabled: Boolean(data.testcase_read_comments_enabled ?? true),
               testcase_max_comments_to_read: String(data.testcase_max_comments_to_read ?? 0),
@@ -669,7 +662,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                   };
                   testcase?: {
                     default_test_types?: string[];
-                    max_test_cases?: number;
+                    testcases_per_requirement?: number;
                     ai_data_section_order?: string[];
                     read_comments_enabled?: boolean;
                     max_comments_to_read?: number;
@@ -703,7 +696,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
               },
               testcase: {
                 default_test_types: Array.isArray(testcase.default_test_types) ? testcase.default_test_types : EMPTY_MODULE_FORM.testcase.default_test_types,
-                max_test_cases: String(testcase.max_test_cases ?? 10),
+                testcases_per_requirement: String(testcase.testcases_per_requirement ?? 3),
                 ai_data_section_order: Array.isArray(testcase.ai_data_section_order) ? testcase.ai_data_section_order : EMPTY_MODULE_FORM.testcase.ai_data_section_order,
                 read_comments_enabled: Boolean(testcase.read_comments_enabled),
                 max_comments_to_read: String(testcase.max_comments_to_read ?? 0),
@@ -1005,7 +998,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
           testcase_auto_comment_trigger_status: webhookForm.testcase_auto_comment_trigger_status,
           testcase_auto_comment_trigger_aliases: webhookForm.testcase_auto_comment_trigger_aliases,
           testcase_default_test_types: webhookForm.testcase_default_test_types,
-          testcase_max_test_cases: Number(webhookForm.testcase_max_test_cases || 10),
+          testcase_testcases_per_requirement: Number(webhookForm.testcase_testcases_per_requirement || 3),
           testcase_ai_data_section_order: webhookForm.testcase_ai_data_section_order,
           testcase_read_comments_enabled: webhookForm.testcase_read_comments_enabled,
           testcase_max_comments_to_read: Number(webhookForm.testcase_max_comments_to_read || 0),
@@ -1107,7 +1100,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
         },
         testcase: {
           default_test_types: moduleForm.testcase.default_test_types,
-          max_test_cases: Number(moduleForm.testcase.max_test_cases || 10),
+          testcases_per_requirement: Number(moduleForm.testcase.testcases_per_requirement || 3),
           ai_data_section_order: moduleForm.testcase.ai_data_section_order,
           read_comments_enabled: moduleForm.testcase.read_comments_enabled,
           max_comments_to_read: Number(moduleForm.testcase.max_comments_to_read || 0),
@@ -1901,27 +1894,13 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                               <div className="ssec-label">Mustaqil settinglar</div>
                               <div className="grid gap-3">
                                 <SettingsCardItem>
-                                  <div className="ssec mt-0 border-none pt-0">
-                                    <div className="ssec-label">Default test turlari</div>
-                                    <BaseCheckGroup
-                                      onChange={(nextValues) => updateWebhookField("testcase_default_test_types", nextValues)}
-                                      options={moduleAllowed.testcase_types.map((typeKey) => ({
-                                        key: typeKey,
-                                        label: testcaseTypeLabels[typeKey] || typeKey,
-                                        badge: typeKey,
-                                      }))}
-                                      value={webhookForm.testcase_default_test_types}
-                                    />
-                                  </div>
-                                </SettingsCardItem>
-                                <SettingsCardItem>
                                   <NumberField
-                                    hint="1-50 oralig'ida."
-                                    label="Max test cases"
-                                    max={50}
+                                    hint="Har bir requirement uchun target testcase soni. Default: 3."
+                                    label="Har requirement uchun testcase soni"
+                                    max={3}
                                     min={1}
-                                    onChange={(value) => updateWebhookField("testcase_max_test_cases", value)}
-                                    value={webhookForm.testcase_max_test_cases}
+                                    onChange={(value) => updateWebhookField("testcase_testcases_per_requirement", value)}
+                                    value={webhookForm.testcase_testcases_per_requirement}
                                   />
                                 </SettingsCardItem>
                                 <SettingsCardItem>
@@ -2029,7 +2008,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
               {modulesLoading ? <p className="mt-3 text-sm text-muted-foreground">Module sozlamalari yuklanmoqda...</p> : null}
               {moduleHasError ? (
                 <Notice className="mt-3" tone="warning">
-                  {[testcaseCountError ? "Max test cases 1-50 bo'lishi shart." : null, checkerOrderError ? "Checker order ichida tz va code bo'lishi shart." : null, checkerBatchError ? "Agent2 batch size 1-20 bo'lishi shart." : null, testcaseOrderError ? "Testcase order ichida tz bo'lishi shart." : null]
+                  {[testcaseCountError ? "Har requirement uchun testcase soni 1-3 bo'lishi shart." : null, checkerOrderError ? "Checker order ichida tz va code bo'lishi shart." : null, checkerBatchError ? "Agent2 batch size 1-20 bo'lishi shart." : null, testcaseOrderError ? "Testcase order ichida tz bo'lishi shart." : null]
                     .filter(Boolean)
                     .join(" ")}
                 </Notice>
@@ -2253,28 +2232,14 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                         <div className="ssec-label">Mustaqil settinglar</div>
                         <div className="grid gap-3">
                           <SettingsCardItem>
-                            <div className="ssec mt-0 border-none pt-0">
-                              <div className="ssec-label">Default test turlari</div>
-                              <BaseCheckGroup
-                                onChange={(nextValues) => updateTestcaseField("default_test_types", nextValues)}
-                                options={moduleAllowed.testcase_types.map((typeKey) => ({
-                                  key: typeKey,
-                                  label: testcaseTypeLabels[typeKey] || typeKey,
-                                  badge: typeKey,
-                                }))}
-                                value={moduleForm.testcase.default_test_types}
-                              />
-                            </div>
-                          </SettingsCardItem>
-                          <SettingsCardItem>
                             <NumberField
-                              hint="Har bir generatsiyada maksimum shu qadar test case yaratiladi."
-                              label="Max test cases"
-                              max={50}
+                              hint="Har bir requirement uchun target testcase soni. Default: 3."
+                              label="Har requirement uchun testcase soni"
+                              max={3}
                               min={1}
-                              onChange={(value) => updateTestcaseField("max_test_cases", value)}
+                              onChange={(value) => updateTestcaseField("testcases_per_requirement", value)}
                               required
-                              value={moduleForm.testcase.max_test_cases}
+                              value={moduleForm.testcase.testcases_per_requirement}
                             />
                           </SettingsCardItem>
                         </div>

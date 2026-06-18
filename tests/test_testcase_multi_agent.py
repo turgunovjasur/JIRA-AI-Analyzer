@@ -1,7 +1,7 @@
-"""Testcase (Servis-2) 2-agentli oqim testlari.
+"""Testcase (Servis-2) multi-agent oqim testlari.
 
-Agent1 (talab ajratuvchi, checker kontrakti reuse) → Agent2 (testcase yozuvchi).
-PR ishlatilmaydi; manbalar: TZ + Figma + comment. Bu testlar DB talab qilmaydi.
+Agent1 (talab ajratuvchi, checker kontrakti reuse) → Agent2 (testcase yozuvchi)
+→ Agent3 (audit/grouping). PR ishlatilmaydi. Bu testlar DB talab qilmaydi.
 """
 import json
 from unittest.mock import MagicMock
@@ -47,6 +47,29 @@ AGENT2_JSON = json.dumps(
     ensure_ascii=False,
 )
 
+AGENT3_JSON = json.dumps(
+    {
+        "test_scenarios": [
+            {
+                "scenario_title": "Login flow",
+                "screen_or_flow": "Login page",
+                "requirement_ids": ["REQ-1", "REQ-2"],
+                "test_cases": json.loads(AGENT2_JSON)["test_cases"],
+            }
+        ],
+        "audit_findings": [
+            {
+                "type": "grouped_same_flow",
+                "requirement_ids": ["REQ-1", "REQ-2"],
+                "reason": "Login testlari bitta flow ichida group qilindi.",
+            }
+        ],
+    },
+    ensure_ascii=False,
+)
+
+EMPTY_AGENT2_JSON = json.dumps({"test_cases": []}, ensure_ascii=False)
+
 
 def _make_service(agent_outputs, task_details=None):
     from services.generators.testcase_generator import TestCaseGeneratorService
@@ -68,18 +91,20 @@ def _make_service(agent_outputs, task_details=None):
     return service, mock_agent
 
 
-def test_two_agent_success_and_coverage():
-    service, mock_agent = _make_service([AGENT1_JSON, AGENT2_JSON])
+def test_multi_agent_success_and_coverage():
+    service, mock_agent = _make_service([AGENT1_JSON, AGENT2_JSON, AGENT3_JSON])
     result = service.generate_test_cases("DEV-1", test_types=["positive", "negative"])
 
     assert result.success is True
     assert len(result.test_cases) == 2
-    # Agent1 + Agent2 = 2 ta Gemini chaqiruvi (bitta chaqiruv Agent2)
-    assert mock_agent.analyze.call_count == 2
+    # Agent1 + Agent2 + Agent3 = 3 ta Gemini chaqiruvi
+    assert mock_agent.analyze.call_count == 3
     assert len(result.requirements) == 2
     assert result.requirement_coverage["total_requirements"] == 2
     assert result.requirement_coverage["covered_count"] == 2
     assert result.requirement_coverage["uncovered_ids"] == []
+    assert len(result.test_scenarios) == 1
+    assert result.audit_findings
     assert result.test_cases[0].requirement_ids == ["REQ-1"]
     # PR endi ishlatilmaydi
     assert result.pr_count == 0
@@ -99,7 +124,21 @@ def test_uncovered_requirement_warns():
         },
         ensure_ascii=False,
     )
-    service, _ = _make_service([AGENT1_JSON, agent2])
+    agent3 = json.dumps(
+        {
+            "test_scenarios": [
+                {
+                    "scenario_title": "Partial login flow",
+                    "screen_or_flow": "Login page",
+                    "requirement_ids": ["REQ-1"],
+                    "test_cases": json.loads(agent2)["test_cases"],
+                }
+            ],
+            "audit_findings": [],
+        },
+        ensure_ascii=False,
+    )
+    service, _ = _make_service([AGENT1_JSON, agent2, EMPTY_AGENT2_JSON, agent3])
     result = service.generate_test_cases("DEV-1")
 
     assert result.success is True
@@ -148,7 +187,7 @@ def test_build_agent1_input_excludes_comments_and_adds_figma(monkeypatch):
     inp = service._build_agent1_input(task_details, {"summaries": [{"summary": "x"}]})
 
     assert inp["tz"] == LONG_TZ
-    # QAT'IY QOIDA: Agent1 ga comment berilmaydi (comment'lar → Agent2)
+    # QAT'IY QOIDA: Agent1 ga comment berilmaydi
     assert inp["comments"] == []
     assert inp["figma"] == ["Figma ekrandagi talab matni"]
 

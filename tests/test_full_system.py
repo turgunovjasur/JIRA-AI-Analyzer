@@ -1575,10 +1575,10 @@ class TestSettingsManagement:
         settings = AppSettings()
         assert 'completed' in settings.tz_pr_checker.visible_sections
 
-    def test_default_max_test_cases(self):
+    def test_default_testcases_per_requirement(self):
         from config.app_settings import AppSettings
         settings = AppSettings()
-        assert settings.testcase_generator.max_test_cases == 10
+        assert settings.testcase_generator.testcases_per_requirement == 3
 
     def test_default_test_types(self):
         from config.app_settings import AppSettings
