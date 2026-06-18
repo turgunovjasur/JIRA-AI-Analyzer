@@ -51,7 +51,6 @@ type SettingsFormState = {
   jira_project_keys: string;
   github_org: string;
   figma_token: string;
-  gemini_model: string;
   jira_token: string;
   github_token: string;
   gemini_api_key_1: string;
@@ -89,6 +88,12 @@ type WebhookFormState = {
   testcase_read_comments_enabled: boolean;
   testcase_max_comments_to_read: string;
   testcase_footer_text: string;
+  testcase_agent1_primary_model: string;
+  testcase_agent1_fallback_model: string;
+  testcase_agent2_primary_model: string;
+  testcase_agent2_fallback_model: string;
+  testcase_agent3_primary_model: string;
+  testcase_agent3_fallback_model: string;
   agent1_primary_model: string;
   agent1_fallback_model: string;
   agent2_batch_size: string;
@@ -131,6 +136,12 @@ type ModuleFormState = {
     ai_data_section_order: string[];
     read_comments_enabled: boolean;
     max_comments_to_read: string;
+    agent1_primary_model: string;
+    agent1_fallback_model: string;
+    agent2_primary_model: string;
+    agent2_fallback_model: string;
+    agent3_primary_model: string;
+    agent3_fallback_model: string;
   };
 };
 
@@ -140,7 +151,6 @@ const EMPTY_FORM: SettingsFormState = {
   jira_project_keys: "",
   github_org: "",
   figma_token: "",
-  gemini_model: "",
   jira_token: "",
   github_token: "",
   gemini_api_key_1: "",
@@ -178,6 +188,12 @@ const EMPTY_WEBHOOK_FORM: WebhookFormState = {
   testcase_read_comments_enabled: true,
   testcase_max_comments_to_read: "0",
   testcase_footer_text: "🤖 Test case'lar AI (Gemini) tomonidan avtomatik yaratilgan. QA Team tomonidan tekshirilishi va to'ldirilishi kerak.",
+  testcase_agent1_primary_model: "",
+  testcase_agent1_fallback_model: "",
+  testcase_agent2_primary_model: "",
+  testcase_agent2_fallback_model: "",
+  testcase_agent3_primary_model: "",
+  testcase_agent3_fallback_model: "",
   agent1_primary_model: "",
   agent1_fallback_model: "",
   agent2_batch_size: "6",
@@ -227,6 +243,12 @@ const EMPTY_MODULE_FORM: ModuleFormState = {
     ai_data_section_order: ["tz", "comments", "custom_context", "code"],
     read_comments_enabled: true,
     max_comments_to_read: "0",
+    agent1_primary_model: "",
+    agent1_fallback_model: "",
+    agent2_primary_model: "",
+    agent2_fallback_model: "",
+    agent3_primary_model: "",
+    agent3_fallback_model: "",
   },
 };
 
@@ -360,6 +382,12 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
     "testcase_read_comments_enabled",
     "testcase_max_comments_to_read",
     "testcase_footer_text",
+    "testcase_agent1_primary_model",
+    "testcase_agent1_fallback_model",
+    "testcase_agent2_primary_model",
+    "testcase_agent2_fallback_model",
+    "testcase_agent3_primary_model",
+    "testcase_agent3_fallback_model",
   ];
 
   function sameWebhookValue(a: unknown, b: unknown) {
@@ -424,7 +452,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
           jira_project_keys: sharedPayload.fields.jira_project_keys || "",
           github_org: sharedPayload.fields.github_org || "",
           figma_token: "",
-          gemini_model: sharedPayload.fields.gemini_model || "",
           jira_token: sharedPayload.fields.jira_token_mask || "",
           github_token: sharedPayload.fields.github_token_mask || "",
           gemini_api_key_1: sharedPayload.fields.gemini_api_key_1_mask || "",
@@ -486,6 +513,12 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                   testcase_read_comments_enabled?: boolean;
                   testcase_max_comments_to_read?: number;
                   testcase_footer_text?: string;
+                  testcase_agent1_primary_model?: string;
+                  testcase_agent1_fallback_model?: string;
+                  testcase_agent2_primary_model?: string;
+                  testcase_agent2_fallback_model?: string;
+                  testcase_agent3_primary_model?: string;
+                  testcase_agent3_fallback_model?: string;
                   agent1_primary_model?: string;
                   agent1_fallback_model?: string;
                   agent2_batch_size?: number;
@@ -539,6 +572,12 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
               testcase_read_comments_enabled: Boolean(data.testcase_read_comments_enabled ?? true),
               testcase_max_comments_to_read: String(data.testcase_max_comments_to_read ?? 0),
               testcase_footer_text: String(data.testcase_footer_text || EMPTY_WEBHOOK_FORM.testcase_footer_text),
+              testcase_agent1_primary_model: String(data.testcase_agent1_primary_model || ""),
+              testcase_agent1_fallback_model: String(data.testcase_agent1_fallback_model || ""),
+              testcase_agent2_primary_model: String(data.testcase_agent2_primary_model || ""),
+              testcase_agent2_fallback_model: String(data.testcase_agent2_fallback_model || ""),
+              testcase_agent3_primary_model: String(data.testcase_agent3_primary_model || ""),
+              testcase_agent3_fallback_model: String(data.testcase_agent3_fallback_model || ""),
               agent1_primary_model: String(data.agent1_primary_model || ""),
               agent1_fallback_model: String(data.agent1_fallback_model || ""),
               agent2_batch_size: String(data.agent2_batch_size ?? 6),
@@ -579,6 +618,12 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
               testcase_read_comments_enabled: Boolean(data.testcase_read_comments_enabled ?? true),
               testcase_max_comments_to_read: String(data.testcase_max_comments_to_read ?? 0),
               testcase_footer_text: String(data.testcase_footer_text || EMPTY_WEBHOOK_FORM.testcase_footer_text),
+              testcase_agent1_primary_model: String(data.testcase_agent1_primary_model || ""),
+              testcase_agent1_fallback_model: String(data.testcase_agent1_fallback_model || ""),
+              testcase_agent2_primary_model: String(data.testcase_agent2_primary_model || ""),
+              testcase_agent2_fallback_model: String(data.testcase_agent2_fallback_model || ""),
+              testcase_agent3_primary_model: String(data.testcase_agent3_primary_model || ""),
+              testcase_agent3_fallback_model: String(data.testcase_agent3_fallback_model || ""),
               agent1_primary_model: String(data.agent1_primary_model || ""),
               agent1_fallback_model: String(data.agent1_fallback_model || ""),
               agent2_batch_size: String(data.agent2_batch_size ?? 6),
@@ -666,6 +711,12 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                     ai_data_section_order?: string[];
                     read_comments_enabled?: boolean;
                     max_comments_to_read?: number;
+                    agent1_primary_model?: string;
+                    agent1_fallback_model?: string;
+                    agent2_primary_model?: string;
+                    agent2_fallback_model?: string;
+                    agent3_primary_model?: string;
+                    agent3_fallback_model?: string;
                   };
                   allowed?: ModuleSettingsAllowed;
                 };
@@ -700,6 +751,12 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                 ai_data_section_order: Array.isArray(testcase.ai_data_section_order) ? testcase.ai_data_section_order : EMPTY_MODULE_FORM.testcase.ai_data_section_order,
                 read_comments_enabled: Boolean(testcase.read_comments_enabled),
                 max_comments_to_read: String(testcase.max_comments_to_read ?? 0),
+                agent1_primary_model: String(testcase.agent1_primary_model || ""),
+                agent1_fallback_model: String(testcase.agent1_fallback_model || ""),
+                agent2_primary_model: String(testcase.agent2_primary_model || ""),
+                agent2_fallback_model: String(testcase.agent2_fallback_model || ""),
+                agent3_primary_model: String(testcase.agent3_primary_model || ""),
+                agent3_fallback_model: String(testcase.agent3_fallback_model || ""),
               },
             });
             setCheckerDirty(false);
@@ -852,9 +909,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
     setSharedError(null);
     setSharedSuccess(null);
 
-    const payload: SharedSettingsSaveRequest = {
-      gemini_model: form.gemini_model,
-    };
+    const payload: SharedSettingsSaveRequest = {};
     if (geminiKey1Dirty && form.gemini_api_key_1.trim()) {
       payload.gemini_api_key_1 = form.gemini_api_key_1.trim();
     } else if (clearedCreds.gemini_api_key_1) {
@@ -1005,6 +1060,12 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
           testcase_ai_max_output_tokens: 16384,
           testcase_use_adf_format: true,
           testcase_footer_text: webhookForm.testcase_footer_text,
+          testcase_agent1_primary_model: webhookForm.testcase_agent1_primary_model,
+          testcase_agent1_fallback_model: webhookForm.testcase_agent1_fallback_model,
+          testcase_agent2_primary_model: webhookForm.testcase_agent2_primary_model,
+          testcase_agent2_fallback_model: webhookForm.testcase_agent2_fallback_model,
+          testcase_agent3_primary_model: webhookForm.testcase_agent3_primary_model,
+          testcase_agent3_fallback_model: webhookForm.testcase_agent3_fallback_model,
           agent1_primary_model: webhookForm.agent1_primary_model,
           agent1_fallback_model: webhookForm.agent1_fallback_model,
           agent2_batch_size: Number(webhookForm.agent2_batch_size || 6),
@@ -1104,6 +1165,12 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
           ai_data_section_order: moduleForm.testcase.ai_data_section_order,
           read_comments_enabled: moduleForm.testcase.read_comments_enabled,
           max_comments_to_read: Number(moduleForm.testcase.max_comments_to_read || 0),
+          agent1_primary_model: moduleForm.testcase.agent1_primary_model,
+          agent1_fallback_model: moduleForm.testcase.agent1_fallback_model,
+          agent2_primary_model: moduleForm.testcase.agent2_primary_model,
+          agent2_fallback_model: moduleForm.testcase.agent2_fallback_model,
+          agent3_primary_model: moduleForm.testcase.agent3_primary_model,
+          agent3_fallback_model: moduleForm.testcase.agent3_fallback_model,
         },
       };
 
@@ -1342,13 +1409,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                 <SettingsInnerCard>
                   <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Gemini</p>
                   <div className="mt-3 grid gap-4">
-                    <BaseInputField
-                      className={SETTINGS_INPUT_CLASS}
-                      label="Gemini Model"
-                      onChange={(value) => updateField("gemini_model", value)}
-                      placeholder="gemini-2.5-flash"
-                      value={form.gemini_model}
-                    />
                     <BaseInputField
                       className={SETTINGS_INPUT_CLASS}
                       hint={clearedCreds.gemini_api_key_1 ? "Saqlansa kalit o'chiriladi" : view.fields.gemini_api_key_1_present ? "Bo'sh qoldirilsa mavjud kalit saqlanadi" : undefined}
@@ -1891,6 +1951,38 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
 
                           <SettingsInnerCard>
                             <div className="ssec mt-0 border-none pt-0">
+                              <div className="ssec-label">Agent modellari</div>
+                              <div className="grid gap-3 md:grid-cols-2">
+                                {[
+                                  ["testcase_agent1_primary_model", "Agent1 primary"],
+                                  ["testcase_agent1_fallback_model", "Agent1 fallback"],
+                                  ["testcase_agent2_primary_model", "Agent2 primary"],
+                                  ["testcase_agent2_fallback_model", "Agent2 fallback"],
+                                  ["testcase_agent3_primary_model", "Agent3 primary"],
+                                  ["testcase_agent3_fallback_model", "Agent3 fallback"],
+                                ].map(([field, label]) => (
+                                  <BaseSelectField
+                                    className="settings-form-select"
+                                    key={field}
+                                    label={label}
+                                    onChange={(value) =>
+                                      updateWebhookField(field as keyof WebhookFormState, value)
+                                    }
+                                    value={String(webhookForm[field as keyof WebhookFormState] || "")}
+                                  >
+                                    {modelOptions().map((model) => (
+                                      <option key={model || "inherit"} value={model}>
+                                        {model || "Global default"}
+                                      </option>
+                                    ))}
+                                  </BaseSelectField>
+                                ))}
+                              </div>
+                            </div>
+                          </SettingsInnerCard>
+
+                          <SettingsInnerCard>
+                            <div className="ssec mt-0 border-none pt-0">
                               <div className="ssec-label">Mustaqil settinglar</div>
                               <div className="grid gap-3">
                                 <SettingsCardItem>
@@ -2229,6 +2321,38 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
 
                     <SettingsInnerCard>
                       <div className="ssec mt-0 border-none pt-0">
+                        <div className="ssec-label">Agent modellari</div>
+                        <div className="grid gap-3 md:grid-cols-2">
+                          {[
+                            ["agent1_primary_model", "Agent1 primary"],
+                            ["agent1_fallback_model", "Agent1 fallback"],
+                            ["agent2_primary_model", "Agent2 primary"],
+                            ["agent2_fallback_model", "Agent2 fallback"],
+                            ["agent3_primary_model", "Agent3 primary"],
+                            ["agent3_fallback_model", "Agent3 fallback"],
+                          ].map(([field, label]) => (
+                            <BaseSelectField
+                              className="settings-form-select"
+                              key={field}
+                              label={label}
+                              onChange={(value) =>
+                                updateTestcaseField(field as keyof ModuleFormState["testcase"], value)
+                              }
+                              value={String(moduleForm.testcase[field as keyof ModuleFormState["testcase"]] || "")}
+                            >
+                              {modelOptions().map((model) => (
+                                <option key={model || "inherit"} value={model}>
+                                  {model || "Global default"}
+                                </option>
+                              ))}
+                            </BaseSelectField>
+                          ))}
+                        </div>
+                      </div>
+                    </SettingsInnerCard>
+
+                    <SettingsInnerCard>
+                      <div className="ssec mt-0 border-none pt-0">
                         <div className="ssec-label">Mustaqil settinglar</div>
                         <div className="grid gap-3">
                           <SettingsCardItem>
@@ -2271,14 +2395,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                 JIRA, GitHub va Figma konfiguratsiyasi kompaniya admini tomonidan boshqariladi.
               </p>
               <div className="mt-5 grid gap-4 md:grid-cols-2">
-                <BaseInputField
-                  className={SETTINGS_INPUT_CLASS}
-                  label="Model"
-                  onChange={(value) => updateField("gemini_model", value)}
-                  placeholder="gemini-2.5-flash"
-                  value={form.gemini_model}
-                />
-                <div />
                 <BaseInputField
                   className={SETTINGS_INPUT_CLASS}
                   hint={clearedCreds.gemini_api_key_1 ? "Saqlansa kalit o'chiriladi" : view.fields.gemini_api_key_1_present ? "Bo'sh qoldirilsa mavjud kalit saqlanadi" : undefined}

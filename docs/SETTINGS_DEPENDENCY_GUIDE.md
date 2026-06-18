@@ -19,7 +19,6 @@ Har bir setting uchun roli ko'rsatiladi:
 - `github_org` -> `MUSTAQIL`
 - `github_token` -> `MUSTAQIL`
 - `figma_token` -> `MUSTAQIL`
-- `gemini_model` -> `MUSTAQIL`
 - `gemini_api_key_1` -> `MUSTAQIL`
 - `gemini_api_key_2` -> `MUSTAQIL`
 
@@ -42,6 +41,12 @@ Har bir setting uchun roli ko'rsatiladi:
 - `testcase.default_test_types` -> `MUSTAQIL`
 - `testcase.max_test_cases` -> `MUSTAQIL`
 - `testcase.ai_data_section_order` -> `MUSTAQIL`
+- `testcase.agent1_primary_model` -> `MUSTAQIL`
+- `testcase.agent1_fallback_model` -> `MUSTAQIL`
+- `testcase.agent2_primary_model` -> `MUSTAQIL`
+- `testcase.agent2_fallback_model` -> `MUSTAQIL`
+- `testcase.agent3_primary_model` -> `MUSTAQIL`
+- `testcase.agent3_fallback_model` -> `MUSTAQIL`
 
 ## 3) Webhook tab
 

@@ -71,7 +71,6 @@ CREATE TABLE IF NOT EXISTS company_settings (
     figma_tokens TEXT NOT NULL DEFAULT '[]',
     gemini_api_key_1 TEXT NOT NULL DEFAULT '',
     gemini_api_key_2 TEXT NOT NULL DEFAULT '',
-    gemini_model TEXT NOT NULL DEFAULT '',
     webhook_jira_server TEXT NOT NULL DEFAULT '',
     webhook_jira_email TEXT NOT NULL DEFAULT '',
     webhook_jira_token TEXT NOT NULL DEFAULT '',
@@ -81,7 +80,6 @@ CREATE TABLE IF NOT EXISTS company_settings (
     webhook_figma_tokens TEXT NOT NULL DEFAULT '[]',
     webhook_gemini_api_key_1 TEXT NOT NULL DEFAULT '',
     webhook_gemini_api_key_2 TEXT NOT NULL DEFAULT '',
-    webhook_gemini_model TEXT NOT NULL DEFAULT '',
     enabled_modules TEXT NOT NULL DEFAULT '{}',
     webhook_project_keys TEXT NOT NULL DEFAULT '',
     webhook_trigger_status TEXT NOT NULL DEFAULT '',
@@ -107,7 +105,6 @@ CREATE TABLE IF NOT EXISTS user_credentials (
     figma_tokens TEXT NOT NULL DEFAULT '[]',
     gemini_api_key_1 TEXT NOT NULL DEFAULT '',
     gemini_api_key_2 TEXT NOT NULL DEFAULT '',
-    gemini_model TEXT NOT NULL DEFAULT '',
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

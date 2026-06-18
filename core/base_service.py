@@ -123,7 +123,6 @@ class BaseService:
             creds = self._get_creds()
             self._gemini_helper = GeminiHelper(
                 api_keys=creds['gemini_keys'],
-                model_name=creds.get('gemini_model') or None,
             )
         return self._gemini_helper
 

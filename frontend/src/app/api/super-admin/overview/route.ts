@@ -28,6 +28,14 @@ type RawCompany = {
   seat_limit?: number | null;
 };
 
+function maskSecret(value: unknown) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return "";
+  const tail = raw.slice(-4);
+  const stars = "*".repeat(Math.max(4, raw.length - tail.length));
+  return `${stars}${tail}`;
+}
+
 export async function GET() {
   const { error, session } = await requireSuperAdminSession();
   if (error || !session) {
@@ -40,7 +48,6 @@ export async function GET() {
       securityStatus,
       auditLogs,
       globalDefaults,
-      fallbackModel,
       keyFreezeMinutes,
       agent1PrimaryModel,
       agent1FallbackModel,
@@ -48,13 +55,18 @@ export async function GET() {
       agent2FallbackModel,
       agent3PrimaryModel,
       agent3FallbackModel,
+      testcaseAgent1PrimaryModel,
+      testcaseAgent1FallbackModel,
+      testcaseAgent2PrimaryModel,
+      testcaseAgent2FallbackModel,
+      testcaseAgent3PrimaryModel,
+      testcaseAgent3FallbackModel,
     ] =
       await Promise.all([
         callInternalRpc<RawCompany[]>("get_all_companies"),
         callInternalRpc<SecurityStatus>("get_credential_security_status"),
         callInternalRpc<LoginAuditLog[]>("get_recent_login_audit_logs", [], { limit: 20 }),
         callInternalRpc<Record<string, string>>("get_global_gemini_defaults"),
-        callInternalRpc<string>("get_global_setting", ["gemini_default_fallback_model", "gemini-2.5-flash"]),
         callInternalRpc<string>("get_global_setting", ["gemini_key_freeze_minutes", "10"]),
         callInternalRpc<string>("get_global_setting", ["checker_agent1_primary_model", "gemini-2.5-flash"]),
         callInternalRpc<string>("get_global_setting", ["checker_agent1_fallback_model", "gemini-2.5-flash"]),
@@ -62,6 +74,12 @@ export async function GET() {
         callInternalRpc<string>("get_global_setting", ["checker_agent2_fallback_model", "gemini-2.5-flash"]),
         callInternalRpc<string>("get_global_setting", ["checker_agent3_primary_model", "gemini-2.5-flash"]),
         callInternalRpc<string>("get_global_setting", ["checker_agent3_fallback_model", "gemini-2.5-flash"]),
+        callInternalRpc<string>("get_global_setting", ["testcase_agent1_primary_model", "gemini-2.5-flash"]),
+        callInternalRpc<string>("get_global_setting", ["testcase_agent1_fallback_model", "gemini-2.5-flash"]),
+        callInternalRpc<string>("get_global_setting", ["testcase_agent2_primary_model", "gemini-2.5-pro"]),
+        callInternalRpc<string>("get_global_setting", ["testcase_agent2_fallback_model", "gemini-2.5-flash"]),
+        callInternalRpc<string>("get_global_setting", ["testcase_agent3_primary_model", "gemini-2.5-flash"]),
+        callInternalRpc<string>("get_global_setting", ["testcase_agent3_fallback_model", "gemini-2.5-flash"]),
       ]);
 
     const companyPayload = await Promise.all(
@@ -119,17 +137,23 @@ export async function GET() {
     );
 
     const aiDefaults = {
+      api_key_1_mask: maskSecret(globalDefaults?.api_key_1),
       api_key_1_present: Boolean(globalDefaults?.api_key_1),
+      api_key_2_mask: maskSecret(globalDefaults?.api_key_2),
       api_key_2_present: Boolean(globalDefaults?.api_key_2),
-      fallback_model: (fallbackModel || "gemini-2.5-flash").trim(),
       key_freeze_minutes: Number.parseInt((keyFreezeMinutes || "10").trim(), 10) || 10,
-      model: globalDefaults?.model || "",
       agent1_primary_model: (agent1PrimaryModel || "gemini-2.5-flash").trim(),
       agent1_fallback_model: (agent1FallbackModel || "gemini-2.5-flash").trim(),
       agent2_primary_model: (agent2PrimaryModel || "gemini-2.5-pro").trim(),
       agent2_fallback_model: (agent2FallbackModel || "gemini-2.5-flash").trim(),
       agent3_primary_model: (agent3PrimaryModel || "gemini-2.5-flash").trim(),
       agent3_fallback_model: (agent3FallbackModel || "gemini-2.5-flash").trim(),
+      testcase_agent1_primary_model: (testcaseAgent1PrimaryModel || "gemini-2.5-flash").trim(),
+      testcase_agent1_fallback_model: (testcaseAgent1FallbackModel || "gemini-2.5-flash").trim(),
+      testcase_agent2_primary_model: (testcaseAgent2PrimaryModel || "gemini-2.5-pro").trim(),
+      testcase_agent2_fallback_model: (testcaseAgent2FallbackModel || "gemini-2.5-flash").trim(),
+      testcase_agent3_primary_model: (testcaseAgent3PrimaryModel || "gemini-2.5-flash").trim(),
+      testcase_agent3_fallback_model: (testcaseAgent3FallbackModel || "gemini-2.5-flash").trim(),
     } satisfies GlobalAiDefaults;
 
     const payload = {

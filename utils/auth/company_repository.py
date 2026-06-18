@@ -81,7 +81,6 @@ def _default_company_settings_payload() -> Dict[str, Any]:
         "figma_tokens": "[]",
         "gemini_api_key_1": "",
         "gemini_api_key_2": "",
-        "gemini_model": "",
         "webhook_jira_server": "",
         "webhook_jira_email": "",
         "webhook_jira_token": "",
@@ -91,7 +90,6 @@ def _default_company_settings_payload() -> Dict[str, Any]:
         "webhook_figma_tokens": "[]",
         "webhook_gemini_api_key_1": "",
         "webhook_gemini_api_key_2": "",
-        "webhook_gemini_model": "",
         "enabled_modules": "{}",
         "webhook_project_keys": "",
         "webhook_trigger_status": "",
@@ -152,7 +150,6 @@ def _extract_integrations_company_settings(conn, company_id: int) -> Dict[str, A
             elif provider == "gemini":
                 settings["gemini_api_key_1"] = config.get("gemini_api_key_1", settings["gemini_api_key_1"])
                 settings["gemini_api_key_2"] = config.get("gemini_api_key_2", settings["gemini_api_key_2"])
-                settings["gemini_model"] = config.get("gemini_model", settings["gemini_model"])
             elif provider == "webhook_jira":
                 settings["webhook_jira_server"] = config.get("jira_server", settings["webhook_jira_server"])
                 settings["webhook_jira_email"] = config.get("jira_email", settings["webhook_jira_email"])
@@ -167,7 +164,6 @@ def _extract_integrations_company_settings(conn, company_id: int) -> Dict[str, A
             elif provider == "webhook_gemini":
                 settings["webhook_gemini_api_key_1"] = config.get("gemini_api_key_1", settings["webhook_gemini_api_key_1"])
                 settings["webhook_gemini_api_key_2"] = config.get("gemini_api_key_2", settings["webhook_gemini_api_key_2"])
-                settings["webhook_gemini_model"] = config.get("gemini_model", settings["webhook_gemini_model"])
 
     if _table_exists(conn, "company_module_access"):
         rows = execute(
@@ -682,7 +678,6 @@ def upsert_company_settings(
                     "gemini": {
                         "gemini_api_key_1": merged.get("gemini_api_key_1") or "",
                         "gemini_api_key_2": merged.get("gemini_api_key_2") or "",
-                        "gemini_model": merged.get("gemini_model") or "",
                     },
                     "webhook_jira": {
                         "jira_server": merged.get("webhook_jira_server") or "",
@@ -701,7 +696,6 @@ def upsert_company_settings(
                     "webhook_gemini": {
                         "gemini_api_key_1": merged.get("webhook_gemini_api_key_1") or "",
                         "gemini_api_key_2": merged.get("webhook_gemini_api_key_2") or "",
-                        "gemini_model": merged.get("webhook_gemini_model") or "",
                     },
                 }
                 for provider, config in provider_payloads.items():

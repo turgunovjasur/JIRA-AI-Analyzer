@@ -664,7 +664,6 @@ export type SharedSettingsView = {
     github_org?: string;
     figma_token_mask?: string;
     figma_tokens?: Array<{ name: string; mask: string }>;
-    gemini_model?: string;
     jira_token_mask?: string;
     github_token_mask?: string;
     gemini_api_key_1_mask?: string;
@@ -685,7 +684,6 @@ export type SharedSettingsSaveRequest = {
   github_org?: string;
   figma_token?: string;
   figma_tokens?: Array<{ name: string; token?: string; keep?: boolean; idx?: number }>;
-  gemini_model?: string;
   jira_token?: string;
   github_token?: string;
   gemini_api_key_1?: string;
@@ -711,6 +709,12 @@ export type CheckerModuleSettings = {
 };
 
 export type TestcaseModuleSettings = {
+  agent1_fallback_model?: string;
+  agent1_primary_model?: string;
+  agent2_fallback_model?: string;
+  agent2_primary_model?: string;
+  agent3_fallback_model?: string;
+  agent3_primary_model?: string;
   default_test_types: string[];
   testcases_per_requirement: number;
   ai_data_section_order: string[];
@@ -772,6 +776,12 @@ export type WebhookSettingsView = {
     testcase_ai_data_section_order: string[];
     testcase_read_comments_enabled: boolean;
     testcase_max_comments_to_read: number;
+    testcase_agent1_primary_model?: string;
+    testcase_agent1_fallback_model?: string;
+    testcase_agent2_primary_model?: string;
+    testcase_agent2_fallback_model?: string;
+    testcase_agent3_primary_model?: string;
+    testcase_agent3_fallback_model?: string;
     testcase_ai_max_output_tokens: number;
     testcase_use_adf_format: boolean;
     testcase_footer_text: string;
@@ -809,6 +819,12 @@ export type WebhookSettingsSaveRequest = {
   testcase_ai_data_section_order: string[];
   testcase_read_comments_enabled: boolean;
   testcase_max_comments_to_read: number;
+  testcase_agent1_primary_model?: string;
+  testcase_agent1_fallback_model?: string;
+  testcase_agent2_primary_model?: string;
+  testcase_agent2_fallback_model?: string;
+  testcase_agent3_primary_model?: string;
+  testcase_agent3_fallback_model?: string;
   testcase_ai_max_output_tokens: number;
   testcase_use_adf_format: boolean;
   testcase_footer_text: string;
@@ -924,11 +940,17 @@ export type GlobalAiDefaults = {
   agent2_primary_model?: string | null;
   agent3_fallback_model?: string | null;
   agent3_primary_model?: string | null;
+  api_key_1_mask?: string | null;
   api_key_1_present: boolean;
+  api_key_2_mask?: string | null;
   api_key_2_present: boolean;
-  fallback_model?: string | null;
   key_freeze_minutes?: number | null;
-  model?: string | null;
+  testcase_agent1_fallback_model?: string | null;
+  testcase_agent1_primary_model?: string | null;
+  testcase_agent2_fallback_model?: string | null;
+  testcase_agent2_primary_model?: string | null;
+  testcase_agent3_fallback_model?: string | null;
+  testcase_agent3_primary_model?: string | null;
 };
 
 export type SuperAdminOverviewMetrics = {

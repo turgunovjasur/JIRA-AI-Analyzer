@@ -363,6 +363,12 @@ class TestcaseGeneratorSettings:
     testcases_per_requirement: int = 3
     # AI javob uchun maksimal token soni (truncation oldini olish uchun)
     ai_max_output_tokens: int = TESTCASE_MAX_OUTPUT_TOKENS
+    agent1_primary_model: str = ""
+    agent1_fallback_model: str = ""
+    agent2_primary_model: str = ""
+    agent2_fallback_model: str = ""
+    agent3_primary_model: str = ""
+    agent3_fallback_model: str = ""
 
     # ━━━ AI ga ma'lumotlar tartibi (darajasi) ━━━
     # Sozlamadagi tartib bo'yicha AI promtiga bo'limlar qo'shiladi. Servis SHU tartibga qat'iy amal qiladi.
@@ -393,6 +399,12 @@ class TestcaseGeneratorSettings:
     test_types_help: str = "Default test turlari: positive (asosiy), negative (xato holatlari)"
     testcases_per_requirement_help: str = "Har bir talab uchun yoziladigan test case soni (1-3). Default: 3"
     ai_max_output_tokens_help: str = "AI javob uchun maksimal token soni (platform policy bo'yicha boshqariladi)"
+    agent1_primary_model_help: str = "Testcase Agent1 Requirements primary modeli. Bo'sh bo'lsa global default meros olinadi."
+    agent1_fallback_model_help: str = "Testcase Agent1 Requirements fallback modeli. Bo'sh bo'lsa global default meros olinadi."
+    agent2_primary_model_help: str = "Testcase Agent2 Generator primary modeli. Bo'sh bo'lsa global default meros olinadi."
+    agent2_fallback_model_help: str = "Testcase Agent2 Generator fallback modeli. Bo'sh bo'lsa global default meros olinadi."
+    agent3_primary_model_help: str = "Testcase Agent3 Auditor primary modeli. Bo'sh bo'lsa global default meros olinadi."
+    agent3_fallback_model_help: str = "Testcase Agent3 Auditor fallback modeli. Bo'sh bo'lsa global default meros olinadi."
     ai_data_section_order_help: str = (
         "AI ga ma'lumotlar qaysi tartibda berilishi. Birinchi o'rinda eng ustun. "
         "tz = TZ, comments = comment'lar, custom_context = qo'shimcha kontekst, "
@@ -823,6 +835,22 @@ _CHECKER_AGENT_MODEL_GLOBAL_KEYS = {
     for field_name in _CHECKER_AGENT_MODEL_DEFAULTS
 }
 
+_TESTCASE_AGENT_MODEL_DEFAULTS = {
+    "agent1_primary_model": "gemini-2.5-flash",
+    "agent1_fallback_model": "gemini-2.5-flash",
+    "agent2_primary_model": "gemini-2.5-pro",
+    "agent2_fallback_model": "gemini-2.5-flash",
+    "agent3_primary_model": "gemini-2.5-flash",
+    "agent3_fallback_model": "gemini-2.5-flash",
+}
+
+_TESTCASE_AGENT_MODEL_GLOBAL_KEYS = {
+    field_name: f"testcase_{field_name}"
+    for field_name in _TESTCASE_AGENT_MODEL_DEFAULTS
+}
+
+_AGENT_MODEL_OVERRIDE_FIELDS = set(_CHECKER_AGENT_MODEL_DEFAULTS) | set(_TESTCASE_AGENT_MODEL_DEFAULTS)
+
 
 def _parse_positive_int_or_default(raw: str, default: int) -> int:
     try:
@@ -898,6 +926,28 @@ def _apply_global_checker_overrides(settings: AppSettings) -> AppSettings:
     return settings
 
 
+def _apply_global_testcase_overrides(settings: AppSettings) -> AppSettings:
+    """
+    Platform-level (super admin) Testcase agent model defaultlarini qo'llash.
+
+    Company/user settings bo'sh string qoldirsa, bu global qiymatlar meros bo'lib
+    ishlaydi. Checker kabi model nomlari kod validatsiyasisiz saqlanadi.
+    """
+    try:
+        from utils.auth.auth_db import get_global_setting
+    except Exception:
+        return settings
+
+    overrides: dict[str, str] = {}
+    for field_name, setting_key in _TESTCASE_AGENT_MODEL_GLOBAL_KEYS.items():
+        default_value = _TESTCASE_AGENT_MODEL_DEFAULTS[field_name]
+        overrides[field_name] = str(get_global_setting(setting_key, default_value) or "").strip()
+
+    settings.testcase_generator = dc_replace(settings.testcase_generator, **overrides)
+    settings.webhook_testcase = dc_replace(settings.webhook_testcase, **overrides)
+    return settings
+
+
 def get_app_settings(force_reload: bool = False) -> AppSettings:
     """Tizim sozlamalarini olish (global funksiya)
     
@@ -909,7 +959,7 @@ def get_app_settings(force_reload: bool = False) -> AppSettings:
     if _settings_manager is None:
         _settings_manager = AppSettingsManager()
     settings = _settings_manager.get_settings(force_reload=force_reload)
-    return _apply_global_checker_overrides(_apply_global_queue_overrides(settings))
+    return _apply_global_testcase_overrides(_apply_global_checker_overrides(_apply_global_queue_overrides(settings)))
 
 
 def save_app_settings(settings: AppSettings) -> bool:
@@ -972,7 +1022,7 @@ def get_app_settings_for_company(company_id: int) -> AppSettings:
                 k in known
                 and not k.endswith('_help')
                 and not k.startswith('_')
-                and not (k in _CHECKER_AGENT_MODEL_DEFAULTS and str(v or "").strip() == "")
+                and not (k in _AGENT_MODEL_OVERRIDE_FIELDS and str(v or "").strip() == "")
             )
         }
         if not clean:
@@ -1027,7 +1077,7 @@ def get_app_settings_for_user(user_id: int, company_id: int) -> AppSettings:
                 k in known
                 and not k.endswith('_help')
                 and not k.startswith('_')
-                and not (k in _CHECKER_AGENT_MODEL_DEFAULTS and str(v or "").strip() == "")
+                and not (k in _AGENT_MODEL_OVERRIDE_FIELDS and str(v or "").strip() == "")
             )
         }
         if not clean:

@@ -83,7 +83,6 @@ function buildView(params: {
       jira_email: textValue(source.jira_email),
       jira_project_keys: textValue(source.jira_project_keys),
       github_org: textValue(source.github_org),
-      gemini_model: textValue(source.gemini_model),
       figma_token_mask: maskSecret(source.figma_token),
       figma_tokens: maskedFigmaTokens(source),
       jira_token_mask: maskSecret(source.jira_token),
@@ -197,15 +196,12 @@ export async function POST(request: Request) {
       if (typeof payload.jira_email === "string") data.jira_email = payload.jira_email.trim();
       if (typeof payload.jira_project_keys === "string") data.jira_project_keys = payload.jira_project_keys.trim();
       if (typeof payload.github_org === "string") data.github_org = payload.github_org.trim();
-      if (typeof payload.gemini_model === "string") data.gemini_model = payload.gemini_model.trim();
       // Credential maydonlari faqat dirty/cleared bo'lganda yuboriladi.
       // Bo'sh string = aniq o'chirish (clear); shuning uchun trim emas, present tekshiriladi.
       if (Array.isArray(payload.figma_tokens)) data.figma_tokens = payload.figma_tokens;
       else if (typeof payload.figma_token === "string") data.figma_token = payload.figma_token.trim();
       if (typeof payload.jira_token === "string") data.jira_token = payload.jira_token.trim();
       if (typeof payload.github_token === "string") data.github_token = payload.github_token.trim();
-    } else {
-      if (typeof payload.gemini_model === "string") data.gemini_model = payload.gemini_model.trim();
     }
 
     if (typeof payload.gemini_api_key_1 === "string") data.gemini_api_key_1 = payload.gemini_api_key_1.trim();

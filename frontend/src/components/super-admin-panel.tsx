@@ -17,6 +17,7 @@ import {
   BaseSelectField,
   NumberField,
   SettingsBaseCard,
+  SettingsInnerCard,
 } from "@/components/settings/base-card-system";
 import {
   BASE_PLAN_MODULE_KEYS,
@@ -56,9 +57,13 @@ type AiDefaultsForm = {
   agent3_primary_model: string;
   api_key_1: string;
   api_key_2: string;
-  fallback_model: string;
   key_freeze_minutes: number;
-  model: string;
+  testcase_agent1_fallback_model: string;
+  testcase_agent1_primary_model: string;
+  testcase_agent2_fallback_model: string;
+  testcase_agent2_primary_model: string;
+  testcase_agent3_fallback_model: string;
+  testcase_agent3_primary_model: string;
 };
 
 type SuperAdminSystemForm = {
@@ -184,12 +189,20 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
     agent3_primary_model: "gemini-2.5-flash",
     api_key_1: "",
     api_key_2: "",
-    fallback_model: "gemini-2.5-flash",
     key_freeze_minutes: 10,
-    model: "gemini-2.5-pro",
+    testcase_agent1_fallback_model: "gemini-2.5-flash",
+    testcase_agent1_primary_model: "gemini-2.5-flash",
+    testcase_agent2_fallback_model: "gemini-2.5-flash",
+    testcase_agent2_primary_model: "gemini-2.5-pro",
+    testcase_agent3_fallback_model: "gemini-2.5-flash",
+    testcase_agent3_primary_model: "gemini-2.5-flash",
   });
   const [showApiKey1, setShowApiKey1] = useState(false);
   const [showApiKey2, setShowApiKey2] = useState(false);
+  const [apiKey1Mask, setApiKey1Mask] = useState("");
+  const [apiKey2Mask, setApiKey2Mask] = useState("");
+  const [apiKey1Dirty, setApiKey1Dirty] = useState(false);
+  const [apiKey2Dirty, setApiKey2Dirty] = useState(false);
   const [platformAdminForm, setPlatformAdminForm] = useState({
     confirm_password: "",
     password: "",
@@ -258,19 +271,29 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
           payload.companies.map((company) => [company.id, { ...(company.subscription || {}) }]),
         ),
       );
-      setAiForm((current) => ({
+      const nextApiKey1Mask = payload.global_ai_defaults.api_key_1_mask || "";
+      const nextApiKey2Mask = payload.global_ai_defaults.api_key_2_mask || "";
+      setApiKey1Mask(nextApiKey1Mask);
+      setApiKey2Mask(nextApiKey2Mask);
+      setApiKey1Dirty(false);
+      setApiKey2Dirty(false);
+      setAiForm({
         agent1_fallback_model: payload.global_ai_defaults.agent1_fallback_model || "gemini-2.5-flash",
         agent1_primary_model: payload.global_ai_defaults.agent1_primary_model || "gemini-2.5-flash",
         agent2_fallback_model: payload.global_ai_defaults.agent2_fallback_model || "gemini-2.5-flash",
         agent2_primary_model: payload.global_ai_defaults.agent2_primary_model || "gemini-2.5-pro",
         agent3_fallback_model: payload.global_ai_defaults.agent3_fallback_model || "gemini-2.5-flash",
         agent3_primary_model: payload.global_ai_defaults.agent3_primary_model || "gemini-2.5-flash",
-        api_key_1: current.api_key_1,
-        api_key_2: current.api_key_2,
-        fallback_model: payload.global_ai_defaults.fallback_model || "gemini-2.5-flash",
+        api_key_1: nextApiKey1Mask,
+        api_key_2: nextApiKey2Mask,
         key_freeze_minutes: payload.global_ai_defaults.key_freeze_minutes ?? 10,
-        model: payload.global_ai_defaults.model || "gemini-2.5-pro",
-      }));
+        testcase_agent1_fallback_model: payload.global_ai_defaults.testcase_agent1_fallback_model || "gemini-2.5-flash",
+        testcase_agent1_primary_model: payload.global_ai_defaults.testcase_agent1_primary_model || "gemini-2.5-flash",
+        testcase_agent2_fallback_model: payload.global_ai_defaults.testcase_agent2_fallback_model || "gemini-2.5-flash",
+        testcase_agent2_primary_model: payload.global_ai_defaults.testcase_agent2_primary_model || "gemini-2.5-pro",
+        testcase_agent3_fallback_model: payload.global_ai_defaults.testcase_agent3_fallback_model || "gemini-2.5-flash",
+        testcase_agent3_primary_model: payload.global_ai_defaults.testcase_agent3_primary_model || "gemini-2.5-flash",
+      });
       setPlatformAdminForm((current) => ({
         ...current,
         username: currentUsername || current.username,
@@ -464,10 +487,22 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
   async function saveAiDefaults(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await runAction(async () => {
+      const body: Partial<AiDefaultsForm> = { ...aiForm };
+      if (apiKey1Dirty && aiForm.api_key_1.trim()) {
+        body.api_key_1 = aiForm.api_key_1.trim();
+      } else {
+        delete body.api_key_1;
+      }
+      if (apiKey2Dirty && aiForm.api_key_2.trim()) {
+        body.api_key_2 = aiForm.api_key_2.trim();
+      } else {
+        delete body.api_key_2;
+      }
+
       const response = await fetch("/api/super-admin/ai-defaults", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(aiForm),
+        body: JSON.stringify(body),
       });
       const payload = await parseJson<{ error?: string; success?: boolean }>(response);
       if (!response.ok || !payload?.success) {
@@ -943,52 +978,33 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                 <SectionHeader
                   action={<Badge tone="soft">Platform scope</Badge>}
                   eyebrow="AI DEFAULTS"
-                  title="Global Gemini konfiguratsiya"
+                  title="Global AI kalitlar va agent defaultlari"
                 />
               )}
             >
               <form className="mt-4 grid gap-4" onSubmit={saveAiDefaults}>
                 <div className="grid gap-4 md:grid-cols-2">
-                  <BaseSelectField
-                    className={SETTINGS_SELECT_CLASS}
-                    label="Gemini Model"
-                    onChange={(value) =>
-                      setAiForm((current) => ({ ...current, model: value }))
-                    }
-                    value={aiForm.model}
-                  >
-                    {modelOptions().map((model) => (
-                      <option key={model} value={model}>
-                        {model}
-                      </option>
-                    ))}
-                  </BaseSelectField>
-                  <BaseSelectField
-                    className={SETTINGS_SELECT_CLASS}
-                    label="Fallback Model"
-                    onChange={(value) =>
-                      setAiForm((current) => ({ ...current, fallback_model: value }))
-                    }
-                    value={aiForm.fallback_model}
-                  >
-                    {modelOptions().map((model) => (
-                      <option key={model} value={model}>
-                        {model}
-                      </option>
-                    ))}
-                  </BaseSelectField>
                   <BaseInputField
                     className={SETTINGS_INPUT_CLASS}
-                    hint={overview.global_ai_defaults.api_key_1_present ? "Saqlangan (yangilash uchun kiriting)" : undefined}
+                    hint={overview.global_ai_defaults.api_key_1_present ? "Bo'sh qoldirilsa mavjud kalit saqlanadi" : undefined}
                     label="API Key 1"
-                    onChange={(value) =>
-                      setAiForm((current) => ({ ...current, api_key_1: value }))
-                    }
-                    placeholder={
-                      overview.global_ai_defaults.api_key_1_present
-                        ? "Saqlangan (yangilash uchun yangi key kiriting)"
-                        : "AIza..."
-                    }
+                    onBlur={() => {
+                      if (apiKey1Dirty && !aiForm.api_key_1.trim() && apiKey1Mask) {
+                        setAiForm((current) => ({ ...current, api_key_1: apiKey1Mask }));
+                        setApiKey1Dirty(false);
+                      }
+                    }}
+                    onChange={(value) => {
+                      setApiKey1Dirty(true);
+                      setAiForm((current) => ({ ...current, api_key_1: value }));
+                    }}
+                    onFocus={() => {
+                      if (!apiKey1Dirty && apiKey1Mask && aiForm.api_key_1 === apiKey1Mask) {
+                        setAiForm((current) => ({ ...current, api_key_1: "" }));
+                        setApiKey1Dirty(true);
+                      }
+                    }}
+                    placeholder="AIza..."
                     rightSlot={(
                       <button
                         aria-label={showApiKey1 ? "API Key 1 ni yashirish" : "API Key 1 ni ko'rsatish"}
@@ -999,21 +1015,30 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                         {showApiKey1 ? <EyeOff size={16} /> : <Eye size={16} />}
                       </button>
                     )}
-                    type={showApiKey1 ? "text" : "password"}
+                    type={apiKey1Dirty && !showApiKey1 ? "password" : "text"}
                     value={aiForm.api_key_1}
                   />
                   <BaseInputField
                     className={SETTINGS_INPUT_CLASS}
-                    hint={overview.global_ai_defaults.api_key_2_present ? "Saqlangan (yangilash uchun kiriting)" : undefined}
+                    hint={overview.global_ai_defaults.api_key_2_present ? "Bo'sh qoldirilsa mavjud kalit saqlanadi" : undefined}
                     label="API Key 2 (backup)"
-                    onChange={(value) =>
-                      setAiForm((current) => ({ ...current, api_key_2: value }))
-                    }
-                    placeholder={
-                      overview.global_ai_defaults.api_key_2_present
-                        ? "Saqlangan (yangilash uchun yangi key kiriting)"
-                        : "AIza..."
-                    }
+                    onBlur={() => {
+                      if (apiKey2Dirty && !aiForm.api_key_2.trim() && apiKey2Mask) {
+                        setAiForm((current) => ({ ...current, api_key_2: apiKey2Mask }));
+                        setApiKey2Dirty(false);
+                      }
+                    }}
+                    onChange={(value) => {
+                      setApiKey2Dirty(true);
+                      setAiForm((current) => ({ ...current, api_key_2: value }));
+                    }}
+                    onFocus={() => {
+                      if (!apiKey2Dirty && apiKey2Mask && aiForm.api_key_2 === apiKey2Mask) {
+                        setAiForm((current) => ({ ...current, api_key_2: "" }));
+                        setApiKey2Dirty(true);
+                      }
+                    }}
+                    placeholder="AIza..."
                     rightSlot={(
                       <button
                         aria-label={showApiKey2 ? "API Key 2 ni yashirish" : "API Key 2 ni ko'rsatish"}
@@ -1024,7 +1049,7 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                         {showApiKey2 ? <EyeOff size={16} /> : <Eye size={16} />}
                       </button>
                     )}
-                    type={showApiKey2 ? "text" : "password"}
+                    type={apiKey2Dirty && !showApiKey2 ? "password" : "text"}
                     value={aiForm.api_key_2}
                   />
                   <NumberField
@@ -1041,34 +1066,70 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                   />
                 </div>
 
-                <div className="grid gap-3">
-                  <div className="text-sm font-semibold text-foreground">TZ-PR agent modellari</div>
-                  <div className="grid gap-4 md:grid-cols-2">
-                    {[
-                      ["agent1_primary_model", "Agent1 primary"],
-                      ["agent1_fallback_model", "Agent1 fallback"],
-                      ["agent2_primary_model", "Agent2 primary"],
-                      ["agent2_fallback_model", "Agent2 fallback"],
-                      ["agent3_primary_model", "Agent3 primary"],
-                      ["agent3_fallback_model", "Agent3 fallback"],
-                    ].map(([field, label]) => (
-                      <BaseSelectField
-                        className={SETTINGS_SELECT_CLASS}
-                        key={field}
-                        label={label}
-                        onChange={(value) =>
-                          setAiForm((current) => ({ ...current, [field]: value }))
-                        }
-                        value={String(aiForm[field as keyof AiDefaultsForm] || "")}
-                      >
-                        {modelOptions().map((model) => (
-                          <option key={model} value={model}>
-                            {model}
-                          </option>
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <SettingsInnerCard>
+                    <div className="ssec mt-0 border-none pt-0">
+                      <div className="ssec-label">TZ-PR agent modellari</div>
+                      <div className="grid gap-4 md:grid-cols-2">
+                        {[
+                          ["agent1_primary_model", "Agent1 primary"],
+                          ["agent1_fallback_model", "Agent1 fallback"],
+                          ["agent2_primary_model", "Agent2 primary"],
+                          ["agent2_fallback_model", "Agent2 fallback"],
+                          ["agent3_primary_model", "Agent3 primary"],
+                          ["agent3_fallback_model", "Agent3 fallback"],
+                        ].map(([field, label]) => (
+                          <BaseSelectField
+                            className={SETTINGS_SELECT_CLASS}
+                            key={field}
+                            label={label}
+                            onChange={(value) =>
+                              setAiForm((current) => ({ ...current, [field]: value }))
+                            }
+                            value={String(aiForm[field as keyof AiDefaultsForm] || "")}
+                          >
+                            {modelOptions().map((model) => (
+                              <option key={model} value={model}>
+                                {model}
+                              </option>
+                            ))}
+                          </BaseSelectField>
                         ))}
-                      </BaseSelectField>
-                    ))}
-                  </div>
+                      </div>
+                    </div>
+                  </SettingsInnerCard>
+
+                  <SettingsInnerCard>
+                    <div className="ssec mt-0 border-none pt-0">
+                      <div className="ssec-label">Testcase agent modellari</div>
+                      <div className="grid gap-4 md:grid-cols-2">
+                        {[
+                          ["testcase_agent1_primary_model", "Agent1 primary"],
+                          ["testcase_agent1_fallback_model", "Agent1 fallback"],
+                          ["testcase_agent2_primary_model", "Agent2 primary"],
+                          ["testcase_agent2_fallback_model", "Agent2 fallback"],
+                          ["testcase_agent3_primary_model", "Agent3 primary"],
+                          ["testcase_agent3_fallback_model", "Agent3 fallback"],
+                        ].map(([field, label]) => (
+                          <BaseSelectField
+                            className={SETTINGS_SELECT_CLASS}
+                            key={field}
+                            label={label}
+                            onChange={(value) =>
+                              setAiForm((current) => ({ ...current, [field]: value }))
+                            }
+                            value={String(aiForm[field as keyof AiDefaultsForm] || "")}
+                          >
+                            {modelOptions().map((model) => (
+                              <option key={model} value={model}>
+                                {model}
+                              </option>
+                            ))}
+                          </BaseSelectField>
+                        ))}
+                      </div>
+                    </div>
+                  </SettingsInnerCard>
                 </div>
 
                 <div>

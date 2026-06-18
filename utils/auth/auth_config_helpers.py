@@ -38,15 +38,12 @@ def build_company_credentials(
     figma_tokens = parse_figma_tokens(company_settings.get("figma_tokens"))
     if not figma_tokens and figma_token:
         figma_tokens = [{"name": "", "token": figma_token}]
-    gemini_model = (company_settings.get("gemini_model") or "").strip()
     gemini_keys = build_company_gemini_keys(company_settings)
     if not gemini_keys:
         global_defaults = get_global_gemini_defaults() or {}
         g1 = (global_defaults.get("api_key_1") or "").strip()
         g2 = (global_defaults.get("api_key_2") or "").strip()
         gemini_keys = [key for key in [g1, g2] if key]
-        if not gemini_model:
-            gemini_model = (global_defaults.get("model") or "").strip()
     # SaaS qoidasi: Gemini faqat company -> super admin default tartibi bilan olinadi.
     # Env fallback ishlatilmaydi.
     if not jira_email:
@@ -77,7 +74,6 @@ def build_company_credentials(
         "figma_token": figma_token,
         "figma_tokens": figma_tokens,
         "gemini_keys": gemini_keys,
-        "gemini_model": gemini_model or None,
     }
 
 
@@ -100,7 +96,6 @@ def build_company_webhook_credentials(
         figma_tokens = parse_figma_tokens(company_settings.get("figma_tokens"))
     if not figma_tokens and figma_token:
         figma_tokens = [{"name": "", "token": figma_token}]
-    gemini_model = (company_settings.get("webhook_gemini_model") or company_settings.get("gemini_model") or "").strip()
     gemini_k1 = (company_settings.get("webhook_gemini_api_key_1") or company_settings.get("gemini_api_key_1") or "").strip()
     gemini_k2 = (company_settings.get("webhook_gemini_api_key_2") or company_settings.get("gemini_api_key_2") or "").strip()
     gemini_keys = [k for k in [gemini_k1, gemini_k2] if k]
@@ -109,8 +104,6 @@ def build_company_webhook_credentials(
         g1 = (global_defaults.get("api_key_1") or "").strip()
         g2 = (global_defaults.get("api_key_2") or "").strip()
         gemini_keys = [key for key in [g1, g2] if key]
-        if not gemini_model:
-            gemini_model = (global_defaults.get("model") or "").strip()
     # SaaS qoidasi: Gemini faqat company/webhook -> super admin default tartibi bilan olinadi.
     # Env fallback ishlatilmaydi.
     if not jira_email:
@@ -141,7 +134,6 @@ def build_company_webhook_credentials(
         "figma_token": figma_token,
         "figma_tokens": figma_tokens,
         "gemini_keys": gemini_keys,
-        "gemini_model": gemini_model or None,
     }
 
 
@@ -168,20 +160,15 @@ def build_user_credentials_for_service(
         figma_tokens = [{"name": "", "token": figma_token}]
     gemini_k1 = (user_credentials.get("gemini_api_key_1") or "").strip()
     gemini_k2 = (user_credentials.get("gemini_api_key_2") or "").strip()
-    gemini_model = (user_credentials.get("gemini_model") or "").strip()
 
     if not gemini_k1 and not gemini_k2:
         gemini_k1 = (company_settings.get("gemini_api_key_1") or "").strip()
         gemini_k2 = (company_settings.get("gemini_api_key_2") or "").strip()
-        if not gemini_model:
-            gemini_model = (company_settings.get("gemini_model") or "").strip()
 
     if not gemini_k1 and not gemini_k2:
         glb = get_global_gemini_defaults() or {}
         gemini_k1 = (glb.get("api_key_1") or "").strip()
         gemini_k2 = (glb.get("api_key_2") or "").strip()
-        if not gemini_model:
-            gemini_model = (glb.get("model") or "").strip()
 
     missing = []
     if not jira_server:
@@ -215,7 +202,6 @@ def build_user_credentials_for_service(
         "figma_token": figma_token,
         "figma_tokens": figma_tokens,
         "gemini_keys": [k for k in [gemini_k1, gemini_k2] if k],
-        "gemini_model": gemini_model or None,
     }
 
 

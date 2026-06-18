@@ -15,7 +15,6 @@ Version: 6.0 CUSTOM CONTEXT
 from typing import Any, Dict, List, Optional, Callable
 from dataclasses import dataclass, field
 import json
-import os
 
 # Core imports
 from core import BaseService, PRHelper, PRNotMergedError, TZHelper
@@ -137,6 +136,7 @@ class TestCaseGeneratorService(BaseService):
         self._pr_helper = None
         # Agent1/Agent2/Agent3 uchun model fallback'li Gemini helper (lazy)
         self._agent_gemini = None
+        self._agent_helpers = {}
 
     def _get_settings(self):
         """User yoki kompaniya Testcase sozlamalarini qaytarish.
@@ -474,30 +474,72 @@ class TestCaseGeneratorService(BaseService):
 
     @property
     def agent_gemini(self):
-        """Agent1/Agent2/Agent3 uchun Gemini helper — model fallback bilan (lazy).
+        """Backward-compat helper: Agent2 generator modeli qaytariladi."""
+        return self._model_for_agent("agent2_testcase")
 
-        Asosiy model: kompaniya/user sozlamasidagi model.
-        Fallback model: GEMINI_FALLBACK_MODEL (boshqa modelga o'tish uchun).
-        GeminiHelper o'zi transient retry (5s→10s→20s) + barcha urinishlardan
-        keyin fallback modelga o'tishni bajaradi.
-        """
-        if self._agent_gemini is None:
+    def _model_names_for_agent(self, agent_key: str) -> tuple[str, str]:
+        settings = self._get_settings()
+        mapping = {
+            "agent1_requirements": ("agent1_primary_model", "agent1_fallback_model", "gemini-2.5-flash", "gemini-2.5-flash"),
+            "agent2_testcase": ("agent2_primary_model", "agent2_fallback_model", "gemini-2.5-pro", "gemini-2.5-flash"),
+            "agent3_testcase_auditor": ("agent3_primary_model", "agent3_fallback_model", "gemini-2.5-flash", "gemini-2.5-flash"),
+            "agent3_audit": ("agent3_primary_model", "agent3_fallback_model", "gemini-2.5-flash", "gemini-2.5-flash"),
+        }
+        primary_field, fallback_field, default_primary, default_fallback = mapping.get(
+            agent_key,
+            ("agent2_primary_model", "agent2_fallback_model", "gemini-2.5-pro", "gemini-2.5-flash"),
+        )
+        primary = str(getattr(settings, primary_field, "") or "").strip() or default_primary
+        fallback = str(getattr(settings, fallback_field, "") or "").strip() or default_fallback
+        return primary, fallback
+
+    def _model_for_agent(self, agent_key: str):
+        if self._agent_gemini is not None:
+            return self._agent_gemini
+        if agent_key not in self._agent_helpers:
             from utils.ai.gemini_helper import GeminiHelper
             creds = self._get_creds()
-            primary = creds.get('gemini_model') or os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
-            fallback = os.getenv('GEMINI_FALLBACK_MODEL', 'gemini-2.5-flash').strip() or 'gemini-2.5-flash'
-            self._agent_gemini = GeminiHelper(
+            primary, fallback = self._model_names_for_agent(agent_key)
+            self._agent_helpers[agent_key] = GeminiHelper(
                 api_keys=creds['gemini_keys'],
                 model_name=primary,
                 fallback_model_name=fallback,
             )
-        return self._agent_gemini
+        return self._agent_helpers[agent_key]
 
     def _last_agent_model(self) -> str:
         helper = self._agent_gemini
+        if helper is None and self._agent_helpers:
+            helper = next(reversed(self._agent_helpers.values()))
         if helper is None:
             return ""
         return str(getattr(helper, "last_model_used", "") or getattr(helper, "model_name", "") or "")
+
+    def _set_agent_usage_context(
+        self,
+        *,
+        task_key: str,
+        agent_key: str,
+        prompt_size_chars: int = 0,
+        estimated_prompt_tokens: int = 0,
+        max_output_tokens: int = 0,
+        request_kind: str = "",
+    ):
+        helper = self._model_for_agent(agent_key)
+        if hasattr(helper, "set_usage_context"):
+            helper.set_usage_context(
+                company_id=self._company_id,
+                user_id=self._user_id,
+                task_key=task_key,
+                module_key="testcase_generator",
+                agent_key=agent_key,
+                source="testcase_multi_agent",
+                prompt_size_chars=prompt_size_chars,
+                estimated_prompt_tokens=estimated_prompt_tokens,
+                max_output_tokens=max_output_tokens,
+                request_kind=request_kind or agent_key,
+            )
+        return helper
 
     def _build_agent_error_result(
         self, task_key: str, task_details: Dict, overview: str, error_message: str
@@ -585,7 +627,13 @@ class TestCaseGeneratorService(BaseService):
             return []
 
         prompt = agent1_contract.build_prompt(agent1_input=agent1_input)
-        raw = self.agent_gemini.analyze(
+        helper = self._set_agent_usage_context(
+            task_key=task_key,
+            agent_key="agent1_requirements",
+            prompt_size_chars=len(prompt or ""),
+            max_output_tokens=AGENT1_MAX_OUTPUT_TOKENS,
+        )
+        raw = helper.analyze(
             prompt,
             max_output_tokens=AGENT1_MAX_OUTPUT_TOKENS,
             generation_config_overrides={
@@ -647,7 +695,15 @@ class TestCaseGeneratorService(BaseService):
 
         max_tokens = self._get_settings().ai_max_output_tokens
         log.info(f"[{task_key}] Agent2 ▶ Gemini chaqirildi (mode={mode}, max_tokens={max_tokens})...")
-        return self.agent_gemini.analyze(
+        helper = self._set_agent_usage_context(
+            task_key=task_key,
+            agent_key="agent2_testcase",
+            prompt_size_chars=int(text_info.get("chars") or 0),
+            estimated_prompt_tokens=int(text_info.get("tokens") or 0),
+            max_output_tokens=max_tokens,
+            request_kind=mode,
+        )
+        return helper.analyze(
             prompt,
             max_output_tokens=max_tokens,
             generation_config_overrides={
@@ -675,7 +731,14 @@ class TestCaseGeneratorService(BaseService):
 
         max_tokens = self._get_settings().ai_max_output_tokens
         log.info(f"[{task_key}] Agent3 ▶ Gemini chaqirildi (max_tokens={max_tokens})...")
-        return self.agent_gemini.analyze(
+        helper = self._set_agent_usage_context(
+            task_key=task_key,
+            agent_key="agent3_testcase_auditor",
+            prompt_size_chars=int(text_info.get("chars") or 0),
+            estimated_prompt_tokens=int(text_info.get("tokens") or 0),
+            max_output_tokens=max_tokens,
+        )
+        return helper.analyze(
             prompt,
             max_output_tokens=max_tokens,
             generation_config_overrides={

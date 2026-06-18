@@ -469,14 +469,18 @@ def get_global_gemini_defaults() -> dict:
     return {
         'api_key_1': get_global_setting('gemini_default_api_key_1'),
         'api_key_2': get_global_setting('gemini_default_api_key_2'),
-        'model':     get_global_setting('gemini_default_model'),
-        'fallback_model': get_global_setting('gemini_default_fallback_model', 'gemini-2.5-flash'),
         'agent1_primary_model': get_global_setting('checker_agent1_primary_model', 'gemini-2.5-flash'),
         'agent1_fallback_model': get_global_setting('checker_agent1_fallback_model', 'gemini-2.5-flash'),
         'agent2_primary_model': get_global_setting('checker_agent2_primary_model', 'gemini-2.5-pro'),
         'agent2_fallback_model': get_global_setting('checker_agent2_fallback_model', 'gemini-2.5-flash'),
         'agent3_primary_model': get_global_setting('checker_agent3_primary_model', 'gemini-2.5-flash'),
         'agent3_fallback_model': get_global_setting('checker_agent3_fallback_model', 'gemini-2.5-flash'),
+        'testcase_agent1_primary_model': get_global_setting('testcase_agent1_primary_model', 'gemini-2.5-flash'),
+        'testcase_agent1_fallback_model': get_global_setting('testcase_agent1_fallback_model', 'gemini-2.5-flash'),
+        'testcase_agent2_primary_model': get_global_setting('testcase_agent2_primary_model', 'gemini-2.5-pro'),
+        'testcase_agent2_fallback_model': get_global_setting('testcase_agent2_fallback_model', 'gemini-2.5-flash'),
+        'testcase_agent3_primary_model': get_global_setting('testcase_agent3_primary_model', 'gemini-2.5-flash'),
+        'testcase_agent3_fallback_model': get_global_setting('testcase_agent3_fallback_model', 'gemini-2.5-flash'),
     }
 
 
@@ -1031,11 +1035,11 @@ def save_company_settings(company_id: int, settings: Dict) -> bool:
     allowed_keys = {
         'jira_server', 'jira_email', 'jira_token', 'jira_project_keys',
         'github_token', 'github_org', 'figma_token', 'figma_tokens',
-        'gemini_api_key_1', 'gemini_api_key_2', 'gemini_model',
+        'gemini_api_key_1', 'gemini_api_key_2',
         'webhook_jira_server', 'webhook_jira_email', 'webhook_jira_token',
         'webhook_github_token', 'webhook_github_org',
         'webhook_figma_token', 'webhook_figma_tokens',
-        'webhook_gemini_api_key_1', 'webhook_gemini_api_key_2', 'webhook_gemini_model',
+        'webhook_gemini_api_key_1', 'webhook_gemini_api_key_2',
         'webhook_project_keys', 'webhook_trigger_status', 'webhook_trigger_aliases',
         'webhook_return_status', 'webhook_allowed_issue_types', 'webhook_excluded_assignees',
         'webhook_auto_return_enabled', 'webhook_return_threshold',
@@ -1059,11 +1063,11 @@ def debug_company_settings_save(company_id: int, settings: Dict) -> List[str]:
     allowed_keys = {
         'jira_server', 'jira_email', 'jira_token', 'jira_project_keys',
         'github_token', 'github_org', 'figma_token', 'figma_tokens',
-        'gemini_api_key_1', 'gemini_api_key_2', 'gemini_model',
+        'gemini_api_key_1', 'gemini_api_key_2',
         'webhook_jira_server', 'webhook_jira_email', 'webhook_jira_token',
         'webhook_github_token', 'webhook_github_org',
         'webhook_figma_token', 'webhook_figma_tokens',
-        'webhook_gemini_api_key_1', 'webhook_gemini_api_key_2', 'webhook_gemini_model',
+        'webhook_gemini_api_key_1', 'webhook_gemini_api_key_2',
         'webhook_project_keys', 'webhook_trigger_status', 'webhook_trigger_aliases',
         'webhook_return_status', 'webhook_allowed_issue_types', 'webhook_excluded_assignees',
         'webhook_auto_return_enabled', 'webhook_return_threshold',
@@ -1152,7 +1156,7 @@ def get_company_webhook_credentials(company_id: int) -> dict:
 _USER_CRED_FIELDS = {
     'jira_server', 'jira_email', 'jira_token', 'jira_project_keys',
     'github_token', 'github_org', 'figma_token', 'figma_tokens',
-    'gemini_api_key_1', 'gemini_api_key_2', 'gemini_model',
+    'gemini_api_key_1', 'gemini_api_key_2',
 }
 
 

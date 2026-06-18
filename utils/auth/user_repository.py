@@ -187,10 +187,11 @@ def fetch_user_credentials(get_conn: Callable, user_id: int) -> Dict:
                 else json.dumps(row_dict.get("figma_tokens_encrypted") or [], ensure_ascii=True),
                 "gemini_api_key_1": row_dict.get("gemini_api_key_1_encrypted", ""),
                 "gemini_api_key_2": row_dict.get("gemini_api_key_2_encrypted", ""),
-                "gemini_model": row_dict.get("gemini_model", ""),
                 "updated_at": row_dict.get("updated_at"),
             }
-        return decrypt_sensitive_fields(row_dict)
+        result = decrypt_sensitive_fields(row_dict)
+        result.pop("gemini_model", None)
+        return result
     except Exception:
         return {}
 
@@ -219,7 +220,6 @@ def upsert_user_credentials(get_conn: Callable, user_id: int, filtered_data: Dic
                 "figma_tokens_encrypted": payload.get("figma_tokens", "[]"),
                 "gemini_api_key_1_encrypted": payload.get("gemini_api_key_1", ""),
                 "gemini_api_key_2_encrypted": payload.get("gemini_api_key_2", ""),
-                "gemini_model": payload.get("gemini_model", ""),
                 "updated_at": payload.get("updated_at"),
             }
             if exists:
@@ -237,7 +237,6 @@ def upsert_user_credentials(get_conn: Callable, user_id: int, filtered_data: Dic
                         figma_tokens_encrypted = ?::jsonb,
                         gemini_api_key_1_encrypted = ?,
                         gemini_api_key_2_encrypted = ?,
-                        gemini_model = ?,
                         updated_at = ?
                     WHERE user_id = ?
                     """,
@@ -252,7 +251,6 @@ def upsert_user_credentials(get_conn: Callable, user_id: int, filtered_data: Dic
                         mapped_payload["figma_tokens_encrypted"],
                         mapped_payload["gemini_api_key_1_encrypted"],
                         mapped_payload["gemini_api_key_2_encrypted"],
-                        mapped_payload["gemini_model"],
                         mapped_payload["updated_at"],
                         user_id,
                     ],
@@ -265,9 +263,9 @@ def upsert_user_credentials(get_conn: Callable, user_id: int, filtered_data: Dic
                         user_id, jira_server, jira_email, jira_token_encrypted, jira_project_keys,
                         github_token_encrypted, github_org, figma_token_encrypted,
                         figma_tokens_encrypted, gemini_api_key_1_encrypted,
-                        gemini_api_key_2_encrypted, gemini_model, updated_at
+                        gemini_api_key_2_encrypted, updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?)
                     """,
                     [
                         user_id,
@@ -281,7 +279,6 @@ def upsert_user_credentials(get_conn: Callable, user_id: int, filtered_data: Dic
                         mapped_payload["figma_tokens_encrypted"],
                         mapped_payload["gemini_api_key_1_encrypted"],
                         mapped_payload["gemini_api_key_2_encrypted"],
-                        mapped_payload["gemini_model"],
                         mapped_payload["updated_at"],
                     ],
                 )
