@@ -22,11 +22,15 @@ JIRA webhook → jira_webhook_handler.py (orchestrator)
   → DB holat tekshiruvi (duplicate prevention)
   → AI_SKIP tekshiruvi
   → queue_manager → AI lock → rate limit wait
-  → Servis-1 (TZ-PR tahlil) → JIRA comment
+  → Servis-1: MULTI-AGENT checker (create_multi_agent_run + run_multi_agent_for_webhook) → JIRA comment
   → 15s kutish
-  → Servis-2 (Testcase) → JIRA comment
-  → PR cache tozalash
+  → Servis-2: MULTI-AGENT testcase (create_testcase_run + run_testcase_for_webhook) → JIRA comment
 ```
+
+**MUHIM:** webhook, UI va worker — uchalasi ham AYNAN bir xil multi-agent engine'ni
+ishlatadi (eski monolit `analyze_task` yo'li o'chirilgan, 2026-06-23). Checker:
+agent1 (scope) → agent1b (merge) → agent2 (verify, parallel) → agent3 (arbiter).
+Testcase: agent1 (reuse checker contract) → agent2 (yozish) → agent3 (audit).
 
 ---
 
@@ -41,24 +45,31 @@ JIRA webhook → jira_webhook_handler.py (orchestrator)
 | `services/webhook/skip_detector.py` | AI_SKIP kodi va re-check aniqlash |
 | `services/webhook/error_handler.py` | Xato aniqlash, comment yozish |
 | `services/webhook/testcase_webhook_handler.py` | S2 trigger va comment yozish |
-| `services/checkers/tz_pr_checker.py` | 7-bosqichli TZ-PR AI tahlil |
-| `services/generators/testcase_generator.py` | 6-bosqichli testcase generatsiya |
+| `services/checkers/tzpr_orchestrator.py` | Multi-agent checker engine (agent1→1b→2→3) |
+| `services/checkers/tzpr_agent_runner.py` | Agentlarni ishga tushirish + JSON parse |
+| `services/checkers/tzpr_multi_agent.py` | create_multi_agent_run / run_multi_agent_for_webhook |
+| `services/checkers/tz_pr_checker.py` | `TZPRService` bazaviy sinf (137q) — core + mixinlar |
+| `services/checkers/tzpr_data_fetch.py` | DataFetchMixin — JIRA/PR/Figma/TZ olish |
+| `services/checkers/tzpr_result_builders.py` | ResultBuildersMixin — natija/matritsa qurish |
+| `services/checkers/tzpr_text_parser.py` | TextParserMixin — matn/patch parse |
+| `services/checkers/tzpr_presenters.py` | compliance score (agent3 count'laridan) + final text |
+| `services/generators/testcase_generator.py` | Multi-agent testcase (agent1→2→3); PR YO'Q |
+| `core/module_start_preflight.py` | Run-start gate: credential + Gemini kvota tekshiruvi |
 | `core/tz_helper.py` | TZHelper + CommentSeparator |
 | `core/base_service.py` | Servislar uchun umumiy asos (lazy loading) |
 | `core/pr_helper.py` | GitHub PR qidirish va olish |
 | `core/constants.py` | Return reason kodlari |
+| `utils/database/runtime.py` | psycopg connection POOL + leak-safe proxy |
+| `utils/database/migrations.py` | Versiyalangan schema migratsiya (schema_migrations) |
 | `utils/database/task_db.py` | PostgreSQL holat boshqaruvi |
-| `utils/auth/auth_db.py` | Multi-tenant kompaniya/foydalanuvchi DB |
-| `utils/auth/auth_manager.py` | Streamlit session boshqaruvi |
+| `utils/database/quota_repository.py`, `quota_db.py` | Global Gemini bepul-kvota (per company+module) |
+| `utils/auth/auth_db.py` | Multi-tenant DB + get_credential_readiness |
+| `utils/auth/auth_config_helpers.py` | Credential resolution + gemini_source |
 | `utils/jira/jira_client.py` | JIRA API (task, PR link, Figma link) |
-| `utils/jira/jira_comment_writer.py` | JIRA comment yozish (ADF + fallback) |
-| `utils/jira/jira_status_manager.py` | JIRA task status o'zgartirish |
 | `utils/jira/jira_adf_formatter.py` | S1 uchun ADF document builder |
 | `utils/jira/testcase_adf_formatter.py` | S2 uchun ADF document builder |
 | `utils/ai/gemini_helper.py` | Gemini AI (multi-key fallback, model fallback, retry) |
-| `ui/components/loading.py` | ProgressManager — animatsiyali step-by-step progress (JS timer) |
 | `utils/github/github_client.py` | GitHub PR API |
-| `utils/pr_cache.py` | Jarayon ichida PR ma'lumotlari keshi |
 | `config/app_settings.py` | Barcha sozlamalar (dataclass-based, JSON) |
 
 ---
@@ -77,36 +88,31 @@ JIRA webhook → jira_webhook_handler.py (orchestrator)
 9. queue_manager: AI lock olish (timeout bo'lsa blocked)
 10. Rate limit: min interval kutish (6s default)
 
---- Servis-1 ---
+--- Servis-1 (multi-agent checker) ---
 11. company credentials olish
 12. return_reason DB dan o'qish → is_recheck aniqlash
-13. TZPRService.analyze_task():
-    a. JIRA dan task details
-    b. PRHelper: GitHub PR qidirish va olish (Smart Patch ixtiyoriy)
-    c. TZHelper: TZ formatlash, comment tahlili
-    d. Gemini prompt yaratish (TZ + PR + dev izohlar)
-    e. GeminiHelper.analyze() → retry transient, freeze permanent
-    f. Compliance score ajratish (regex)
+13. create_multi_agent_run + run_multi_agent_for_webhook(run_id):
+    a. _collect_context: JIRA task, PR (PRHelper), Figma, TZ+comment
+    b. agent1 (scope) → agent1b (merge) → agent2 (verify, parallel) → agent3 (arbiter)
+    c. har agent: GeminiHelper.analyze() → parse_gemini_json (markaziy parser)
+    d. compliance score: agent3 count'laridan (tzpr_presenters); all-skipped → None (manual review)
 14. Muvaffaqiyatli → ADF comment yozish (fallback: simple)
 15. service1_done, score DB ga
 16. Score < threshold → task qaytarish + return notification comment
     → set_return_reason(WARN_LOW_SCORE)
 
---- Servis-2 ---
+--- Servis-2 (multi-agent testcase) ---
 17. Shartlar tekshiruvi (S1 done, score OK, not returned)
-18. TestCaseGeneratorService.generate_test_cases():
-    a. JIRA task details
-    b. PR cache dan foydalanish (S1 saqlagan)
-    c. TZ uzunlik tekshiruvi
-    d. Gemini prompt (TZ + PR + test types)
-    e. JSON parse → TestCase objects
+18. create_testcase_run + run_testcase_for_webhook(run_id):
+    a. JIRA task details + TZ + Figma (PR ISHLATILMAYDI)
+    b. agent1 (checker contract reuse) → agent2 (yozish) → agent3 (audit)
+    c. parse_gemini_json → TestCase objects → deterministik finalize
 19. ADF comment yozish (fallback: simple)
 20. service2_done DB ga
-21. PR cache tozalash
 
 --- Retry ---
-22. _blocked_retry_scheduler() har 60s tekshiradi
-23. blocked_retry_at <= NOW bo'lsa qayta urinadi
+21. _blocked_retry_scheduler() har 60s tekshiradi
+22. blocked_retry_at <= NOW bo'lsa qayta urinadi
 ```
 
 ---
@@ -197,20 +203,19 @@ GEMINI_FALLBACK_MODEL=gemini-2.5-flash
 
 **Barcha kalitlar freeze:** RuntimeError → WARN_AI_TIMEOUT → BLOCKED
 
-**Strategy fallback (tz_pr_checker):**
-503/unavailable xatoda Strategy 2 va 3 o'tkazib yuboriladi — diff hajmini kamaytirish server overloadga yordam bermaydi.
+**Transient retry soni:** `queue.gemini_max_retries` sozlamasidan (default 3 → 5s,10s,20s).
 
 ---
 
-## PR Cache (`utils/pr_cache.py`)
+## Global Gemini bepul-kvota (QA ASSISTANT kalit)
 
-4 ta kesh, jarayon xotirasida, bir signal uchun ishlaydi:
-- `skip_cache` — AI_SKIP topilganmi
-- `pr_exists_cache` — PR bormi
-- `pr_merged_cache` — PR merge qilinganmi
-- `pr_info_cache` — to'liq PR ma'lumoti (S1 saqlaydi, S2 o'qiydi)
-
-S2 tugagach `clear_task_cache()` bilan tozalanadi.
+Kompaniya/user o'z Gemini kalitiga ega bo'lmasa, super-admin global default kalit
+ishlatiladi. Har modul (checker/testcase) uchun ALOHIDA `GLOBAL_GEMINI_FREE_LIMIT`
+(`quota_repository.py`, hozir 3) marta tekin run — per company_id.
+- `auth_config_helpers.compute_credential_readiness` → `gemini_source` (user/company/global/none)
+- `module_start_preflight`: credential gate (testcase=JIRA, checker=JIRA+GitHub) + kvota gate
+- run yaratilganda global bo'lsa `increment_global_quota`; limit tugasa o'sha modul bloklanadi
+- UI: `/api/{tzpr,testcase}/start-status` → banner + qolgan urinish; tugaganda run disabled
 
 ---
 
@@ -245,14 +250,21 @@ Webhook kelganda project key orqali kompaniya topiladi (DEV → kompaniya).
 
 ---
 
-## DB migratsiyalar
+## DB migratsiya + connection pool (2026-06-23)
 
-- v2 — assignee, task_type, feature_name, technology_stack
-- v3 — blocked_at, blocked_retry_at, block_reason
-- v4 — company_id (2026-02)
-- v5 — return_reason (2026-04-28)
+**Versiyalangan migratsiya (`utils/database/migrations.py`):**
+- `schema_migrations` jadvali qaysi versiya qo'llanganini saqlaydi.
+- `run_migrations()` startup'da (webhook lifespan, worker, monitoring) bir marta:
+  `database/postgresql/NNN_*.sql` fayllar + runtime jadvallar (checker_runs,
+  analysis_runs, job_queue, ai_usage_events, global_gemini_quota, web_sessions).
+- Yangi schema o'zgarishi: `database/postgresql/00N_*.sql` fayl qo'shing (runner qo'llaydi).
+- **Hot-path'da DDL YO'Q** — `_connect()` endi jadval yaratmaydi.
 
-Yangi ustun qo'shilganda: CREATE TABLE ga + `_migrate_db_vN()` + chaqiruv joyiga.
+**Connection pool (`utils/database/runtime.py`):**
+- `psycopg_pool.ConnectionPool` (lazy, DSN-keyed; env: `APP_DB_POOL_MAX_SIZE` default 10).
+- `connect_postgres()` pooldan ulanish qaytaradi; `conn.close()` poolga QAYTARADI.
+- `_PooledConnection` proxy: `__del__` leak-himoya (close unutilsa GC qaytaradi).
+- Formula: `jarayonlar × MAX_SIZE ≤ postgres max_connections − zaxira`.
 
 ---
 
