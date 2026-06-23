@@ -284,6 +284,8 @@ class ResultBuilderMixin:
         result.run_state = run_state
         result.agent_runs = (get_checker_run_snapshot(self.run_id) or {}).get("agent_runs", [])
         result.run_events = (get_checker_run_snapshot(self.run_id) or {}).get("run_events", [])
+        # Webhook yetkazib berish qatlami uchun jonli xato obyektini saqlaymiz.
+        self.final_result_obj = result
         return asdict(result)
 
     def _handle_unexpected_run_failure(

@@ -7,7 +7,7 @@ navbatdan olib bajaradi.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from utils.database.repository_common import (
@@ -17,7 +17,7 @@ from utils.database.repository_common import (
 
 
 def _now_iso() -> str:
-    return datetime.now().isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def ensure_job_queue_tables(conn) -> None:
@@ -212,7 +212,7 @@ def mark_job_done(conn, job: dict[str, Any]) -> None:
 
 def mark_job_retry(conn, job: dict[str, Any], error_message: str, delay_seconds: int) -> None:
     now = _now_iso()
-    next_time = (datetime.now() + timedelta(seconds=max(1, int(delay_seconds)))).isoformat()
+    next_time = (datetime.now(timezone.utc) + timedelta(seconds=max(1, int(delay_seconds)))).isoformat()
     _record_job_run(conn, job, "retry", error_message)
     _execute(
         conn,

@@ -72,7 +72,7 @@ Agar `.env` ichida `APP_WEBHOOK_EXECUTION_MODE=queue` bo'lsa, `start.sh` backend
 ## Production Checklist
 
 1. `.env.example` dan `.env` yarating va **barcha `CHANGE_THIS_*` qiymatlarni** almashtiring
-2. `APP_STRICT_MODE=true` va kuchli `APP_CREDENTIALS_MASTER_KEY` o'rnating
+2. `APP_STRICT_MODE=true`, `APP_WEBHOOK_REQUIRE_SECRET=true` va kuchli `APP_CREDENTIALS_MASTER_KEY` o'rnating
 3. `ALLOWED_ORIGINS` ni production domeniga o'rnating
 4. `docker compose up --build -d` bilan servislarni ko'taring
 5. `curl https://yourdomain.com/health` → `{"status":"healthy"}` kelishi kerak (HTTP 200)

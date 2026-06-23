@@ -1,23 +1,20 @@
-# services/testcase_generator_service.py
+# services/generators/testcase_generator.py
 """
-Test Case Generator Service with Smart Patch & Custom Context Support
+Test Case Generator Service — multi-agent (Agent1 → Agent2 → Agent3).
 
-OPTIMIZED VERSION:
 - BaseService'dan meros oladi
-- PRHelper ishlatadi (Smart Patch bilan)
+- Manbalar: JIRA TZ + Agent1 requirements + Figma + custom context (PR ISHLATILMAYDI)
 - TZHelper ishlatadi
 - Custom Context support (AI ga qo'shimcha buyruq)
-- Kod dublikatsiyasi yo'q
 
 Author: JASUR TURGUNOV
-Version: 6.0 CUSTOM CONTEXT
 """
 from typing import Any, Dict, List, Optional, Callable
 from dataclasses import dataclass, field
 import json
 
 # Core imports
-from core import BaseService, PRHelper, PRNotMergedError, TZHelper
+from core import BaseService
 from core.analysis_policy import build_full_analysis_blocked
 from core.module_preflight import ModulePreflightPolicy, run_module_preflight
 from core.logger import get_logger
@@ -117,14 +114,12 @@ class TestCaseGenerationResult:
 
 class TestCaseGeneratorService(BaseService):
     """
-    Test Case Generator Service
+    Test Case Generator Service — multi-agent (Agent1 → Agent2 → Agent3).
 
-    REFACTORED VERSION with Smart Patch & Custom Context:
     - BaseService'dan meros oladi
-    - PRHelper ishlatadi (Smart Patch bilan)
     - TZHelper ishlatadi
     - Custom Context support
-    - Kod dublikatsiyasi yo'q
+    - PR ISHLATILMAYDI (manbalar: TZ + Agent1 requirements + Figma)
     """
 
     def __init__(self, company_id: int = None, user_id: int = None):
@@ -133,7 +128,6 @@ class TestCaseGeneratorService(BaseService):
         Webhook:     company_id bilan yarating (company_settings ishlatadi).
         """
         super().__init__(company_id=company_id, user_id=user_id)
-        self._pr_helper = None
         # Agent1/Agent2/Agent3 uchun model fallback'li Gemini helper (lazy)
         self._agent_gemini = None
         self._agent_helpers = {}
@@ -163,20 +157,12 @@ class TestCaseGeneratorService(BaseService):
         from config.app_settings import get_app_settings
         return get_app_settings().tz_pr_checker.min_tz_description_chars
 
-    @property
-    def pr_helper(self):
-        """Lazy PR Helper"""
-        if self._pr_helper is None:
-            self._pr_helper = PRHelper(self.github)
-        return self._pr_helper
-
     def generate_test_cases(
             self,
             task_key: str,
             test_types: List[str] = None,
             custom_context: str = "",
             status_callback: Optional[Callable[[str, str], None]] = None,
-            dev_objections: Optional[List[Dict]] = None
     ) -> TestCaseGenerationResult:
         """
         Testcase generation — multi-agent pipeline (Agent1 → Agent2 → Agent3).
@@ -205,7 +191,6 @@ class TestCaseGeneratorService(BaseService):
             test_types: Test turlari ro'yxati. Default: ``['positive', 'negative']``.
             custom_context: Qo'shimcha kontekst matni (bo'sh bo'lsa e'tiborga olinmaydi).
             status_callback: Har bosqichda chaqiriladigan callback ``(status, message)``.
-            dev_objections: Deprecated/unused; eski chaqiruvchilar bilan moslik uchun qoldirilgan.
 
         Returns:
             TestCaseGenerationResult: ``test_cases``, ``total_test_cases``, ``by_type``,
@@ -480,17 +465,17 @@ class TestCaseGeneratorService(BaseService):
     def _model_names_for_agent(self, agent_key: str) -> tuple[str, str]:
         settings = self._get_settings()
         mapping = {
-            "agent1_requirements": ("agent1_primary_model", "agent1_fallback_model", "gemini-2.5-flash", "gemini-2.5-flash"),
-            "agent2_testcase": ("agent2_primary_model", "agent2_fallback_model", "gemini-2.5-pro", "gemini-2.5-flash"),
-            "agent3_testcase_auditor": ("agent3_primary_model", "agent3_fallback_model", "gemini-2.5-flash", "gemini-2.5-flash"),
-            "agent3_audit": ("agent3_primary_model", "agent3_fallback_model", "gemini-2.5-flash", "gemini-2.5-flash"),
+            "agent1_requirements": ("agent1_primary_model", "agent1_fallback_model"),
+            "agent2_testcase": ("agent2_primary_model", "agent2_fallback_model"),
+            "agent3_testcase_auditor": ("agent3_primary_model", "agent3_fallback_model"),
+            "agent3_audit": ("agent3_primary_model", "agent3_fallback_model"),
         }
-        primary_field, fallback_field, default_primary, default_fallback = mapping.get(
+        primary_field, fallback_field = mapping.get(
             agent_key,
-            ("agent2_primary_model", "agent2_fallback_model", "gemini-2.5-pro", "gemini-2.5-flash"),
+            ("agent2_primary_model", "agent2_fallback_model"),
         )
-        primary = str(getattr(settings, primary_field, "") or "").strip() or default_primary
-        fallback = str(getattr(settings, fallback_field, "") or "").strip() or default_fallback
+        primary = str(getattr(settings, primary_field, "") or "").strip()
+        fallback = str(getattr(settings, fallback_field, "") or "").strip()
         return primary, fallback
 
     def _model_for_agent(self, agent_key: str):
@@ -500,6 +485,11 @@ class TestCaseGeneratorService(BaseService):
             from utils.ai.gemini_helper import GeminiHelper
             creds = self._get_creds()
             primary, fallback = self._model_names_for_agent(agent_key)
+            if not primary:
+                raise RuntimeError(
+                    f"{agent_key} primary modeli sozlanmagan. "
+                    "Modul settingida yoki Super Admin global AI defaultlarida model tanlang."
+                )
             self._agent_helpers[agent_key] = GeminiHelper(
                 api_keys=creds['gemini_keys'],
                 model_name=primary,
@@ -579,21 +569,6 @@ class TestCaseGeneratorService(BaseService):
             getattr(settings, "testcases_per_requirement", 3)
         )
 
-    @staticmethod
-    def _build_figma_summary_text(figma_data: Optional[Dict]) -> str:
-        """Legacy helper: yangi Agent2 kontrakti raw Figma summary olmaydi."""
-        if not figma_data:
-            return ""
-        parts = []
-        for item in (figma_data.get('summaries') or []):
-            summary = str(item.get('summary') or "").strip()
-            if not summary:
-                continue
-            low = summary.casefold()
-            if 'error:' in low or 'token topilmadi' in low or "ruxsat yo'q" in low:
-                continue
-            parts.append(f"[{item.get('name') or 'Figma'}]\n{summary}")
-        return "\n\n".join(parts)
 
     def _build_agent1_input(self, task_details: Dict, figma_data: Optional[Dict]) -> Dict:
         """Agent1 uchun {tz, comments, figma} input quradi.
@@ -1091,151 +1066,94 @@ class TestCaseGeneratorService(BaseService):
                 break  # trim qilib bo'lmaydi (boshqa talab min ostiga tushadi)
         return kept
 
-    def _is_tz_absent_or_minimal(self, task_details: Dict, min_description_chars: int = 50) -> bool:
-        """
-        Taskda batafsil TZ yo'qmi yoki faqat summary bormi aniqlash.
-
-        Description bo'sh yoki min_description_chars dan qisqa bo'lsa True.
-        """
-        description = task_details.get('description') or ''
-        return len(description.strip()) < min_description_chars
 
     def _parse_test_cases(self, raw_response: str) -> List[TestCase]:
         """
         AI xom javobidan JSON ajratib olish va ``TestCase`` ob'ektlarini yaratish.
 
-        Parse bosqichlari:
-            1. Xom javobdan birinchi ``{`` va oxirgi ``}`` orasidagi JSON
-               qismi kesib olinadi (markdown blok, ortiqcha matn filtirlanadi).
-            2. ``json.loads()`` bilan parse qilinadi.
-            3. Test case ro'yxati quyidagi kalitlardan biri orqali topiladi
-               (alias qidirish): ``test_cases`` → ``testCases`` → ``tests``
-               → ``test_case_list``.
-            4. Har bir test case lug'atidan ``TestCase`` dataclass ob'ekti
-               yaratiladi.
-
-        JSON parse xatosi bo'lsa (repair rejimi):
-            Agar ``json.loads()`` ``JSONDecodeError`` ko'tarsa —
-            ``_try_repair_json()`` chaqiriladi. Muvaffaqiyatli bo'lsa
-            repaired JSON qayta parse qilinadi va test case'lar tiklangan
-            miqdorda qaytariladi.
-
-        Maydonlar uchun default qiymatlar:
-            Har bir maydon uchun ``.get(key, default)`` ishlatiladi —
-            agar AI javobida maydon bo'lmasa xato ko'tarilmaydi:
-            - ``id`` → ``'TC-XXX'``
-            - ``test_type`` → ``'positive'``
-            - ``priority`` → ``'Medium'``
-            - ``severity`` → ``'Major'``
-            - ``steps``, ``tags`` → bo'sh ro'yxat
-
-        Args:
-            raw_response: AI dan kelgan xom matn (JSON yoki JSON + boshqa matn).
+        Parse yo'li (Agent1/Agent3 bilan bir xil):
+            1. Avval mustahkam ``parse_gemini_json`` (markdown fence olib tashlash,
+               balanced-object ajratish va repair — hammasi bir joyda).
+            2. Faqat u muvaffaqiyatsiz bo'lsa — eski fallback (naive ``{``/``}``
+               kesish + ``_sanitize_json_escapes`` + truncated ``_try_repair_json``).
+            3. Test case ro'yxati alias orqali topiladi: ``test_cases`` →
+               ``testCases`` → ``tests`` → ``test_case_list``.
+            4. Har bir lug'at ``_testcase_from_dict`` orqali ``TestCase`` ga aylanadi.
 
         Returns:
-            List[TestCase]: Muvaffaqiyatli parse qilingan test case'lar ro'yxati.
-                Xato bo'lsa — bo'sh ro'yxat qaytadi (exception ko'tarilmaydi).
+            List[TestCase]: parse qilingan test case'lar; xato bo'lsa bo'sh ro'yxat
+                (exception ko'tarilmaydi).
         """
-        test_cases = []
+        data = self._extract_testcase_payload(raw_response)
+        if data is None:
+            log.info("Parse natija: 0 ta test case")
+            return []
 
-        try:
-            # JSON'ni extract qilish
-            json_start = raw_response.find('{')
-            json_end = raw_response.rfind('}') + 1
-
-            if json_start == -1 or json_end == 0:
-                log.warning("JSON topilmadi!")
-                return []
-
-            json_str = raw_response[json_start:json_end]
-            json_str = self._sanitize_json_escapes(json_str)
-
-            # Parse
-            data = json.loads(json_str)
-
-            # Test case'larni yaratish (aliaslar ile qidirish)
-            tc_list = (
-                data.get('test_cases')
-                or data.get('testCases')
-                or data.get('tests')
-                or data.get('test_case_list')
-                or []
+        tc_list = (
+            data.get('test_cases')
+            or data.get('testCases')
+            or data.get('tests')
+            or data.get('test_case_list')
+            or []
+        )
+        if not tc_list:
+            log.warning(
+                f"JSON parse OK, lekin test case kaliti topilmadi. "
+                f"Mavjud kalitlar: {list(data.keys())} | Raw response (2000 char): {raw_response[:2000]}"
             )
 
-            if not tc_list:
-                log.warning(
-                    f"JSON parse OK, lekin test case kaidi topilmadi. "
-                    f"Mavjud kaidlar: {list(data.keys())} | Raw response (2000 char): {raw_response[:2000]}"
-                )
+        test_cases: List[TestCase] = []
+        for tc_data in tc_list:
+            if not isinstance(tc_data, dict):
+                continue
+            try:
+                test_cases.append(self._testcase_from_dict(tc_data))
+            except Exception as e:
+                log.warning(f"Test case parse xatosi: {e}")
+                continue
 
-            for tc_data in tc_list:
-                try:
-                    test_case = TestCase(
-                        id=tc_data.get('id', 'TC-XXX'),
-                        title=tc_data.get('title', ''),
-                        description=tc_data.get('description', ''),
-                        preconditions=tc_data.get('preconditions', ''),
-                        steps=tc_data.get('steps', []),
-                        expected_result=tc_data.get('expected_result', ''),
-                        test_type=tc_data.get('test_type', 'positive'),
-                        priority=tc_data.get('priority', 'Medium'),
-                        severity=tc_data.get('severity', 'Major'),
-                        tags=tc_data.get('tags', []),
-                        requirement_ids=tc_data.get('requirement_ids', [])
-                    )
-                    test_cases.append(test_case)
-                except Exception as e:
-                    log.warning(f"Test case parse xatosi: {e}")
-                    continue
+        log.info(f"Parse natija: {len(test_cases)} ta test case")
+        return test_cases
 
+    def _extract_testcase_payload(self, raw_response: str) -> Optional[Dict[str, Any]]:
+        """Xom javobdan test case JSON payload'ini (dict) olish.
+
+        Avval mustahkam ``parse_gemini_json``; u ishlamasa eski naive kesish +
+        truncated ``_try_repair_json`` fallback. Topilmasa ``None``.
+        """
+        parse_result = parse_gemini_json(raw_response)
+        if parse_result.ok:
+            if isinstance(parse_result.data, dict):
+                return parse_result.data
+            if isinstance(parse_result.data, list):
+                return {"test_cases": parse_result.data}
+
+        json_start = raw_response.find('{')
+        json_end = raw_response.rfind('}') + 1
+        if json_start == -1 or json_end == 0:
+            log.warning("JSON topilmadi!")
+            return None
+
+        json_str = self._sanitize_json_escapes(raw_response[json_start:json_end])
+        try:
+            return json.loads(json_str)
         except json.JSONDecodeError as e:
             log.json_parse_error("UNKNOWN", f"JSON parse xatosi: {e}")
             log.json_repair_attempt("UNKNOWN")
 
-            # Truncated JSON ni tuzatishga urinish
-            repaired = self._try_repair_json(json_str)
-            if repaired:
-                try:
-                    data = json.loads(repaired)
-                    tc_list = (
-                        data.get('test_cases')
-                        or data.get('testCases')
-                        or data.get('tests')
-                        or data.get('test_case_list')
-                        or []
-                    )
-                    for tc_data in tc_list:
-                        try:
-                            test_case = TestCase(
-                                id=tc_data.get('id', 'TC-XXX'),
-                                title=tc_data.get('title', ''),
-                                description=tc_data.get('description', ''),
-                                preconditions=tc_data.get('preconditions', ''),
-                                steps=tc_data.get('steps', []),
-                                expected_result=tc_data.get('expected_result', ''),
-                                test_type=tc_data.get('test_type', 'positive'),
-                                priority=tc_data.get('priority', 'Medium'),
-                                severity=tc_data.get('severity', 'Major'),
-                                tags=tc_data.get('tags', []),
-                                requirement_ids=tc_data.get('requirement_ids', [])
-                            )
-                            test_cases.append(test_case)
-                        except Exception as parse_err:
-                            log.warning(f"Repaired test case parse xatosi: {parse_err}")
-                            continue
-                    log.json_repair_success("UNKNOWN", f"{len(test_cases)} ta test case tiklandi")
-                except json.JSONDecodeError:
-                    log.json_parse_error("UNKNOWN", "Truncated JSON tuzatib bo'lmadi")
-                    log.warning(f"Response: {raw_response[:500]}")
-            else:
-                log.json_parse_error("UNKNOWN", "JSON repair imkonsiz")
-                log.warning(f"Response: {raw_response[:500]}")
-
-        except Exception as e:
-            log.warning(f"Parse xatosi: {e}")
-
-        log.info(f"Parse natija: {len(test_cases)} ta test case")
-        return test_cases
+        repaired = self._try_repair_json(json_str)
+        if not repaired:
+            log.json_parse_error("UNKNOWN", "JSON repair imkonsiz")
+            log.warning(f"Response: {raw_response[:500]}")
+            return None
+        try:
+            data = json.loads(repaired)
+            log.json_repair_success("UNKNOWN", "Truncated JSON tiklandi")
+            return data
+        except json.JSONDecodeError:
+            log.json_parse_error("UNKNOWN", "Truncated JSON tuzatib bo'lmadi")
+            log.warning(f"Response: {raw_response[:500]}")
+            return None
 
     @staticmethod
     def _sanitize_json_escapes(s: str) -> str:

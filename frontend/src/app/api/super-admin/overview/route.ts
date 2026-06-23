@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { callInternalRpc } from "@/lib/backend";
 import type {
+  AiUsageDashboard,
   CompanyAdminUser,
   CompanyModules,
   CompanySubscription,
@@ -61,6 +62,7 @@ export async function GET() {
       testcaseAgent2FallbackModel,
       testcaseAgent3PrimaryModel,
       testcaseAgent3FallbackModel,
+      aiUsage,
     ] =
       await Promise.all([
         callInternalRpc<RawCompany[]>("get_all_companies"),
@@ -68,32 +70,35 @@ export async function GET() {
         callInternalRpc<LoginAuditLog[]>("get_recent_login_audit_logs", [], { limit: 20 }),
         callInternalRpc<Record<string, string>>("get_global_gemini_defaults"),
         callInternalRpc<string>("get_global_setting", ["gemini_key_freeze_minutes", "10"]),
-        callInternalRpc<string>("get_global_setting", ["checker_agent1_primary_model", "gemini-2.5-flash"]),
-        callInternalRpc<string>("get_global_setting", ["checker_agent1_fallback_model", "gemini-2.5-flash"]),
-        callInternalRpc<string>("get_global_setting", ["checker_agent2_primary_model", "gemini-2.5-pro"]),
-        callInternalRpc<string>("get_global_setting", ["checker_agent2_fallback_model", "gemini-2.5-flash"]),
-        callInternalRpc<string>("get_global_setting", ["checker_agent3_primary_model", "gemini-2.5-flash"]),
-        callInternalRpc<string>("get_global_setting", ["checker_agent3_fallback_model", "gemini-2.5-flash"]),
-        callInternalRpc<string>("get_global_setting", ["testcase_agent1_primary_model", "gemini-2.5-flash"]),
-        callInternalRpc<string>("get_global_setting", ["testcase_agent1_fallback_model", "gemini-2.5-flash"]),
-        callInternalRpc<string>("get_global_setting", ["testcase_agent2_primary_model", "gemini-2.5-pro"]),
-        callInternalRpc<string>("get_global_setting", ["testcase_agent2_fallback_model", "gemini-2.5-flash"]),
-        callInternalRpc<string>("get_global_setting", ["testcase_agent3_primary_model", "gemini-2.5-flash"]),
-        callInternalRpc<string>("get_global_setting", ["testcase_agent3_fallback_model", "gemini-2.5-flash"]),
+        callInternalRpc<string>("get_global_setting", ["checker_agent1_primary_model", ""]),
+        callInternalRpc<string>("get_global_setting", ["checker_agent1_fallback_model", ""]),
+        callInternalRpc<string>("get_global_setting", ["checker_agent2_primary_model", ""]),
+        callInternalRpc<string>("get_global_setting", ["checker_agent2_fallback_model", ""]),
+        callInternalRpc<string>("get_global_setting", ["checker_agent3_primary_model", ""]),
+        callInternalRpc<string>("get_global_setting", ["checker_agent3_fallback_model", ""]),
+        callInternalRpc<string>("get_global_setting", ["testcase_agent1_primary_model", ""]),
+        callInternalRpc<string>("get_global_setting", ["testcase_agent1_fallback_model", ""]),
+        callInternalRpc<string>("get_global_setting", ["testcase_agent2_primary_model", ""]),
+        callInternalRpc<string>("get_global_setting", ["testcase_agent2_fallback_model", ""]),
+        callInternalRpc<string>("get_global_setting", ["testcase_agent3_primary_model", ""]),
+        callInternalRpc<string>("get_global_setting", ["testcase_agent3_fallback_model", ""]),
+        callInternalRpc<AiUsageDashboard>("get_ai_usage_dashboard", [], { limit: 20 }),
       ]);
 
     const companyPayload = await Promise.all(
       (companies || []).map(async (company) => {
         const companyId = Number(company.id || 0);
-        const [hasApiKeys, modules, extraUserCount, users, subscription] = await Promise.all([
+        const [hasApiKeys, storedModules, effectiveModules, extraUserCount, users, subscription] = await Promise.all([
           callInternalRpc<boolean>("has_api_keys_configured", [companyId]),
           callInternalRpc<CompanyModules>("get_company_modules", [companyId]),
+          callInternalRpc<CompanyModules>("get_effective_company_modules", [companyId]),
           callInternalRpc<number>("count_users_in_company", [companyId]),
           callInternalRpc<CompanyAdminUser[]>("get_users_by_company", [companyId]),
           callInternalRpc<CompanySubscription>("get_company_subscription", [companyId]),
         ]);
 
-        const moduleSummary = buildModuleSummary(modules || {}, subscription?.plan_name);
+        const modules = effectiveModules || storedModules || {};
+        const moduleSummary = buildModuleSummary(modules, subscription?.plan_name);
         return {
           addon_modules: moduleSummary.addon_modules,
           billing_health: buildSubscriptionHealth(subscription || {}),
@@ -106,7 +111,7 @@ export async function GET() {
           id: companyId,
           included_modules: moduleSummary.included_modules,
           is_active: Boolean(company.is_active),
-          modules: modules || {},
+          modules,
           seat_limit: Math.max(0, Number(company.seat_limit || 0)),
           subscription: subscription || {},
           total_accounts: Array.isArray(users) ? users.length : 0,
@@ -142,22 +147,28 @@ export async function GET() {
       api_key_2_mask: maskSecret(globalDefaults?.api_key_2),
       api_key_2_present: Boolean(globalDefaults?.api_key_2),
       key_freeze_minutes: Number.parseInt((keyFreezeMinutes || "10").trim(), 10) || 10,
-      agent1_primary_model: (agent1PrimaryModel || "gemini-2.5-flash").trim(),
-      agent1_fallback_model: (agent1FallbackModel || "gemini-2.5-flash").trim(),
-      agent2_primary_model: (agent2PrimaryModel || "gemini-2.5-pro").trim(),
-      agent2_fallback_model: (agent2FallbackModel || "gemini-2.5-flash").trim(),
-      agent3_primary_model: (agent3PrimaryModel || "gemini-2.5-flash").trim(),
-      agent3_fallback_model: (agent3FallbackModel || "gemini-2.5-flash").trim(),
-      testcase_agent1_primary_model: (testcaseAgent1PrimaryModel || "gemini-2.5-flash").trim(),
-      testcase_agent1_fallback_model: (testcaseAgent1FallbackModel || "gemini-2.5-flash").trim(),
-      testcase_agent2_primary_model: (testcaseAgent2PrimaryModel || "gemini-2.5-pro").trim(),
-      testcase_agent2_fallback_model: (testcaseAgent2FallbackModel || "gemini-2.5-flash").trim(),
-      testcase_agent3_primary_model: (testcaseAgent3PrimaryModel || "gemini-2.5-flash").trim(),
-      testcase_agent3_fallback_model: (testcaseAgent3FallbackModel || "gemini-2.5-flash").trim(),
+      agent1_primary_model: (agent1PrimaryModel || "").trim(),
+      agent1_fallback_model: (agent1FallbackModel || "").trim(),
+      agent2_primary_model: (agent2PrimaryModel || "").trim(),
+      agent2_fallback_model: (agent2FallbackModel || "").trim(),
+      agent3_primary_model: (agent3PrimaryModel || "").trim(),
+      agent3_fallback_model: (agent3FallbackModel || "").trim(),
+      testcase_agent1_primary_model: (testcaseAgent1PrimaryModel || "").trim(),
+      testcase_agent1_fallback_model: (testcaseAgent1FallbackModel || "").trim(),
+      testcase_agent2_primary_model: (testcaseAgent2PrimaryModel || "").trim(),
+      testcase_agent2_fallback_model: (testcaseAgent2FallbackModel || "").trim(),
+      testcase_agent3_primary_model: (testcaseAgent3PrimaryModel || "").trim(),
+      testcase_agent3_fallback_model: (testcaseAgent3FallbackModel || "").trim(),
     } satisfies GlobalAiDefaults;
 
     const payload = {
       auth_source: session.auth.auth_source || null,
+      ai_usage: aiUsage || {
+        by_company: [],
+        by_module: [],
+        recent_events: [],
+        summary: {},
+      },
       companies: companyPayload,
       current_admin: Boolean(session.auth.user_name),
       global_ai_defaults: aiDefaults,

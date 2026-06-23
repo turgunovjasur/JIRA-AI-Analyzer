@@ -96,16 +96,27 @@ async def _dispatch_job(job: dict[str, Any]) -> None:
     elif not isinstance(company_id, int):
         company_id = int(company_id)
     new_status = str(payload.get("new_status") or "READY TO TEST")
+    task_details = payload.get("task_details") if isinstance(payload.get("task_details"), dict) else None
     job_type = str(job.get("job_type") or "")
 
     if not task_key:
         raise RuntimeError("task_key bo'sh")
 
     if job_type == JOB_RUN_TASK_GROUP:
-        await _run_task_group(task_key=task_key, new_status=new_status, company_id=company_id)
+        await _run_task_group(
+            task_key=task_key,
+            new_status=new_status,
+            company_id=company_id,
+            task_details=task_details,
+        )
         return
     if job_type == JOB_RUN_CHECKER_ONLY:
-        await _queued_check_tz_pr(task_key=task_key, new_status=new_status, company_id=company_id)
+        await _queued_check_tz_pr(
+            task_key=task_key,
+            new_status=new_status,
+            company_id=company_id,
+            task_details=task_details,
+        )
         return
     if job_type == JOB_RUN_TESTCASE:
         await _run_testcase_generation(task_key=task_key, new_status=new_status, company_id=company_id)

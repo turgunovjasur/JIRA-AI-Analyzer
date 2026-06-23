@@ -6,8 +6,10 @@ from __future__ import annotations
 import os
 
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from core.module_start_preflight import run_start_preflight
 from services.generators.testcase_run import create_testcase_run, execute_testcase_run
 from services.api.session_scope import load_api_session, require_customer_scope
 from utils.database.analysis_run_db import get_analysis_run_snapshot
@@ -45,9 +47,20 @@ async def create_testcase_run_endpoint(
             session,
             payload.user_id,
             payload.company_id,
-            module_key="testcase_generator",
         )
         task_key = payload.task_key.strip().upper()
+        preflight = run_start_preflight(
+            module_key="testcase_generator",
+            task_key=task_key,
+            company_id=company_id,
+            user_id=user_id,
+            source="manual",
+        )
+        if not preflight.ok:
+            return JSONResponse(status_code=400, content=preflight.to_error_payload())
+
+        user_id = preflight.user_id
+        company_id = preflight.company_id
         run = create_testcase_run(
             task_key=task_key,
             company_id=company_id,

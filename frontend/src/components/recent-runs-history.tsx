@@ -8,12 +8,17 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { SectionHeader } from "@/components/ui/section-header";
-import { useRecentRuns, type RecentRun } from "@/lib/use-recent-runs";
+import {
+  getOpenRunStorageKey,
+  useRecentRuns,
+  type RecentRun,
+  type RecentRunScope,
+} from "@/lib/use-recent-runs";
 
 type RecentRunsHistoryProps = {
   basePath: string;
   moduleKey: string;
-  storageKey: string;
+  recentScope?: RecentRunScope;
   title: string;
 };
 
@@ -38,15 +43,16 @@ function getRunTone(value?: string | null): "soft" | "success" | "warning" | "da
 export function RecentRunsHistory({
   basePath,
   moduleKey,
-  storageKey,
+  recentScope,
   title,
 }: RecentRunsHistoryProps) {
   const router = useRouter();
-  const { recent } = useRecentRuns(moduleKey);
+  const { recent } = useRecentRuns(moduleKey, recentScope);
+  const openRunStorageKey = getOpenRunStorageKey(moduleKey, recentScope);
 
   function openRun(entry: RecentRun) {
     try {
-      window.sessionStorage.setItem(storageKey, JSON.stringify(entry));
+      window.sessionStorage.setItem(openRunStorageKey, JSON.stringify(entry));
     } catch {
       // Session storage ishlamasa ham asosiy sahifaga qaytamiz.
     }

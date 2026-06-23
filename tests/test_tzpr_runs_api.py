@@ -1,4 +1,5 @@
 import pytest
+from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 import services.api.tzpr_api as tzpr_api
@@ -40,6 +41,11 @@ def test_create_tzpr_run_endpoint_returns_snapshot(monkeypatch):
     monkeypatch.setattr(tzpr_api, "get_checker_run_snapshot", lambda run_id: snapshot)
     monkeypatch.setattr(tzpr_api, "execute_multi_agent_run", lambda run_id: None)
     monkeypatch.setattr(tzpr_api, "_worker_queue_enabled", lambda: False)
+    monkeypatch.setattr(
+        tzpr_api,
+        "run_start_preflight",
+        lambda **_kwargs: SimpleNamespace(ok=True, user_id=77, company_id=7),
+    )
 
     with TestClient(app) as client:
       response = client.post(

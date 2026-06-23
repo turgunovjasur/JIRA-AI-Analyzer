@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, Plus, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { BaseCard } from "@/components/ui/card";
+import { Field } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 import { MetricCard } from "@/components/ui/metric-card";
 import { Notice } from "@/components/ui/notice";
 import { PageIntro } from "@/components/ui/page-intro";
@@ -26,6 +28,9 @@ import {
   SUBSCRIPTION_STATUS_LABELS,
 } from "@/lib/product-catalog";
 import type {
+  AiUsageCompanyRow,
+  AiUsageEventRow,
+  AiUsageModuleRow,
   CompanyModules,
   CompanySubscription,
   SuperAdminCompany,
@@ -37,7 +42,7 @@ type SuperAdminPanelProps = {
   currentUsername: string;
 };
 
-type SuperAdminTab = "companies" | "ai" | "system" | "platform";
+type SuperAdminTab = "companies" | "ai" | "usage" | "system" | "platform";
 
 type CompanyCreateForm = {
   admin_password: string;
@@ -67,9 +72,13 @@ type AiDefaultsForm = {
 };
 
 type SuperAdminSystemForm = {
-  ai_max_retries: number;
+  task_wait_timeout: number;
+  checker_testcase_delay: number;
+  blocked_retry_delay: number;
+  gemini_min_interval: number;
+  blocked_check_interval: number;
+  gemini_max_retries: number;
   key_freeze_duration: number;
-  db_busy_timeout: number;
   db_connection_timeout: number;
   http_timeout: number;
   executor_timeout: number;
@@ -77,6 +86,7 @@ type SuperAdminSystemForm = {
 
 const SETTINGS_INPUT_CLASS = "settings-form-input";
 const SETTINGS_SELECT_CLASS = "settings-form-select";
+const SECONDS_PER_MINUTE = 60;
 
 function buildCreateForm(): CompanyCreateForm {
   const addonDefaults: CompanyModules = Object.fromEntries(
@@ -124,6 +134,69 @@ function normalizeDateInputValue(value: string | null | undefined) {
   return Number.isNaN(parsed.getTime()) ? "" : formatDateInputValue(parsed);
 }
 
+function numberValue(value: number | string | null | undefined) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function secondsToMinutesInput(value: number | string | null | undefined) {
+  const minutes = numberValue(value) / SECONDS_PER_MINUTE;
+  if (!Number.isFinite(minutes)) return "0";
+  return Number.isInteger(minutes) ? String(minutes) : String(Number(minutes.toFixed(2)));
+}
+
+function minutesInputToSeconds(value: number | string | null | undefined) {
+  return Math.max(0, Math.round(numberValue(value) * SECONDS_PER_MINUTE));
+}
+
+function formatCompactNumber(value: number | string | null | undefined) {
+  return new Intl.NumberFormat("en-US", {
+    compactDisplay: "short",
+    maximumFractionDigits: 1,
+    notation: "compact",
+  }).format(numberValue(value));
+}
+
+function formatPlainNumber(value: number | string | null | undefined) {
+  return new Intl.NumberFormat("en-US").format(Math.round(numberValue(value)));
+}
+
+function formatUsd(value: number | string | null | undefined) {
+  return new Intl.NumberFormat("en-US", {
+    currency: "USD",
+    maximumFractionDigits: 4,
+    minimumFractionDigits: 2,
+    style: "currency",
+  }).format(numberValue(value));
+}
+
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    month: "2-digit",
+    year: "2-digit",
+  }).format(date);
+}
+
+function moduleLabel(value: string | null | undefined) {
+  const key = String(value || "").trim();
+  const catalog = MODULE_CATALOG as Record<string, { label?: string } | undefined>;
+  return catalog[key]?.label || key.replace(/_/g, " ") || "-";
+}
+
+function companyLabel(row: AiUsageCompanyRow) {
+  return row.company_code || row.company_name || (row.company_id ? `Company #${row.company_id}` : "No company");
+}
+
+function usageTone(warnings: number | string | null | undefined): "success" | "warning" {
+  return numberValue(warnings) > 0 ? "warning" : "success";
+}
+
 function billingTone(company: SuperAdminCompany): "success" | "warning" | "danger" {
   if (company.billing_health.severity === "danger") return "danger";
   if (company.billing_health.severity === "warning") return "warning";
@@ -148,14 +221,36 @@ function billingAlertLabel(company: SuperAdminCompany) {
 }
 
 function modelOptions() {
-  return ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"];
+  return ["", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"];
 }
 
 const ADDON_MODULE_OPTIONS = PAID_ADDON_MODULE_KEYS.map((moduleKey) => ({
-  badge: moduleKey,
+  badge: "addon",
   key: moduleKey,
   label: MODULE_CATALOG[moduleKey]?.label || moduleKey,
 }));
+
+const DEFAULT_MODULE_OPTIONS = BASE_PLAN_MODULE_KEYS.map((moduleKey) => ({
+  badge: "default",
+  disabled: true,
+  key: moduleKey,
+  label: MODULE_CATALOG[moduleKey]?.label || moduleKey,
+}));
+
+const DERIVED_MODULE_OPTIONS = [
+  {
+    badge: "auto",
+    disabled: true,
+    key: "monitoring",
+    label: MODULE_CATALOG.monitoring.label,
+  },
+];
+
+const SUPER_ADMIN_MODULE_OPTIONS = [
+  ...DEFAULT_MODULE_OPTIONS,
+  ...ADDON_MODULE_OPTIONS,
+  ...DERIVED_MODULE_OPTIONS,
+];
 
 function selectedAddonModules(modules: CompanyModules | undefined): string[] {
   return PAID_ADDON_MODULE_KEYS.filter((moduleKey) => Boolean(modules?.[moduleKey]));
@@ -165,6 +260,24 @@ function buildAddonModuleState(selected: string[]): CompanyModules {
   return Object.fromEntries(
     PAID_ADDON_MODULE_KEYS.map((moduleKey) => [moduleKey, selected.includes(moduleKey)]),
   ) as CompanyModules;
+}
+
+function selectedManagedModules(company: SuperAdminCompany, modules: CompanyModules | undefined): string[] {
+  const selected = new Set<string>();
+  const includedModules = company.included_modules?.length ? company.included_modules : BASE_PLAN_MODULE_KEYS;
+  includedModules.forEach((moduleKey) => selected.add(moduleKey));
+  selectedAddonModules(modules).forEach((moduleKey) => selected.add(moduleKey));
+  if (modules?.webhook || company.derived_modules.includes("monitoring") || company.modules?.monitoring) {
+    selected.add("monitoring");
+  }
+  return [...selected];
+}
+
+function selectedCreateModules(modules: CompanyModules | undefined): string[] {
+  const selected = new Set<string>(BASE_PLAN_MODULE_KEYS);
+  selectedAddonModules(modules).forEach((moduleKey) => selected.add(moduleKey));
+  if (modules?.webhook) selected.add("monitoring");
+  return [...selected];
 }
 
 async function parseJson<T>(response: Response) {
@@ -181,37 +294,43 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
   const [createOpen, setCreateOpen] = useState(false);
   const [createForm, setCreateForm] = useState<CompanyCreateForm>(buildCreateForm);
   const [aiForm, setAiForm] = useState<AiDefaultsForm>({
-    agent1_fallback_model: "gemini-2.5-flash",
-    agent1_primary_model: "gemini-2.5-flash",
-    agent2_fallback_model: "gemini-2.5-flash",
-    agent2_primary_model: "gemini-2.5-pro",
-    agent3_fallback_model: "gemini-2.5-flash",
-    agent3_primary_model: "gemini-2.5-flash",
+    agent1_fallback_model: "",
+    agent1_primary_model: "",
+    agent2_fallback_model: "",
+    agent2_primary_model: "",
+    agent3_fallback_model: "",
+    agent3_primary_model: "",
     api_key_1: "",
     api_key_2: "",
     key_freeze_minutes: 10,
-    testcase_agent1_fallback_model: "gemini-2.5-flash",
-    testcase_agent1_primary_model: "gemini-2.5-flash",
-    testcase_agent2_fallback_model: "gemini-2.5-flash",
-    testcase_agent2_primary_model: "gemini-2.5-pro",
-    testcase_agent3_fallback_model: "gemini-2.5-flash",
-    testcase_agent3_primary_model: "gemini-2.5-flash",
+    testcase_agent1_fallback_model: "",
+    testcase_agent1_primary_model: "",
+    testcase_agent2_fallback_model: "",
+    testcase_agent2_primary_model: "",
+    testcase_agent3_fallback_model: "",
+    testcase_agent3_primary_model: "",
   });
   const [showApiKey1, setShowApiKey1] = useState(false);
   const [showApiKey2, setShowApiKey2] = useState(false);
+  const [showBackupApiKey, setShowBackupApiKey] = useState(false);
   const [apiKey1Mask, setApiKey1Mask] = useState("");
   const [apiKey2Mask, setApiKey2Mask] = useState("");
   const [apiKey1Dirty, setApiKey1Dirty] = useState(false);
   const [apiKey2Dirty, setApiKey2Dirty] = useState(false);
+  const [apiKey2Clear, setApiKey2Clear] = useState(false);
   const [platformAdminForm, setPlatformAdminForm] = useState({
     confirm_password: "",
     password: "",
     username: currentUsername,
   });
   const [systemForm, setSystemForm] = useState<SuperAdminSystemForm>({
-    ai_max_retries: 3,
+    task_wait_timeout: 60,
+    checker_testcase_delay: 15,
+    blocked_retry_delay: 5,
+    gemini_min_interval: 6,
+    blocked_check_interval: 30,
+    gemini_max_retries: 3,
     key_freeze_duration: 600,
-    db_busy_timeout: 30000,
     db_connection_timeout: 30,
     http_timeout: 30,
     executor_timeout: 120,
@@ -277,22 +396,24 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
       setApiKey2Mask(nextApiKey2Mask);
       setApiKey1Dirty(false);
       setApiKey2Dirty(false);
+      setApiKey2Clear(false);
+      setShowBackupApiKey(Boolean(nextApiKey2Mask || payload.global_ai_defaults.api_key_2_present));
       setAiForm({
-        agent1_fallback_model: payload.global_ai_defaults.agent1_fallback_model || "gemini-2.5-flash",
-        agent1_primary_model: payload.global_ai_defaults.agent1_primary_model || "gemini-2.5-flash",
-        agent2_fallback_model: payload.global_ai_defaults.agent2_fallback_model || "gemini-2.5-flash",
-        agent2_primary_model: payload.global_ai_defaults.agent2_primary_model || "gemini-2.5-pro",
-        agent3_fallback_model: payload.global_ai_defaults.agent3_fallback_model || "gemini-2.5-flash",
-        agent3_primary_model: payload.global_ai_defaults.agent3_primary_model || "gemini-2.5-flash",
+        agent1_fallback_model: payload.global_ai_defaults.agent1_fallback_model || "",
+        agent1_primary_model: payload.global_ai_defaults.agent1_primary_model || "",
+        agent2_fallback_model: payload.global_ai_defaults.agent2_fallback_model || "",
+        agent2_primary_model: payload.global_ai_defaults.agent2_primary_model || "",
+        agent3_fallback_model: payload.global_ai_defaults.agent3_fallback_model || "",
+        agent3_primary_model: payload.global_ai_defaults.agent3_primary_model || "",
         api_key_1: nextApiKey1Mask,
         api_key_2: nextApiKey2Mask,
         key_freeze_minutes: payload.global_ai_defaults.key_freeze_minutes ?? 10,
-        testcase_agent1_fallback_model: payload.global_ai_defaults.testcase_agent1_fallback_model || "gemini-2.5-flash",
-        testcase_agent1_primary_model: payload.global_ai_defaults.testcase_agent1_primary_model || "gemini-2.5-flash",
-        testcase_agent2_fallback_model: payload.global_ai_defaults.testcase_agent2_fallback_model || "gemini-2.5-flash",
-        testcase_agent2_primary_model: payload.global_ai_defaults.testcase_agent2_primary_model || "gemini-2.5-pro",
-        testcase_agent3_fallback_model: payload.global_ai_defaults.testcase_agent3_fallback_model || "gemini-2.5-flash",
-        testcase_agent3_primary_model: payload.global_ai_defaults.testcase_agent3_primary_model || "gemini-2.5-flash",
+        testcase_agent1_fallback_model: payload.global_ai_defaults.testcase_agent1_fallback_model || "",
+        testcase_agent1_primary_model: payload.global_ai_defaults.testcase_agent1_primary_model || "",
+        testcase_agent2_fallback_model: payload.global_ai_defaults.testcase_agent2_fallback_model || "",
+        testcase_agent2_primary_model: payload.global_ai_defaults.testcase_agent2_primary_model || "",
+        testcase_agent3_fallback_model: payload.global_ai_defaults.testcase_agent3_fallback_model || "",
+        testcase_agent3_primary_model: payload.global_ai_defaults.testcase_agent3_primary_model || "",
       });
       setPlatformAdminForm((current) => ({
         ...current,
@@ -318,9 +439,13 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
           return;
         }
         setSystemForm({
-          ai_max_retries: Number(payload.data.ai_max_retries ?? 3),
+          task_wait_timeout: Number(payload.data.task_wait_timeout ?? 60),
+          checker_testcase_delay: Number(payload.data.checker_testcase_delay ?? 15),
+          blocked_retry_delay: Number(payload.data.blocked_retry_delay ?? 5),
+          gemini_min_interval: Number(payload.data.gemini_min_interval ?? 6),
+          blocked_check_interval: Number(payload.data.blocked_check_interval ?? 30),
+          gemini_max_retries: Number(payload.data.gemini_max_retries ?? 3),
           key_freeze_duration: Number(payload.data.key_freeze_duration ?? 600),
-          db_busy_timeout: Number(payload.data.db_busy_timeout ?? 30000),
           db_connection_timeout: Number(payload.data.db_connection_timeout ?? 30),
           http_timeout: Number(payload.data.http_timeout ?? 30),
           executor_timeout: Number(payload.data.executor_timeout ?? 120),
@@ -487,13 +612,16 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
   async function saveAiDefaults(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await runAction(async () => {
-      const body: Partial<AiDefaultsForm> = { ...aiForm };
+      const body: Partial<AiDefaultsForm> & { api_key_2_clear?: boolean } = { ...aiForm };
       if (apiKey1Dirty && aiForm.api_key_1.trim()) {
         body.api_key_1 = aiForm.api_key_1.trim();
       } else {
         delete body.api_key_1;
       }
-      if (apiKey2Dirty && aiForm.api_key_2.trim()) {
+      if (apiKey2Clear) {
+        body.api_key_2_clear = true;
+        delete body.api_key_2;
+      } else if (apiKey2Dirty && aiForm.api_key_2.trim()) {
         body.api_key_2 = aiForm.api_key_2.trim();
       } else {
         delete body.api_key_2;
@@ -512,6 +640,16 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
       setSuccess("AI sozlamalar saqlandi.");
       await loadOverview();
     });
+  }
+
+  function removeBackupApiKey() {
+    const hasSavedBackup = Boolean(apiKey2Mask || overview?.global_ai_defaults.api_key_2_present);
+    setAiForm((current) => ({ ...current, api_key_2: "" }));
+    setApiKey2Mask("");
+    setApiKey2Dirty(false);
+    setApiKey2Clear(hasSavedBackup);
+    setShowApiKey2(false);
+    setShowBackupApiKey(false);
   }
 
   async function savePlatformAdminPassword(event: FormEvent<HTMLFormElement>) {
@@ -566,6 +704,7 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
             {[
               { key: "companies", label: "🏢 Kompaniyalar" },
               { key: "ai", label: "🤖 AI Sozlamalar" },
+              { key: "usage", label: "AI Usage" },
               { key: "system", label: "⚙️ System" },
               { key: "platform", label: "🔐 Platform Admin" },
             ].map((item) => (
@@ -732,8 +871,7 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                                 <div className="sbox">
                                   <h4>📦 Modullar</h4>
                                   <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
-                                    <strong>Base:</strong> {BASE_PLAN_MODULE_KEYS.join(", ")} (doim yoqilgan) ·{" "}
-                                    <strong>Derived:</strong> monitoring (webhook yoqilganda avtomatik ochiladi)
+                                    Default modullar read-only ko'rinadi, webhook addon sifatida boshqariladi.
                                   </p>
                                   <BaseCheckGroup
                                     onChange={(nextValues) =>
@@ -742,8 +880,8 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                                         [company.id]: buildAddonModuleState(nextValues),
                                       }))
                                     }
-                                    options={ADDON_MODULE_OPTIONS}
-                                    value={selectedAddonModules(moduleDraft)}
+                                    options={SUPER_ADMIN_MODULE_OPTIONS}
+                                    value={selectedManagedModules(company, moduleDraft)}
                                   />
                                   <Button
                                     className="mt-3 tenant-action-btn tenant-action-btn--save"
@@ -839,11 +977,11 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                                     type="date"
                                     value={normalizeDateInputValue(subscriptionDraft.billing_start_date)}
                                   />
-                                  <BaseInputField
-                                    className={SETTINGS_INPUT_CLASS}
-                                    label="Muddat tugashi"
-                                    onChange={(value) =>
-                                      setSubscriptionDrafts((current) => ({
+	                                  <BaseInputField
+	                                    className={SETTINGS_INPUT_CLASS}
+	                                    label="Muddat tugashi"
+	                                    onChange={(value) =>
+	                                      setSubscriptionDrafts((current) => ({
                                         ...current,
                                         [company.id]: {
                                           ...(current[company.id] || {}),
@@ -851,25 +989,10 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                                         },
                                       }))
                                     }
-                                    type="date"
-                                    value={normalizeDateInputValue(subscriptionDraft.billing_end_date)}
-                                  />
-                                  <BaseInputField
-                                    className={SETTINGS_INPUT_CLASS}
-                                    label="Keyingi to'lov sanasi"
-                                    onChange={(value) =>
-                                      setSubscriptionDrafts((current) => ({
-                                        ...current,
-                                        [company.id]: {
-                                          ...(current[company.id] || {}),
-                                          next_payment_date: value,
-                                        },
-                                      }))
-                                    }
-                                    type="date"
-                                    value={normalizeDateInputValue(subscriptionDraft.next_payment_date)}
-                                  />
-                                </div>
+	                                    type="date"
+	                                    value={normalizeDateInputValue(subscriptionDraft.billing_end_date)}
+	                                  />
+	                                </div>
                                 <div className="mt-2">
                                   <BaseInputField
                                     className={SETTINGS_INPUT_CLASS}
@@ -983,7 +1106,7 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
               )}
             >
               <form className="mt-4 grid gap-4" onSubmit={saveAiDefaults}>
-                <div className="grid gap-4 md:grid-cols-2">
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_220px] lg:items-start">
                   <BaseInputField
                     className={SETTINGS_INPUT_CLASS}
                     hint={overview.global_ai_defaults.api_key_1_present ? "Bo'sh qoldirilsa mavjud kalit saqlanadi" : undefined}
@@ -1018,40 +1141,75 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                     type={apiKey1Dirty && !showApiKey1 ? "password" : "text"}
                     value={aiForm.api_key_1}
                   />
-                  <BaseInputField
-                    className={SETTINGS_INPUT_CLASS}
-                    hint={overview.global_ai_defaults.api_key_2_present ? "Bo'sh qoldirilsa mavjud kalit saqlanadi" : undefined}
-                    label="API Key 2 (backup)"
-                    onBlur={() => {
-                      if (apiKey2Dirty && !aiForm.api_key_2.trim() && apiKey2Mask) {
-                        setAiForm((current) => ({ ...current, api_key_2: apiKey2Mask }));
-                        setApiKey2Dirty(false);
-                      }
-                    }}
-                    onChange={(value) => {
-                      setApiKey2Dirty(true);
-                      setAiForm((current) => ({ ...current, api_key_2: value }));
-                    }}
-                    onFocus={() => {
-                      if (!apiKey2Dirty && apiKey2Mask && aiForm.api_key_2 === apiKey2Mask) {
-                        setAiForm((current) => ({ ...current, api_key_2: "" }));
-                        setApiKey2Dirty(true);
-                      }
-                    }}
-                    placeholder="AIza..."
-                    rightSlot={(
-                      <button
-                        aria-label={showApiKey2 ? "API Key 2 ni yashirish" : "API Key 2 ni ko'rsatish"}
-                        className="eye-btn"
-                        onClick={() => setShowApiKey2((current) => !current)}
+                  {showBackupApiKey ? (
+                    <Field
+                      hint={overview.global_ai_defaults.api_key_2_present ? "Bo'sh qoldirilsa mavjud kalit saqlanadi" : undefined}
+                      label="API Key 2 (backup)"
+                    >
+                      <div className="input-eye">
+                        <Input
+                          className={`${SETTINGS_INPUT_CLASS} pr-20`}
+                          onBlur={() => {
+                            if (apiKey2Dirty && !aiForm.api_key_2.trim() && apiKey2Mask) {
+                              setAiForm((current) => ({ ...current, api_key_2: apiKey2Mask }));
+                              setApiKey2Dirty(false);
+                            }
+                          }}
+                          onChange={(event) => {
+                            setApiKey2Clear(false);
+                            setApiKey2Dirty(true);
+                            setAiForm((current) => ({ ...current, api_key_2: event.target.value }));
+                          }}
+                          onFocus={() => {
+                            if (!apiKey2Dirty && apiKey2Mask && aiForm.api_key_2 === apiKey2Mask) {
+                              setAiForm((current) => ({ ...current, api_key_2: "" }));
+                              setApiKey2Dirty(true);
+                            }
+                          }}
+                          placeholder="AIza..."
+                          type={apiKey2Dirty && !showApiKey2 ? "password" : "text"}
+                          value={aiForm.api_key_2}
+                        />
+                        <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
+                          <button
+                            aria-label="API Key 2 ni o'chirish"
+                            className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                            onClick={removeBackupApiKey}
+                            type="button"
+                          >
+                            <X size={15} />
+                          </button>
+                          <button
+                            aria-label={showApiKey2 ? "API Key 2 ni yashirish" : "API Key 2 ni ko'rsatish"}
+                            className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                            onClick={() => setShowApiKey2((current) => !current)}
+                            type="button"
+                          >
+                            {showApiKey2 ? <EyeOff size={16} /> : <Eye size={16} />}
+                          </button>
+                        </div>
+                      </div>
+                    </Field>
+                  ) : (
+                    <div className="grid gap-2">
+                      <span className="text-sm font-medium text-foreground">API Key 2 (backup)</span>
+                      <Button
+                        fullWidth
+                        onClick={() => {
+                          setApiKey2Clear(false);
+                          setShowBackupApiKey(true);
+                        }}
                         type="button"
+                        variant="soft"
                       >
-                        {showApiKey2 ? <EyeOff size={16} /> : <Eye size={16} />}
-                      </button>
-                    )}
-                    type={apiKey2Dirty && !showApiKey2 ? "password" : "text"}
-                    value={aiForm.api_key_2}
-                  />
+                        <Plus size={16} />
+                        API Key 2 qo'shish
+                      </Button>
+                      <small className="text-xs leading-5 text-muted-foreground">
+                        Ixtiyoriy backup key kerak bo'lsa qo'shing.
+                      </small>
+                    </div>
+                  )}
                   <NumberField
                     inputClassName={SETTINGS_INPUT_CLASS}
                     label="Key freeze (daqiqa)"
@@ -1089,8 +1247,8 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                             value={String(aiForm[field as keyof AiDefaultsForm] || "")}
                           >
                             {modelOptions().map((model) => (
-                              <option key={model} value={model}>
-                                {model}
+                              <option key={model || "unset"} value={model}>
+                                {model || "Tanlanmagan"}
                               </option>
                             ))}
                           </BaseSelectField>
@@ -1121,8 +1279,8 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                             value={String(aiForm[field as keyof AiDefaultsForm] || "")}
                           >
                             {modelOptions().map((model) => (
-                              <option key={model} value={model}>
-                                {model}
+                              <option key={model || "unset"} value={model}>
+                                {model || "Tanlanmagan"}
                               </option>
                             ))}
                           </BaseSelectField>
@@ -1139,6 +1297,186 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                 </div>
               </form>
             </SettingsBaseCard>
+          ) : null}
+
+          {tab === "usage" ? (
+            <>
+              <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                <MetricCard
+                  helper="Yozilgan AI chaqiruvlar"
+                  label="Calls"
+                  value={formatPlainNumber(overview.ai_usage?.summary.event_count)}
+                />
+                <MetricCard
+                  helper="Prompt tokenlar"
+                  label="Input tokens"
+                  value={formatCompactNumber(overview.ai_usage?.summary.prompt_token_count)}
+                />
+                <MetricCard
+                  helper="Thinking tokenlar"
+                  label="Thinking"
+                  value={formatCompactNumber(overview.ai_usage?.summary.thoughts_token_count)}
+                />
+                <MetricCard
+                  helper="Barcha tokenlar"
+                  label="Total tokens"
+                  value={formatCompactNumber(overview.ai_usage?.summary.total_token_count)}
+                />
+                <MetricCard
+                  helper="Taxminiy Gemini xarajati"
+                  label="Est. cost"
+                  value={formatUsd(overview.ai_usage?.summary.estimated_total_cost_usd)}
+                />
+              </section>
+
+              <SettingsBaseCard
+                header={(
+                  <SectionHeader
+                    action={(
+                      <Badge tone={usageTone(overview.ai_usage?.summary.cost_warning_count)}>
+                        {formatPlainNumber(overview.ai_usage?.summary.cost_warning_count)} expensive calls
+                      </Badge>
+                    )}
+                    eyebrow="AI Usage"
+                    title="Tenant va modul bo'yicha xarajat"
+                  />
+                )}
+              >
+                <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                  <div className="table-wrap">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Tenant</th>
+                          <th>Calls</th>
+                          <th>Input</th>
+                          <th>Thinking</th>
+                          <th>Cost</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(overview.ai_usage?.by_company || []).length ? (
+                          (overview.ai_usage?.by_company || []).map((row: AiUsageCompanyRow) => (
+                            <tr key={`${row.company_id || "none"}-${row.company_code || ""}`}>
+                              <td>
+                                <div className="font-semibold text-foreground">{companyLabel(row)}</div>
+                                <div className="text-xs text-muted-foreground">{row.company_name || "-"}</div>
+                              </td>
+                              <td>{formatPlainNumber(row.event_count)}</td>
+                              <td>{formatCompactNumber(row.prompt_token_count)}</td>
+                              <td>{formatCompactNumber(row.thoughts_token_count)}</td>
+                              <td>
+                                <div>{formatUsd(row.estimated_total_cost_usd)}</div>
+                                {numberValue(row.cost_warning_count) > 0 ? (
+                                  <Badge tone="warning">{formatPlainNumber(row.cost_warning_count)} expensive</Badge>
+                                ) : null}
+                              </td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan={5}>AI usage hali yozilmagan.</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="table-wrap">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Module</th>
+                          <th>Calls</th>
+                          <th>Input</th>
+                          <th>Thinking</th>
+                          <th>Cost</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(overview.ai_usage?.by_module || []).length ? (
+                          (overview.ai_usage?.by_module || []).map((row: AiUsageModuleRow) => (
+                            <tr key={row.module_key || "unknown"}>
+                              <td className="font-semibold text-foreground">{moduleLabel(row.module_key)}</td>
+                              <td>{formatPlainNumber(row.event_count)}</td>
+                              <td>{formatCompactNumber(row.prompt_token_count)}</td>
+                              <td>{formatCompactNumber(row.thoughts_token_count)}</td>
+                              <td>
+                                <div>{formatUsd(row.estimated_total_cost_usd)}</div>
+                                {numberValue(row.cost_warning_count) > 0 ? (
+                                  <Badge tone="warning">{formatPlainNumber(row.cost_warning_count)} expensive</Badge>
+                                ) : null}
+                              </td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan={5}>Module bo'yicha usage hali yo'q.</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </SettingsBaseCard>
+
+              <SettingsBaseCard
+                header={<SectionHeader eyebrow="Recent Calls" title="Oxirgi AI chaqiruvlar" />}
+              >
+                <div className="mt-4 table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Time</th>
+                        <th>Tenant</th>
+                        <th>Task</th>
+                        <th>Module / Agent</th>
+                        <th>Model</th>
+                        <th>Tokens</th>
+                        <th>Cost</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(overview.ai_usage?.recent_events || []).length ? (
+                        (overview.ai_usage?.recent_events || []).map((row: AiUsageEventRow) => (
+                          <tr key={row.id || `${row.created_at}-${row.task_key}-${row.agent_key}`}>
+                            <td>{formatDateTime(row.created_at)}</td>
+                            <td>{row.company_code || (row.company_id ? `#${row.company_id}` : "-")}</td>
+                            <td>
+                              <div className="font-semibold text-foreground">{row.task_key || "-"}</div>
+                              <div className="text-xs text-muted-foreground">{row.source || "-"}</div>
+                            </td>
+                            <td>
+                              <div>{moduleLabel(row.module_key)}</div>
+                              <div className="text-xs text-muted-foreground">{row.agent_key || "-"}</div>
+                            </td>
+                            <td>
+                              <div>{row.model || "-"}</div>
+                              <div className="text-xs text-muted-foreground">{row.pricing_tier || "-"}</div>
+                            </td>
+                            <td>
+                              <div>{formatCompactNumber(row.total_token_count)} total</div>
+                              <div className="text-xs text-muted-foreground">
+                                {formatCompactNumber(row.prompt_token_count)} in ·{" "}
+                                {formatCompactNumber(row.thoughts_token_count)} think
+                              </div>
+                            </td>
+                            <td>
+                              <div>{formatUsd(row.estimated_total_cost_usd)}</div>
+                              {row.cost_warning ? <Badge tone="warning">expensive</Badge> : null}
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={7}>Real Gemini chaqiruvi bo'lgandan keyin yozuvlar chiqadi.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </SettingsBaseCard>
+            </>
           ) : null}
 
           {tab === "platform" ? (
@@ -1204,19 +1542,88 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                 <div className="grid gap-4 md:grid-cols-2">
                   <NumberField
                     inputClassName={SETTINGS_INPUT_CLASS}
-                    label="AI max retries"
+                    label="Task wait timeout (min)"
+                    hint="Navbatda turgan task eng ko'p shuncha daqiqa kutadi; bo'shamasa bloklanib, keyin avtomatik qayta urinadi (yo'qolmaydi)."
+                    min={0.1}
+                    onChange={(value) =>
+                      setSystemForm((current) => ({
+                        ...current,
+                        task_wait_timeout: minutesInputToSeconds(value),
+                      }))
+                    }
+                    step={0.1}
+                    value={secondsToMinutesInput(systemForm.task_wait_timeout)}
+                  />
+                  <NumberField
+                    inputClassName={SETTINGS_INPUT_CLASS}
+                    label="Checker->Testcase delay (sec)"
+                    hint="Checker (Servis-1) izohidan keyin testcase (Servis-2) boshlanguncha tanaffus — Gemini'ga ikki so'rovni juda yaqin yubormaslik uchun."
                     min={1}
                     onChange={(value) =>
                       setSystemForm((current) => ({
                         ...current,
-                        ai_max_retries: Number(value || 0),
+                        checker_testcase_delay: Number(value || 0),
                       }))
                     }
-                    value={String(systemForm.ai_max_retries)}
+                    value={String(systemForm.checker_testcase_delay)}
+                  />
+                  <NumberField
+                    inputClassName={SETTINGS_INPUT_CLASS}
+                    label="Gemini min interval (sec)"
+                    hint="AI so'rovlar orasidagi eng kam tanaffus. 6 sek = 10 so'rov/daqiqa (Google bepul limiti). '429 limit' ko'p chiqsa oshiring."
+                    min={1}
+                    onChange={(value) =>
+                      setSystemForm((current) => ({
+                        ...current,
+                        gemini_min_interval: Number(value || 0),
+                      }))
+                    }
+                    value={String(systemForm.gemini_min_interval)}
+                  />
+                  <NumberField
+                    inputClassName={SETTINGS_INPUT_CLASS}
+                    label="Blocked retry delay (min)"
+                    hint="Gemini band bo'lib (timeout/429) bloklangan task shuncha DAQIQAdan keyin qayta urinadi."
+                    min={1}
+                    onChange={(value) =>
+                      setSystemForm((current) => ({
+                        ...current,
+                        blocked_retry_delay: Number(value || 0),
+                      }))
+                    }
+                    value={String(systemForm.blocked_retry_delay)}
+                  />
+                  <NumberField
+                    inputClassName={SETTINGS_INPUT_CLASS}
+                    label="Blocked check interval (min)"
+                    hint="Bloklangan tasklarni tizim har shuncha daqiqada tekshiradi. Kichik = tezroq qayta urinadi (DB'ga ko'proq yuk). 0.5 = 30 sekund."
+                    min={0.1}
+                    onChange={(value) =>
+                      setSystemForm((current) => ({
+                        ...current,
+                        blocked_check_interval: minutesInputToSeconds(value),
+                      }))
+                    }
+                    step={0.1}
+                    value={secondsToMinutesInput(systemForm.blocked_check_interval)}
+                  />
+                  <NumberField
+                    inputClassName={SETTINGS_INPUT_CLASS}
+                    label="Gemini max retries (503/overload)"
+                    hint="Gemini vaqtincha band bo'lsa (503/overload) so'rov shuncha MARTA qayta urinadi (tanaffus 5s→10s→20s)."
+                    min={1}
+                    onChange={(value) =>
+                      setSystemForm((current) => ({
+                        ...current,
+                        gemini_max_retries: Number(value || 0),
+                      }))
+                    }
+                    value={String(systemForm.gemini_max_retries)}
                   />
                   <NumberField
                     inputClassName={SETTINGS_INPUT_CLASS}
                     label="Key freeze duration (sec)"
+                    hint="Bir kalit '429 kvota' bersa shuncha sekundga 'dam oladi' (muzlatiladi), shu vaqt boshqa kalit ishlatiladi. 600 = 10 daqiqa."
                     min={1}
                     onChange={(value) =>
                       setSystemForm((current) => ({
@@ -1228,19 +1635,8 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                   />
                   <NumberField
                     inputClassName={SETTINGS_INPUT_CLASS}
-                    label="DB busy timeout (ms)"
-                    min={1}
-                    onChange={(value) =>
-                      setSystemForm((current) => ({
-                        ...current,
-                        db_busy_timeout: Number(value || 0),
-                      }))
-                    }
-                    value={String(systemForm.db_busy_timeout)}
-                  />
-                  <NumberField
-                    inputClassName={SETTINGS_INPUT_CLASS}
                     label="DB connection timeout (sec)"
+                    hint="Bazadan bo'sh ulanish (pool'dan) olishda eng ko'p shuncha sekund kutiladi. Odatda 30 yetarli."
                     min={1}
                     onChange={(value) =>
                       setSystemForm((current) => ({
@@ -1253,6 +1649,7 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                   <NumberField
                     inputClassName={SETTINGS_INPUT_CLASS}
                     label="HTTP timeout (sec)"
+                    hint="GitHub, JIRA va Figma so'rovlari uchun timeout. Sekin internet yoki katta repo/fayl bo'lsa oshiring."
                     min={1}
                     onChange={(value) =>
                       setSystemForm((current) => ({
@@ -1265,6 +1662,7 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                   <NumberField
                     inputClassName={SETTINGS_INPUT_CLASS}
                     label="Executor timeout (sec)"
+                    hint="Testcase yaratish jarayoni eng ko'p shuncha sekund ishlaydi. Katta task / sekin AI'da oshiring. 120 = 2 daqiqa."
                     min={1}
                     onChange={(value) =>
                       setSystemForm((current) => ({
@@ -1287,14 +1685,14 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
       ) : null}
 
       {createOpen ? (
-        <div className="fixed inset-0 z-40">
+        <div className="fixed inset-0 z-[1000]">
           <button
             aria-label="Modalni yopish"
             className="absolute inset-0 bg-slate-900/45"
             onClick={() => setCreateOpen(false)}
             type="button"
           />
-          <div className="absolute left-1/2 top-1/2 z-50 w-[min(92vw,760px)] -translate-x-1/2 -translate-y-1/2">
+          <div className="absolute left-1/2 top-1/2 z-[1001] max-h-[calc(100vh-48px)] w-[min(92vw,760px)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto">
             <SettingsBaseCard header={<SectionHeader eyebrow="Create Company" title="Yangi kompaniya yaratish" />}>
               <form className="mt-4 grid gap-4" onSubmit={createCompany}>
                 <div className="grid gap-4 md:grid-cols-2">
@@ -1372,8 +1770,8 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                         enabled_modules: buildAddonModuleState(nextValues),
                       }))
                     }
-                    options={ADDON_MODULE_OPTIONS}
-                    value={selectedAddonModules(createForm.enabled_modules)}
+                    options={SUPER_ADMIN_MODULE_OPTIONS}
+                    value={selectedCreateModules(createForm.enabled_modules)}
                   />
                 </div>
                 <div className="flex gap-3">

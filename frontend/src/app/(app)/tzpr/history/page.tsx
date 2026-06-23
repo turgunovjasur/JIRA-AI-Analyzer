@@ -22,7 +22,11 @@ export default async function TZPRHistoryPage() {
     <RecentRunsHistory
       basePath="/tzpr"
       moduleKey="tz_pr_checker"
-      storageKey="qa.open-run.tz_pr_checker"
+      recentScope={{
+        companyId: session.auth.company_id ?? null,
+        role: session.auth.role ?? null,
+        userId: session.auth.user_id ?? null,
+      }}
       title="TZ-PR Checker History"
     />
   );

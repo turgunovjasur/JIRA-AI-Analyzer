@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { createTzprRunWithBackend } from "@/lib/backend";
+import { BackendRequestError, createTzprRunWithBackend } from "@/lib/backend";
 import { getOptionalSession } from "@/lib/session";
 import type { TZPRCreateRunRequest } from "@/lib/types";
 
@@ -16,10 +16,8 @@ export async function POST(request: Request) {
   const role = session.auth.role;
   const hasRoleAccess =
     role === "super_admin" || role === "company_admin" || role === "user";
-  const hasModuleAccess =
-    role === "super_admin" || Boolean(session.companyModules?.tz_pr_checker);
 
-  if (!hasRoleAccess || !hasModuleAccess) {
+  if (!hasRoleAccess) {
     return NextResponse.json(
       { success: false, error: "TZ-PR Checker uchun ruxsat yo'q." },
       { status: 403 },
@@ -29,12 +27,6 @@ export async function POST(request: Request) {
   try {
     const payload = (await request.json().catch(() => null)) as TZPRCreateRunRequest | null;
     const taskKey = (payload?.task_key || "").trim().toUpperCase();
-    if (!taskKey) {
-      return NextResponse.json(
-        { success: false, error: "Task key majburiy." },
-        { status: 400 },
-      );
-    }
 
     const result = await createTzprRunWithBackend({
       task_key: taskKey,
@@ -48,6 +40,13 @@ export async function POST(request: Request) {
 
     return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof BackendRequestError) {
+      const payload =
+        error.payload && typeof error.payload === "object"
+          ? error.payload
+          : { success: false, error: error.message };
+      return NextResponse.json(payload, { status: error.status || 500 });
+    }
     const message =
       error instanceof Error ? error.message : "TZ-PR run yaratishda xato.";
     return NextResponse.json({ success: false, error: message }, { status: 500 });

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { createTestcaseRunWithBackend } from "@/lib/backend";
+import { BackendRequestError, createTestcaseRunWithBackend } from "@/lib/backend";
 import { getOptionalSession } from "@/lib/session";
 import type { TestcaseCreateRunRequest } from "@/lib/types";
 
@@ -16,10 +16,8 @@ export async function POST(request: Request) {
   const role = session.auth.role;
   const hasRoleAccess =
     role === "super_admin" || role === "company_admin" || role === "user";
-  const hasModuleAccess =
-    role === "super_admin" || Boolean(session.companyModules?.testcase_generator);
 
-  if (!hasRoleAccess || !hasModuleAccess) {
+  if (!hasRoleAccess) {
     return NextResponse.json(
       { success: false, error: "Test Case Generator uchun ruxsat yo'q." },
       { status: 403 },
@@ -29,12 +27,6 @@ export async function POST(request: Request) {
   try {
     const payload = (await request.json().catch(() => null)) as TestcaseCreateRunRequest | null;
     const taskKey = (payload?.task_key || "").trim().toUpperCase();
-    if (!taskKey) {
-      return NextResponse.json(
-        { success: false, error: "Task key majburiy." },
-        { status: 400 },
-      );
-    }
 
     const scopedToCustomer = role === "company_admin" || role === "user";
     const result = await createTestcaseRunWithBackend({
@@ -48,6 +40,13 @@ export async function POST(request: Request) {
 
     return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof BackendRequestError) {
+      const payload =
+        error.payload && typeof error.payload === "object"
+          ? error.payload
+          : { success: false, error: error.message };
+      return NextResponse.json(payload, { status: error.status || 500 });
+    }
     const message =
       error instanceof Error ? error.message : "Testcase run yaratishda xato.";
     return NextResponse.json({ success: false, error: message }, { status: 500 });

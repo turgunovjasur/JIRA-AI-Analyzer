@@ -14,6 +14,7 @@ export async function POST(request: Request) {
     const payload = (await request.json().catch(() => null)) as {
       api_key_1?: string;
       api_key_2?: string;
+      api_key_2_clear?: boolean;
       key_freeze_minutes?: number;
       agent1_primary_model?: string;
       agent1_fallback_model?: string;
@@ -36,28 +37,30 @@ export async function POST(request: Request) {
 
     const updates: Array<[string, string]> = [
       ["gemini_key_freeze_minutes", String(freezeMinutes)],
-      ["checker_agent1_primary_model", (payload?.agent1_primary_model || "gemini-2.5-flash").trim()],
-      ["checker_agent1_fallback_model", (payload?.agent1_fallback_model || "gemini-2.5-flash").trim()],
-      ["checker_agent2_primary_model", (payload?.agent2_primary_model || "gemini-2.5-pro").trim()],
-      ["checker_agent2_fallback_model", (payload?.agent2_fallback_model || "gemini-2.5-flash").trim()],
-      ["checker_agent3_primary_model", (payload?.agent3_primary_model || "gemini-2.5-flash").trim()],
-      ["checker_agent3_fallback_model", (payload?.agent3_fallback_model || "gemini-2.5-flash").trim()],
-      ["testcase_agent1_primary_model", (payload?.testcase_agent1_primary_model || "gemini-2.5-flash").trim()],
-      ["testcase_agent1_fallback_model", (payload?.testcase_agent1_fallback_model || "gemini-2.5-flash").trim()],
-      ["testcase_agent2_primary_model", (payload?.testcase_agent2_primary_model || "gemini-2.5-pro").trim()],
-      ["testcase_agent2_fallback_model", (payload?.testcase_agent2_fallback_model || "gemini-2.5-flash").trim()],
-      ["testcase_agent3_primary_model", (payload?.testcase_agent3_primary_model || "gemini-2.5-flash").trim()],
-      ["testcase_agent3_fallback_model", (payload?.testcase_agent3_fallback_model || "gemini-2.5-flash").trim()],
+      ["checker_agent1_primary_model", (payload?.agent1_primary_model || "").trim()],
+      ["checker_agent1_fallback_model", (payload?.agent1_fallback_model || "").trim()],
+      ["checker_agent2_primary_model", (payload?.agent2_primary_model || "").trim()],
+      ["checker_agent2_fallback_model", (payload?.agent2_fallback_model || "").trim()],
+      ["checker_agent3_primary_model", (payload?.agent3_primary_model || "").trim()],
+      ["checker_agent3_fallback_model", (payload?.agent3_fallback_model || "").trim()],
+      ["testcase_agent1_primary_model", (payload?.testcase_agent1_primary_model || "").trim()],
+      ["testcase_agent1_fallback_model", (payload?.testcase_agent1_fallback_model || "").trim()],
+      ["testcase_agent2_primary_model", (payload?.testcase_agent2_primary_model || "").trim()],
+      ["testcase_agent2_fallback_model", (payload?.testcase_agent2_fallback_model || "").trim()],
+      ["testcase_agent3_primary_model", (payload?.testcase_agent3_primary_model || "").trim()],
+      ["testcase_agent3_fallback_model", (payload?.testcase_agent3_fallback_model || "").trim()],
     ];
 
-    // Bo'sh qiymat yuborilsa, saqlangan kalitni o'chirmaymiz.
+    // Bo'sh qiymat yuborilsa, saqlangan kalit o'zgarmaydi; backup key faqat clear flag bilan o'chadi.
     const apiKey1 = (payload?.api_key_1 || "").trim();
     if (apiKey1) {
       updates.push(["gemini_default_api_key_1", apiKey1]);
     }
 
     const apiKey2 = (payload?.api_key_2 || "").trim();
-    if (apiKey2) {
+    if (payload?.api_key_2_clear) {
+      updates.push(["gemini_default_api_key_2", ""]);
+    } else if (apiKey2) {
       updates.push(["gemini_default_api_key_2", apiKey2]);
     }
 

@@ -42,6 +42,21 @@ class TestMasterKeyFailFast:
         monkeypatch.setattr(credential_crypto, "has_configured_master_key", lambda: True)
         credential_crypto.assert_master_key_configured()  # xato bo'lmasligi kerak
 
+    def test_raises_in_production_even_when_strict_mode_off(self, monkeypatch):
+        from utils.auth import credential_crypto
+        monkeypatch.setenv("APP_STRICT_MODE", "false")
+        monkeypatch.setenv("APP_ENV", "production")
+        monkeypatch.setattr(credential_crypto, "has_configured_master_key", lambda: False)
+        with pytest.raises(RuntimeError, match="APP_CREDENTIALS_MASTER_KEY"):
+            credential_crypto.assert_master_key_configured()
+
+    def test_global_gemini_keys_are_sensitive_fields(self):
+        from utils.auth.credential_crypto import get_sensitive_credential_fields
+
+        fields = get_sensitive_credential_fields()
+        assert "gemini_default_api_key_1" in fields
+        assert "gemini_default_api_key_2" in fields
+
 
 # ──────────────────────────────────────────────────────────
 # F1-3: rate limiting

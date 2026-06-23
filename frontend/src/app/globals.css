@@ -946,7 +946,7 @@ textarea {
 
 .data-table th {
   color: var(--muted);
-  background: #f8fafc;
+  background: var(--bg-layer);
   font-size: 0.82rem;
   text-transform: uppercase;
 }
@@ -1488,6 +1488,31 @@ body {
 
 .dark .qa-topbar {
   background: rgba(13, 21, 32, 0.92);
+}
+
+.qa-billing-alert {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 32px 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(245, 158, 11, 0.38);
+  border-radius: var(--r-md);
+  background: rgba(245, 158, 11, 0.12);
+  color: #92400e;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.qa-billing-alert svg {
+  flex-shrink: 0;
+}
+
+.dark .qa-billing-alert {
+  border-color: rgba(251, 191, 36, 0.34);
+  background: rgba(251, 191, 36, 0.14);
+  color: #fbbf24;
 }
 
 .qa-topbar-left {
@@ -2062,6 +2087,7 @@ body {
   .qa-sidebar { width: 240px; }
   .qa-main { margin-left: 240px; width: calc(100% - 240px); }
   .qa-topbar { padding: 0 20px; }
+  .qa-billing-alert { margin: 14px 20px 0; }
   .qa-page-body { padding: 20px 20px 40px; }
 }
 
@@ -3002,6 +3028,21 @@ textarea.input { height: auto; padding: 11px 13px; resize: vertical; min-height:
 }
 
 .chk-item.chk-checked {
+  border-color: rgba(37, 99, 235, 0.32);
+  background: rgba(37, 99, 235, 0.1);
+}
+
+.chk-item.chk-disabled {
+  cursor: default;
+  opacity: 0.82;
+}
+
+.chk-item.chk-disabled:hover {
+  border-color: var(--line);
+  background: var(--surface);
+}
+
+.chk-item.chk-disabled.chk-checked:hover {
   border-color: rgba(37, 99, 235, 0.32);
   background: rgba(37, 99, 235, 0.1);
 }

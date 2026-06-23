@@ -8,6 +8,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Callable, Dict, List
 from utils.auth.repository_common import execute, row_to_dict
+from utils.auth.credential_crypto import (
+    can_encrypt_credentials,
+    decrypt_value,
+    encrypt_value,
+    is_sensitive_credential_field,
+)
 
 
 def fetch_global_setting(get_conn: Callable, key: str, default: str = '') -> str:
@@ -16,7 +22,12 @@ def fetch_global_setting(get_conn: Callable, key: str, default: str = '') -> str
         row = execute(conn, "SELECT value FROM global_settings WHERE key = ?", [key]).fetchone()
         conn.close()
         row_dict = row_to_dict(row) if row else {}
-        return (row_dict.get('value') or '').strip() if row else default
+        if not row:
+            return default
+        value = (row_dict.get('value') or '').strip()
+        if is_sensitive_credential_field(key):
+            value = decrypt_value(value)
+        return value
     except Exception:
         return default
 
@@ -24,11 +35,17 @@ def fetch_global_setting(get_conn: Callable, key: str, default: str = '') -> str
 def upsert_global_setting(get_conn: Callable, key: str, value: str) -> bool:
     try:
         conn = get_conn()
+        stored_value = (value or '').strip()
+        if is_sensitive_credential_field(key):
+            if stored_value and not can_encrypt_credentials():
+                conn.close()
+                return False
+            stored_value = encrypt_value(stored_value)
         execute(
             conn,
             "INSERT INTO global_settings (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            [key, (value or '').strip()]
+            [key, stored_value]
         )
         conn.commit()
         conn.close()

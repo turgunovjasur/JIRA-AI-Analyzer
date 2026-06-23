@@ -74,7 +74,9 @@ export async function POST(request: Request) {
 
     const result = await saveSystemConfigWithBackend({
       company_id: companyId,
-      data: body as SystemSettingsSaveRequest,
+      data: {
+        queue_enabled: true,
+      },
     });
 
     if (!result?.success) {

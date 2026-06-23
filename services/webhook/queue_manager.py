@@ -93,7 +93,12 @@ async def _write_timeout_error_comment(task_key: str, timeout_seconds: int, comp
     await _write(task_key, timeout_seconds, company_id=company_id)
 
 
-async def _run_task_group(task_key: str, new_status: str, company_id: int = None) -> None:
+async def _run_task_group(
+    task_key: str,
+    new_status: str,
+    company_id: int = None,
+    task_details: dict | None = None,
+) -> None:
     """
     Service1 va Service2 ni bitta lock ichida ketma-ket ishga tushirish.
 
@@ -129,9 +134,14 @@ async def _run_task_group(task_key: str, new_status: str, company_id: int = None
 
     if not queue_settings.queue_enabled:
         # Queue o'chirilgan: lock siz ketma-ket chaqruv
-        await check_tz_pr_and_comment(task_key=task_key, new_status=new_status, company_id=company_id)
+        await check_tz_pr_and_comment(
+            task_key=task_key,
+            new_status=new_status,
+            company_id=company_id,
+            task_details=task_details,
+        )
 
-        task_db = get_task(task_key)
+        task_db = get_task(task_key, company_id=company_id)
         if task_db and _can_run_service2(task_db, app_settings):
             delay = queue_settings.checker_testcase_delay
             if delay > 0:
@@ -148,21 +158,26 @@ async def _run_task_group(task_key: str, new_status: str, company_id: int = None
         await asyncio.wait_for(lock.acquire(), timeout=timeout)
     except asyncio.TimeoutError:
         log.queue_timeout(task_key, timeout)
-        mark_blocked(task_key, f"Queue timeout: {timeout}s", retry_minutes=retry_minutes)
+        mark_blocked(task_key, f"Queue timeout: {timeout}s", retry_minutes=retry_minutes, company_id=company_id)
         await _write_timeout_error_comment(task_key, timeout, company_id=company_id)
         return
 
     try:
         # Service1
         await _wait_for_ai_slot(task_key, company_id=company_id, min_interval=queue_settings.gemini_min_interval)
-        await check_tz_pr_and_comment(task_key=task_key, new_status=new_status, company_id=company_id)
+        await check_tz_pr_and_comment(
+            task_key=task_key,
+            new_status=new_status,
+            company_id=company_id,
+            task_details=task_details,
+        )
 
         # Service1 → Service2 orasidagi kutish
         if delay > 0:
             await asyncio.sleep(delay)
 
         # Service2 — faqat shartlar bajarilsa
-        task_db = get_task(task_key)
+        task_db = get_task(task_key, company_id=company_id)
         if task_db and _can_run_service2(task_db, app_settings):
             await _wait_for_ai_slot(task_key, company_id=company_id, min_interval=queue_settings.gemini_min_interval)
             await _run_testcase_generation(task_key=task_key, new_status=new_status, company_id=company_id)
@@ -176,7 +191,12 @@ async def _run_task_group(task_key: str, new_status: str, company_id: int = None
         lock.release()
 
 
-async def _queued_check_tz_pr(task_key: str, new_status: str, company_id: int = None) -> None:
+async def _queued_check_tz_pr(
+    task_key: str,
+    new_status: str,
+    company_id: int = None,
+    task_details: dict | None = None,
+) -> None:
     """
     Queue wrapper: faqat Service1 (testcase ishlamaydigan holatlar uchun).
 
@@ -201,7 +221,12 @@ async def _queued_check_tz_pr(task_key: str, new_status: str, company_id: int = 
     queue_settings = app_settings.queue
 
     if not queue_settings.queue_enabled:
-        await check_tz_pr_and_comment(task_key=task_key, new_status=new_status, company_id=company_id)
+        await check_tz_pr_and_comment(
+            task_key=task_key,
+            new_status=new_status,
+            company_id=company_id,
+            task_details=task_details,
+        )
         return
 
     lock = _get_ai_queue_lock(company_id)
@@ -212,13 +237,18 @@ async def _queued_check_tz_pr(task_key: str, new_status: str, company_id: int = 
         await asyncio.wait_for(lock.acquire(), timeout=timeout)
     except asyncio.TimeoutError:
         log.queue_timeout(task_key, timeout)
-        mark_blocked(task_key, f"Queue timeout: {timeout}s", retry_minutes=retry_minutes)
+        mark_blocked(task_key, f"Queue timeout: {timeout}s", retry_minutes=retry_minutes, company_id=company_id)
         await _write_timeout_error_comment(task_key, timeout, company_id=company_id)
         return
 
     try:
         await _wait_for_ai_slot(task_key, company_id=company_id, min_interval=queue_settings.gemini_min_interval)
-        await check_tz_pr_and_comment(task_key=task_key, new_status=new_status, company_id=company_id)
+        await check_tz_pr_and_comment(
+            task_key=task_key,
+            new_status=new_status,
+            company_id=company_id,
+            task_details=task_details,
+        )
     finally:
         lock.release()
 

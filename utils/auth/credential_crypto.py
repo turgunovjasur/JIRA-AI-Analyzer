@@ -31,6 +31,9 @@ _SENSITIVE_FIELDS = {
     "webhook_figma_tokens",
     "webhook_gemini_api_key_1",
     "webhook_gemini_api_key_2",
+    "webhook_secret",
+    "gemini_default_api_key_1",
+    "gemini_default_api_key_2",
 }
 
 
@@ -38,10 +41,19 @@ def get_sensitive_credential_fields() -> set[str]:
     return set(_SENSITIVE_FIELDS)
 
 
+def is_sensitive_credential_field(field_name: str) -> bool:
+    return str(field_name or "").strip() in _SENSITIVE_FIELDS
+
+
 def assert_master_key_configured() -> None:
     """APP_STRICT_MODE=true bo'lsa, master key yo'qligida startup xato beradi."""
     strict = os.getenv("APP_STRICT_MODE", "").strip().lower() in ("1", "true", "yes")
-    if not strict:
+    production = (
+        os.getenv("APP_ENV", "").strip().lower() == "production"
+        or os.getenv("ENVIRONMENT", "").strip().lower() == "production"
+        or os.getenv("NODE_ENV", "").strip().lower() == "production"
+    )
+    if not strict and not production:
         return
     if not has_configured_master_key():
         raise RuntimeError(

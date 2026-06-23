@@ -38,7 +38,7 @@ log = get_logger("webhook.retry_scheduler")
 _blocked_retry_task: Optional[asyncio.Task] = None
 
 
-async def _retry_blocked_task(task_id: str) -> None:
+async def _retry_blocked_task(task_id: str, company_id: Optional[int] = None) -> None:
     """
     Bitta blocked taskni qayta ishlashga urinish.
 
@@ -61,7 +61,10 @@ async def _retry_blocked_task(task_id: str) -> None:
         - Xato bo'lsa: DB'da task_status='error' qo'yiladi
     """
     try:
-        task_data = get_task(task_id)
+        if company_id is None:
+            initial_task_data = get_task(task_id)
+            company_id = (initial_task_data or {}).get('company_id')
+        task_data = get_task(task_id, company_id=company_id)
         if not task_data:
             log.warning(f"[{task_id}] SKIP -> task DB da topilmadi, retry o'tkazib yuborildi")
             return
@@ -69,12 +72,11 @@ async def _retry_blocked_task(task_id: str) -> None:
         service1_status = task_data.get('service1_status', 'pending')
         service2_status = task_data.get('service2_status', 'pending')
         last_jira_status = task_data.get('last_jira_status', 'READY TO TEST')
-        company_id = task_data.get('company_id')
 
         log.info(f"[{task_id}] RETRY -> s1={service1_status} s2={service2_status} last_status={last_jira_status}")
 
         # Progressing holatiga o'tkazish
-        mark_progressing(task_id, last_jira_status, datetime.now())
+        mark_progressing(task_id, last_jira_status, datetime.now(), company_id=company_id)
 
         # Qaysi servislar qayta ishlashi kerak?
         # 'pending': queue timeout sababli service1 umuman ishlamagan
@@ -90,18 +92,18 @@ async def _retry_blocked_task(task_id: str) -> None:
                 'blocked_at': None,
                 'blocked_retry_at': None,
                 'block_reason': None
-            })
+            }, company_id=company_id)
 
             # Circular import oldini olish uchun funksiya ichida import
             from services.webhook.queue_manager import _wait_for_ai_slot
             from services.webhook.service_runner import check_tz_pr_and_comment
 
             log.service_running(task_id, "service_1")
-            await _wait_for_ai_slot(task_id)
+            await _wait_for_ai_slot(task_id, company_id=company_id)
             await check_tz_pr_and_comment(task_key=task_id, new_status=last_jira_status, company_id=company_id)
 
             # Service1 natijasini qayta o'qish
-            task_data = get_task(task_id)
+            task_data = get_task(task_id, company_id=company_id)
             if not task_data:
                 return
 
@@ -118,7 +120,7 @@ async def _retry_blocked_task(task_id: str) -> None:
 
         if need_service2:
             # Service2 'blocked'|'pending' → 'pending' ga qaytarish va qayta ishga tushirish
-            task_data = get_task(task_id)
+            task_data = get_task(task_id, company_id=company_id)
             if task_data and task_data.get('service2_status') != 'done':
                 upsert_task(task_id, {
                     'service2_status': 'pending',
@@ -126,7 +128,7 @@ async def _retry_blocked_task(task_id: str) -> None:
                     'blocked_at': None,
                     'blocked_retry_at': None,
                     'block_reason': None
-                })
+                }, company_id=company_id)
 
                 # Service1 va Service2 orasida delay
                 if need_service1:
@@ -139,7 +141,7 @@ async def _retry_blocked_task(task_id: str) -> None:
                 from services.webhook.service_runner import _run_testcase_generation
 
                 log.service_running(task_id, "service_2")
-                await _wait_for_ai_slot(task_id)
+                await _wait_for_ai_slot(task_id, company_id=company_id)
                 await _run_testcase_generation(task_key=task_id, new_status=last_jira_status, company_id=company_id)
 
         # Ikkala servis ham done bo'lsa — retry kerak emas
@@ -148,7 +150,11 @@ async def _retry_blocked_task(task_id: str) -> None:
 
     except Exception as e:
         log.error(f"[{task_id}] Blocked task retry error: {e}", exc_info=True)
-        mark_error(task_id, f"Retry error: {str(e)}")
+        try:
+            company_id = (get_task(task_id) or {}).get("company_id")
+        except Exception:
+            company_id = None
+        mark_error(task_id, f"Retry error: {str(e)}", company_id=company_id)
 
 
 async def _blocked_retry_scheduler() -> None:
@@ -200,10 +206,15 @@ async def _blocked_retry_scheduler() -> None:
                 task_id = task_data['task_id']
 
                 # AI queue lock olib retry qilish
+                company_id = task_data.get('company_id')
                 from services.webhook.queue_manager import _get_ai_queue_lock
-                lock = _get_ai_queue_lock()
+                lock = _get_ai_queue_lock(company_id)
 
-                app_settings = get_app_settings(force_reload=False)
+                if company_id is not None:
+                    from config.app_settings import get_app_settings_for_company
+                    app_settings = get_app_settings_for_company(company_id)
+                else:
+                    app_settings = get_app_settings(force_reload=False)
                 timeout = app_settings.queue.task_wait_timeout
 
                 try:
@@ -213,7 +224,7 @@ async def _blocked_retry_scheduler() -> None:
                     continue
 
                 try:
-                    await _retry_blocked_task(task_id)
+                    await _retry_blocked_task(task_id, company_id=company_id)
                 finally:
                     lock.release()
 

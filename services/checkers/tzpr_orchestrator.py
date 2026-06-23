@@ -40,9 +40,14 @@ class _TZPRMultiAgentExecutor(AgentRunnerMixin, ResultBuilderMixin, RunStateMixi
         self.show_full_diff = bool(payload.get("show_full_diff", True))
         self.max_files = payload.get("max_files")
         self.use_smart_patch = payload.get("use_smart_patch")
+        self.preloaded_task_details = payload.get("task_details") if isinstance(payload.get("task_details"), dict) else None
         self.service = TZPRMultiAgentService(user_id=self.user_id, company_id=self.company_id)
         self._gemini_helper: GeminiHelper | None = None
         self._agent_helpers: dict[str, GeminiHelper] = {}
+        # Webhook yetkazib berish qatlami uchun jonli natija obyekti (asdict EMAS).
+        # Snapshot dict ichki dataclass'larni dict'ga aylantiradi; comment formatter
+        # esa jonli obyektni kutadi — shuning uchun jonli result'ni shu yerda saqlaymiz.
+        self.final_result_obj: Any | None = None
 
     def run(self) -> dict[str, Any] | None:
         self._set_run_state(
@@ -69,6 +74,7 @@ class _TZPRMultiAgentExecutor(AgentRunnerMixin, ResultBuilderMixin, RunStateMixi
         try:
             if context.get("error_result"):
                 error_result = context["error_result"]
+                self.final_result_obj = error_result
                 self._block_remaining_agents(error_result.error_message or "Context bloklandi")
                 self._mark_run_finished(
                     error_result.run_state or "blocked",
@@ -113,6 +119,7 @@ class _TZPRMultiAgentExecutor(AgentRunnerMixin, ResultBuilderMixin, RunStateMixi
                 agent2=agent2,
                 agent3=agent3,
             )
+            self.final_result_obj = final_result
             final_state = str(final_result.run_state or "completed")
             self._mark_run_finished(final_state, asdict(final_result), final_result.error_message)
             return get_checker_run_snapshot(self.run_id)
@@ -145,12 +152,23 @@ class _TZPRMultiAgentExecutor(AgentRunnerMixin, ResultBuilderMixin, RunStateMixi
 
         status_updater = self._status_updater(emit_events=emit_events, update_run_state=emit_events)
         figma_lookup_enabled = "figma" in list(effective_settings.get("ai_data_section_order") or [])
-        task_details = self.service._get_task_details(
-            self.task_key,
-            status_updater,
-            include_pr_urls=True,
-            include_figma_links=figma_lookup_enabled,
-        )
+        task_details = self.preloaded_task_details
+        if isinstance(task_details, dict):
+            payload_key = str(task_details.get("key") or self.task_key).strip().upper()
+            if payload_key != self.task_key:
+                task_details = None
+        else:
+            task_details = None
+
+        if task_details is not None:
+            status_updater("info", "JIRA task ma'lumotlari webhook snapshotdan olindi")
+        else:
+            task_details = self.service._get_task_details(
+                self.task_key,
+                status_updater,
+                include_pr_urls=True,
+                include_figma_links=figma_lookup_enabled,
+            )
         if not task_details:
             result = self.service._create_error_result(
                 self.task_key,
@@ -216,7 +234,7 @@ class _TZPRMultiAgentExecutor(AgentRunnerMixin, ResultBuilderMixin, RunStateMixi
         try:
             from utils.database.task_db import get_task
 
-            db_task = get_task(self.task_key) or {}
+            db_task = get_task(self.task_key, company_id=self.company_id) or {}
             return_reason = str(db_task.get("return_reason") or "")
             is_recheck = return_reason in RECHECK_REASONS
         except Exception:
@@ -280,14 +298,32 @@ class _TZPRMultiAgentExecutor(AgentRunnerMixin, ResultBuilderMixin, RunStateMixi
     def _model_names_for_agent(self, agent_key: str) -> tuple[str, str]:
         return resolve_agent_model_names(self.service._get_settings(), agent_key)
 
+    def _require_model_names_for_agent(self, agent_key: str) -> tuple[str, str]:
+        primary_model, fallback_model = self._model_names_for_agent(agent_key)
+        if not primary_model:
+            raise RuntimeError(
+                f"{agent_key} primary modeli sozlanmagan. "
+                "Modul settingida yoki Super Admin global AI defaultlarida model tanlang."
+            )
+        return primary_model, fallback_model
+
     def _model_for_agent(self, agent_key: str) -> GeminiHelper:
         if agent_key not in self._agent_helpers:
             creds = self.service._get_creds()
-            primary_model, fallback_model = self._model_names_for_agent(agent_key)
+            primary_model, fallback_model = self._require_model_names_for_agent(agent_key)
             self._gemini_helper = GeminiHelper(
                 api_keys=creds["gemini_keys"],
                 model_name=primary_model,
                 fallback_model_name=fallback_model,
+                usage_context={
+                    "company_id": self.company_id,
+                    "user_id": self.user_id,
+                    "run_id": self.run_id,
+                    "task_key": self.task_key,
+                    "module_key": "tz_pr_checker",
+                    "agent_key": agent_key,
+                    "source": "multi_agent",
+                },
             )
             self._agent_helpers[agent_key] = self._gemini_helper
         return self._agent_helpers[agent_key]

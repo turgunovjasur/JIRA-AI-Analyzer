@@ -24,11 +24,12 @@ import asyncio
 import logging
 import sys
 import os
+import secrets
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime
 from typing import Optional, Dict, Any
 
-from fastapi import FastAPI, BackgroundTasks, Request, Response
+from fastapi import FastAPI, BackgroundTasks, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -66,7 +67,7 @@ from services.webhook.error_handler import (
     _write_critical_error,
     _write_skip_notification,
 )
-from services.webhook.skip_detector import _check_skip_code
+from services.webhook.skip_detector import check_skip_code_in_comments
 from services.webhook.service_runner import (
     check_tz_pr_and_comment,
     _run_testcase_generation,
@@ -82,6 +83,7 @@ from services.webhook.retry_scheduler import (
     _retry_blocked_task,
     _blocked_retry_scheduler,
 )
+from services.api.session_scope import load_api_session, require_company_scope
 
 log = get_logger("webhook.handler")
 
@@ -161,6 +163,7 @@ def _queue_job(
     company_id: int | None,
     new_status: str | None = None,
     include_testcase: bool | None = None,
+    task_details: dict[str, Any] | None = None,
     dedupe_key: str | None = None,
 ) -> dict[str, Any]:
     payload: Dict[str, Any] = {"task_key": task_key}
@@ -170,6 +173,8 @@ def _queue_job(
         payload["new_status"] = new_status
     if include_testcase is not None:
         payload["include_testcase"] = include_testcase
+    if isinstance(task_details, dict) and task_details:
+        payload["task_details"] = task_details
     return enqueue_background_job(
         job_type,
         task_key,
@@ -199,6 +204,11 @@ async def lifespan(app: FastAPI):
     from utils.auth.credential_crypto import assert_master_key_configured
     assert_master_key_configured()
 
+    # P2: schema migratsiyalarini startup'da bir marta qo'llash (runtime jadvallar
+    # endi har ulanishda emas, shu yerda ensure qilinadi).
+    from utils.database.migrations import run_migrations
+    run_migrations()
+
     app_settings = get_app_settings(force_reload=False)
     settings = app_settings.webhook_tz_pr
 
@@ -208,7 +218,7 @@ async def lifespan(app: FastAPI):
         auto_return=settings.auto_return_enabled,
         threshold=settings.return_threshold
     )
-    ai_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    ai_model = str(getattr(settings, "agent2_primary_model", "") or "").strip()
     ai_keys = 1
     i = 2
     while os.getenv(f"GOOGLE_API_KEY_{i}"):
@@ -230,6 +240,10 @@ async def lifespan(app: FastAPI):
             with suppress(asyncio.CancelledError):
                 await _blocked_retry_task
             _blocked_retry_task = None
+        # DB connection pool'ni toza yopish (ulanishlarni qaytarish).
+        with suppress(Exception):
+            from utils.database.runtime import close_pool
+            close_pool()
 
 
 # ============================================================================
@@ -279,6 +293,13 @@ def _resolve_company_for_webhook(task_key: str, company_code: Optional[str] = No
         return None
 
     return get_company_by_project_key(task_key.split('-')[0].upper())
+
+
+def _resolve_company_id_for_manual_task(task_key: str) -> Optional[int]:
+    company = _resolve_company_for_webhook(task_key)
+    if company:
+        return company.get("id")
+    return None
 
 # Sprint Report API ni ulash (ixtiyoriy modul)
 try:
@@ -443,13 +464,21 @@ async def _jira_webhook_impl(
         from utils.auth.auth_db import get_company_settings
         company_settings = get_company_settings(company_id)
         expected_secret = (company_settings.get("webhook_secret") or "").strip()
+        require_secret = (
+            os.getenv("APP_WEBHOOK_REQUIRE_SECRET", "").strip().lower() in ("1", "true", "yes")
+            or os.getenv("APP_STRICT_MODE", "").strip().lower() in ("1", "true", "yes")
+        )
+        if require_secret and not expected_secret:
+            from fastapi.responses import JSONResponse
+            log.warning(f"[{task_key}] Webhook secret sozlanmagan (company_id={company_id})")
+            return JSONResponse(status_code=401, content={"status": "unauthorized", "reason": "webhook secret not configured"})
         if expected_secret:
             provided_secret = (
                 request.headers.get("X-Webhook-Secret")
                 or request.query_params.get("token")
                 or ""
             ).strip()
-            if provided_secret != expected_secret:
+            if not secrets.compare_digest(provided_secret, expected_secret):
                 from fastapi.responses import JSONResponse
                 return JSONResponse(status_code=401, content={"status": "unauthorized", "reason": "invalid webhook secret"})
 
@@ -459,6 +488,12 @@ async def _jira_webhook_impl(
         if not sub_active:
             log.warning(f"[{task_key}] Subscription inactive (company_id={company_id}): {sub_reason}")
             return {"status": "ignored", "reason": "subscription_inactive"}
+
+        # Webhook moduli kompaniyaga yoqilganmi? (super-admin boshqaradi)
+        from utils.auth.auth_db import get_effective_company_modules
+        if not get_effective_company_modules(company_id).get('webhook', False):
+            log.info(f"[{task_key}] SKIP -> webhook moduli yoqilmagan (company_id={company_id})")
+            return {"status": "ignored", "reason": "webhook_module_disabled"}
 
         # Yangi status trigger status'lardan birimi?
         settings = app_settings.webhook_tz_pr
@@ -502,7 +537,7 @@ async def _jira_webhook_impl(
                 }
 
         log.request_separator()
-        log.ai_request("KEY_1", os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
+        log.ai_request("KEY_1", str(getattr(settings, "agent2_primary_model", "") or "").strip())
         log.info(f"[{task_key}] STATUS -> {old_status} => {new_status} | tahlil boshlandi")
 
         # Story points (JIRA customfield_10016)
@@ -527,7 +562,7 @@ async def _jira_webhook_impl(
         )
 
         # DB holat boshqaruvi (state machine)
-        task_db = get_task(task_key)
+        task_db = get_task(task_key, company_id=company_id)
 
         if not task_db:
             # Yangi task — DB'ga qo'shish
@@ -552,12 +587,12 @@ async def _jira_webhook_impl(
             if task_status == 'none':
                 mark_progressing(task_key, new_status, datetime.now(), company_id=company_id)
             elif task_status in ('completed', 'error', 'blocked'):
-                reset_service_statuses(task_key)
+                reset_service_statuses(task_key, company_id=company_id)
                 mark_progressing(task_key, new_status, datetime.now(), company_id=company_id)
             elif task_status == 'returned':
                 # Qaytarilgan task yana keldi — return_count ko'payadi
-                increment_return_count(task_key)
-                reset_service_statuses(task_key)
+                increment_return_count(task_key, company_id=company_id)
+                reset_service_statuses(task_key, company_id=company_id)
                 mark_progressing(task_key, new_status, datetime.now(), company_id=company_id)
             elif task_status == 'progressing':
                 log.info(f"[{task_key}] SKIP -> task hozir jarayonda, qayta ishlanmaydi")
@@ -569,36 +604,50 @@ async def _jira_webhook_impl(
 
         # AI_SKIP kodi tekshiruvi
         skip_code = settings.skip_code.strip() if settings.skip_code else ""
-        from utils.pr_cache import set_skip_cache
-        from utils.auth.auth_db import get_company_credentials
         skip_detected = False
+        prefetched_task_details = None
+        _creds = None
         _skip_writer = None
         if skip_code:
             try:
                 from utils.auth.auth_db import get_company_webhook_credentials
+                from utils.jira.jira_client import JiraClient
+
                 _creds = get_company_webhook_credentials(company_id)
+                _skip_jira = JiraClient(
+                    server=_creds['jira_server'],
+                    email=_creds['jira_email'],
+                    token=_creds['jira_token'],
+                )
+                prefetched_task_details = _skip_jira.get_task_details(
+                    task_key,
+                    include_pr_urls=True,
+                    include_figma_links=("figma" in list(settings.ai_data_section_order or [])),
+                    use_cache=False,
+                    max_comments_to_read=int(settings.max_comments_to_read or 0),
+                )
+                skip_detected = check_skip_code_in_comments(
+                    task_key,
+                    skip_code,
+                    (prefetched_task_details or {}).get("comments", []),
+                    max_comments=settings.max_skip_check_comments,
+                )
+            except Exception as skip_error:
+                log.warning(f"[{task_key}] AI_SKIP tekshiruvi o'tkazib yuborildi: {skip_error}")
+        if skip_detected:
+            log.service_skip(task_key, "service_1", f"skip_code='{skip_code}'")
+
+            # Service1 'skip' holatga — score=100 hisoblanadi (threshold o'tadi)
+            set_service1_skip(task_key, company_id=company_id)
+
+            # JIRA'ga skip notification yozish
+            adf_formatter = get_adf_formatter()
+            if _creds is not None:
                 _skip_writer = JiraCommentWriter(
                     server=_creds['jira_server'],
                     email=_creds['jira_email'],
                     token=_creds['jira_token'],
                 )
-                skip_detected = await _check_skip_code(
-                    task_key,
-                    skip_code,
-                    _skip_writer,
-                    max_comments=settings.max_skip_check_comments,
-                )
-            except Exception as skip_error:
-                log.warning(f"[{task_key}] AI_SKIP tekshiruvi o'tkazib yuborildi: {skip_error}")
-        set_skip_cache(task_key, skip_detected)
-        if skip_detected:
-            log.service_skip(task_key, "service_1", f"skip_code='{skip_code}'")
-
-            # Service1 'skip' holatga — score=100 hisoblanadi (threshold o'tadi)
-            set_service1_skip(task_key)
-
-            # JIRA'ga skip notification yozish
-            adf_formatter = get_adf_formatter()
             if _skip_writer is not None:
                 await _write_skip_notification(task_key, settings, _skip_writer, adf_formatter)
 
@@ -638,12 +687,14 @@ async def _jira_webhook_impl(
                     task_key=task_key,
                     company_id=company_id,
                     new_status=new_status,
+                    task_details=prefetched_task_details,
                     dedupe_key=f"group:{company_id}:{task_key}",
                 )
             else:
                 # Service1 + Service2 bitta lock ichida (Service1 tugagach Service2)
                 background_tasks.add_task(
-                    _run_task_group, task_key=task_key, new_status=new_status, company_id=company_id
+                    _run_task_group, task_key=task_key, new_status=new_status, company_id=company_id,
+                    task_details=prefetched_task_details
                 )
         else:
             if _worker_queue_enabled():
@@ -652,12 +703,14 @@ async def _jira_webhook_impl(
                     task_key=task_key,
                     company_id=company_id,
                     new_status=new_status,
+                    task_details=prefetched_task_details,
                     dedupe_key=f"checker:{company_id}:{task_key}",
                 )
             else:
                 # Faqat Service1
                 background_tasks.add_task(
-                    _queued_check_tz_pr, task_key=task_key, new_status=new_status, company_id=company_id
+                    _queued_check_tz_pr, task_key=task_key, new_status=new_status, company_id=company_id,
+                    task_details=prefetched_task_details
                 )
 
         return {
@@ -866,7 +919,11 @@ async def get_settings():
 
 
 @app.post("/manual/check/{task_key}")
-async def manual_check(task_key: str, background_tasks: BackgroundTasks):
+async def manual_check(
+    task_key: str,
+    background_tasks: BackgroundTasks,
+    x_session_id: str | None = Header(default=None, alias="X-Session-ID"),
+):
     """
     Manual TZ-PR check trigger — test va debugging uchun.
 
@@ -879,8 +936,16 @@ async def manual_check(task_key: str, background_tasks: BackgroundTasks):
         curl -X POST http://localhost:8000/manual/check/DEV-1234
     """
     log.info(f"Manual check triggered for {task_key}")
+    session = load_api_session(x_session_id, allowed_roles={"super_admin", "company_admin"})
+    company_id = _resolve_company_id_for_manual_task(task_key)
+    if company_id is None:
+        return {"status": "error", "reason": "unknown company for task key", "task_key": task_key}
+    scoped_company_id = require_company_scope(session, company_id)
+    if scoped_company_id != company_id:
+        raise HTTPException(status_code=403, detail="Manual trigger company scope mos emas")
 
-    app_settings = get_app_settings(force_reload=False)
+    from config.app_settings import get_app_settings_for_company
+    app_settings = get_app_settings_for_company(company_id)
     tc_settings = app_settings.webhook_testcase
     testcase_triggered = bool(tc_settings.auto_comment_enabled)
 
@@ -888,7 +953,7 @@ async def manual_check(task_key: str, background_tasks: BackgroundTasks):
         _queue_job(
             job_type="manual_check",
             task_key=task_key,
-            company_id=None,
+            company_id=company_id,
             include_testcase=testcase_triggered,
             dedupe_key=f"manual:{task_key}",
         )
@@ -896,7 +961,8 @@ async def manual_check(task_key: str, background_tasks: BackgroundTasks):
         background_tasks.add_task(
             check_tz_pr_and_comment,
             task_key=task_key,
-            new_status="Manual Check"
+            new_status="Manual Check",
+            company_id=company_id,
         )
 
         if testcase_triggered:
@@ -904,13 +970,15 @@ async def manual_check(task_key: str, background_tasks: BackgroundTasks):
             background_tasks.add_task(
                 _run_testcase_generation,
                 task_key=task_key,
-                new_status=trigger_status
+                new_status=trigger_status,
+                company_id=company_id,
             )
             log.info(f"[{task_key}] Testcase generation also triggered (status='{trigger_status}')")
 
     return {
         "status": "queued" if _worker_queue_enabled() else "processing",
         "task_key": task_key,
+        "company_id": company_id,
         "message": (
             f"Manual TZ-PR check + Testcase generation queued for {task_key}"
             if _worker_queue_enabled()
@@ -921,7 +989,11 @@ async def manual_check(task_key: str, background_tasks: BackgroundTasks):
 
 
 @app.post("/manual/testcase/{task_key}")
-async def manual_testcase(task_key: str, background_tasks: BackgroundTasks):
+async def manual_testcase(
+    task_key: str,
+    background_tasks: BackgroundTasks,
+    x_session_id: str | None = Header(default=None, alias="X-Session-ID"),
+):
     """
     Manual testcase generation — faqat testcase yaratish (TZ-PR check emas).
 
@@ -932,8 +1004,16 @@ async def manual_testcase(task_key: str, background_tasks: BackgroundTasks):
         curl -X POST http://localhost:8000/manual/testcase/DEV-1234
     """
     log.info(f"Manual testcase generation triggered for {task_key}")
+    session = load_api_session(x_session_id, allowed_roles={"super_admin", "company_admin"})
+    company_id = _resolve_company_id_for_manual_task(task_key)
+    if company_id is None:
+        return {"status": "error", "reason": "unknown company for task key", "task_key": task_key}
+    scoped_company_id = require_company_scope(session, company_id)
+    if scoped_company_id != company_id:
+        raise HTTPException(status_code=403, detail="Manual trigger company scope mos emas")
 
-    app_settings = get_app_settings(force_reload=False)
+    from config.app_settings import get_app_settings_for_company
+    app_settings = get_app_settings_for_company(company_id)
     tc_settings = app_settings.webhook_testcase
     trigger_status = tc_settings.auto_comment_trigger_status
 
@@ -941,7 +1021,7 @@ async def manual_testcase(task_key: str, background_tasks: BackgroundTasks):
         _queue_job(
             job_type="run_testcase_generation",
             task_key=task_key,
-            company_id=None,
+            company_id=company_id,
             new_status=trigger_status,
             dedupe_key=f"manual-testcase:{task_key}",
         )
@@ -949,12 +1029,14 @@ async def manual_testcase(task_key: str, background_tasks: BackgroundTasks):
         background_tasks.add_task(
             _run_testcase_generation,
             task_key=task_key,
-            new_status=trigger_status
+            new_status=trigger_status,
+            company_id=company_id,
         )
 
     return {
         "status": "queued" if _worker_queue_enabled() else "processing",
         "task_key": task_key,
+        "company_id": company_id,
         "message": (
             f"Manual testcase generation queued for {task_key}"
             if _worker_queue_enabled()

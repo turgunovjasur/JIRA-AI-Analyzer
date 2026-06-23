@@ -13,7 +13,12 @@ Xususiyatlari:
 
 from typing import Optional, Callable
 from core.logger import get_logger
-from config.token_limits import AI_MAX_INPUT_TOKENS, CHARS_PER_TOKEN
+from config.token_limits import (
+    AI_COST_WARNING_INPUT_TOKENS,
+    AI_LONG_CONTEXT_PRICE_THRESHOLD_TOKENS,
+    AI_MAX_INPUT_TOKENS,
+    CHARS_PER_TOKEN,
+)
 
 # Logger instance
 log = get_logger("base.service")
@@ -33,7 +38,6 @@ def _get_base_settings():
             class DefaultSettings:
                 ai_max_input_tokens = AI_MAX_INPUT_TOKENS
                 chars_per_token = CHARS_PER_TOKEN
-                ai_max_retries = 3
             _settings_cache = DefaultSettings()
     return _settings_cache
 
@@ -64,7 +68,6 @@ class BaseService:
         settings = _get_base_settings()
         self.MAX_TOKENS = settings.ai_max_input_tokens
         self.CHARS_PER_TOKEN = settings.chars_per_token
-        self.MAX_RETRIES = settings.ai_max_retries
 
     def _get_creds(self) -> dict:
         """
@@ -181,7 +184,9 @@ class BaseService:
         return {
             'chars': char_count,
             'tokens': token_count,
-            'within_limit': token_count < self.MAX_TOKENS
+            'within_limit': token_count < self.MAX_TOKENS,
+            'cost_warning': token_count >= AI_COST_WARNING_INPUT_TOKENS,
+            'long_context_pricing': token_count > AI_LONG_CONTEXT_PRICE_THRESHOLD_TOKENS,
         }
 
     def _truncate_text(self, text: str, max_tokens: Optional[int] = None) -> str:

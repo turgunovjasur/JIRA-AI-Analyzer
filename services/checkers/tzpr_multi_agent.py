@@ -27,6 +27,7 @@ def create_multi_agent_run(
     show_full_diff: bool,
     use_smart_patch: bool | None,
     max_files: int | None,
+    task_details: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     run_id = f"tzpr-{uuid.uuid4().hex}"
     agents = AGENT_SEQUENCE
@@ -42,6 +43,17 @@ def create_multi_agent_run(
         agents = build_agent_sequence(checker_settings)
     except Exception:
         agents = AGENT_SEQUENCE
+    request_payload = {
+        "task_key": task_key,
+        "output_profile": output_profile,
+        "show_full_diff": show_full_diff,
+        "use_smart_patch": use_smart_patch,
+        "max_files": max_files,
+        "execution_mode": EXECUTION_MODE_MULTI,
+    }
+    if isinstance(task_details, dict) and task_details:
+        request_payload["task_details"] = task_details
+
     return create_checker_run_record(
         run_id=run_id,
         task_key=task_key,
@@ -50,14 +62,7 @@ def create_multi_agent_run(
         source=source,
         execution_mode=EXECUTION_MODE_MULTI,
         requested_output_profile=output_profile,
-        request_payload={
-            "task_key": task_key,
-            "output_profile": output_profile,
-            "show_full_diff": show_full_diff,
-            "use_smart_patch": use_smart_patch,
-            "max_files": max_files,
-            "execution_mode": EXECUTION_MODE_MULTI,
-        },
+        request_payload=request_payload,
         agents=agents,
     )
 
@@ -68,6 +73,22 @@ def execute_multi_agent_run(run_id: str) -> dict[str, Any] | None:
         raise RuntimeError(f"Checker run topilmadi: {run_id}")
     executor = _TZPRMultiAgentExecutor(snapshot)
     return executor.run()
+
+
+def run_multi_agent_for_webhook(run_id: str):
+    """Run'ni bajaradi va JONLI `TZPRAnalysisResult` obyektini qaytaradi.
+
+    UI yo'li (`execute_multi_agent_run`) snapshot dict qaytaradi — uni brauzer
+    o'qiydi. Webhook esa natijani JIRA comment formatter'iga (ichki dataclass'lar
+    bilan) uzatadi, shuning uchun asdict dict emas, jonli obyekt kerak.
+    Engine bir xil — faqat qaytariladigan ko'rinish farq qiladi.
+    """
+    snapshot = get_checker_run_snapshot(run_id)
+    if not snapshot:
+        raise RuntimeError(f"Checker run topilmadi: {run_id}")
+    executor = _TZPRMultiAgentExecutor(snapshot)
+    executor.run()
+    return executor.final_result_obj
 
 
 def is_stalled_multi_agent_run(snapshot: dict[str, Any] | None) -> bool:

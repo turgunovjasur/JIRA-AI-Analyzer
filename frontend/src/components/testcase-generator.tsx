@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 
 import { AnalysisStatusBannerView } from "@/components/analysis-status-banner";
+import { PreflightChecksView } from "@/components/preflight-checks";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { BaseCard, Card } from "@/components/ui/card";
@@ -32,42 +33,50 @@ import { Notice } from "@/components/ui/notice";
 import { SectionHeader } from "@/components/ui/section-header";
 import { Textarea } from "@/components/ui/textarea";
 import { SettingsBaseCard } from "@/components/settings/base-card-system";
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { cn } from "@/lib/cn";
+import { getModuleRunErrorMessage, normalizeModuleRunErrorPayload } from "@/lib/module-errors";
+import {
+  getOpenRunStorageKey,
+  useRecentRuns,
+  type RecentRun,
+  type RecentRunScope,
+} from "@/lib/use-recent-runs";
 import type {
   GeneratedTestCase,
+  ModuleRunErrorPayload,
   TestCaseGenerationResult,
   TestcaseScenario,
   TestcaseRunSnapshot,
   TZPRAgentRunSnapshot,
   TZPRRunEvent,
 } from "@/lib/types";
-import { useRecentRuns, type RecentRun } from "@/lib/use-recent-runs";
 
 type PipelineState = "pending" | "running" | "completed" | "failed";
 
 const RUN_POLL_INTERVAL_MS = 2000;
-const HISTORY_OPEN_STORAGE_KEY = "qa.open-run.testcase_generator";
+const MODULE_KEY = "testcase_generator";
 
 const FALLBACK_TESTCASE_AGENTS: TZPRAgentRunSnapshot[] = [
   {
     agent_key: "agent1_requirements",
     agent_label: "Talablar",
     agent_order: 1,
-    primary_model: "gemini",
+    primary_model: "",
     state: "pending",
   },
   {
     agent_key: "agent2_testcase",
     agent_label: "Testcase writer",
     agent_order: 2,
-    primary_model: "gemini",
+    primary_model: "",
     state: "pending",
   },
   {
     agent_key: "agent3_audit",
     agent_label: "Audit",
     agent_order: 3,
-    primary_model: "gemini",
+    primary_model: "",
     state: "pending",
   },
 ];
@@ -666,22 +675,28 @@ function renderScenarioCard(scenario: TestcaseScenario, index: number) {
   );
 }
 
-export function TestCaseGenerator() {
+type TestCaseGeneratorProps = {
+  recentScope?: RecentRunScope;
+};
+
+export function TestCaseGenerator({ recentScope }: TestCaseGeneratorProps) {
   const [taskKey, setTaskKey] = useState("");
   const [customContext, setCustomContext] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [moduleError, setModuleError] = useState<ModuleRunErrorPayload | null>(null);
   const [result, setResult] = useState<TestCaseGenerationResult | null>(null);
   const [coverageFilter, setCoverageFilter] = useState<CoverageFilter>("all");
   const [activeRun, setActiveRun] = useState<TestcaseRunSnapshot | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
-  const { recent, addRecent } = useRecentRuns("testcase_generator");
+  const { recent, addRecent, removeRecent } = useRecentRuns(MODULE_KEY, recentScope);
+  const openRunStorageKey = getOpenRunStorageKey(MODULE_KEY, recentScope);
 
   const agentPanelRun = activeRun;
   const runInProgress = Boolean(activeRun?.run_id) && !isResolvedRunSnapshot(activeRun);
   const progress = getRunProgress(agentPanelRun, result);
   const runEvents = agentPanelRun?.run_events || [];
-  const debugJson = agentPanelRun ? JSON.stringify(agentPanelRun, null, 2) : "";
+  const canCopyDebug = Boolean(agentPanelRun || result || moduleError || error);
 
   useEffect(() => {
     const runId = activeRun?.run_id;
@@ -725,13 +740,13 @@ export function TestCaseGenerator() {
 
   useEffect(() => {
     setCopyState("idle");
-  }, [agentPanelRun?.run_id, agentPanelRun?.updated_at]);
+  }, [agentPanelRun?.run_id, agentPanelRun?.updated_at, result?.task_key, moduleError?.error, error]);
 
   useEffect(() => {
     try {
-      const raw = window.sessionStorage.getItem(HISTORY_OPEN_STORAGE_KEY);
+      const raw = window.sessionStorage.getItem(openRunStorageKey);
       if (!raw) return;
-      window.sessionStorage.removeItem(HISTORY_OPEN_STORAGE_KEY);
+      window.sessionStorage.removeItem(openRunStorageKey);
       const entry = JSON.parse(raw) as RecentRun | null;
       if (entry?.run_id?.trim()) {
         void reopenRun(entry);
@@ -739,7 +754,7 @@ export function TestCaseGenerator() {
     } catch {
       /* Historydan auto-open bo'lmasa, sahifa oddiy holatda qoladi. */
     }
-  }, []);
+  }, [openRunStorageKey]);
 
   function rememberRun(snapshot: TestcaseRunSnapshot) {
     const runId = snapshot.run_id?.trim();
@@ -754,6 +769,7 @@ export function TestCaseGenerator() {
   }
 
   function applyRunSnapshot(snapshot: TestcaseRunSnapshot, options?: { persistFinal?: boolean }) {
+    setModuleError(null);
     setActiveRun(snapshot);
     rememberRun(snapshot);
 
@@ -772,13 +788,9 @@ export function TestCaseGenerator() {
   async function startRun() {
     if (submitting || runInProgress) return;
     const normalizedTaskKey = taskKey.trim().toUpperCase();
-    if (!normalizedTaskKey) {
-      setError("Task key kiriting.");
-      return;
-    }
-
     setSubmitting(true);
     setError(null);
+    setModuleError(null);
     setResult(null);
     setCoverageFilter("all");
     setActiveRun(null);
@@ -796,7 +808,17 @@ export function TestCaseGenerator() {
         | (TestcaseRunSnapshot & { error?: string })
         | null;
       if (!createRes.ok) {
-        setError(created?.error || "Testcase run yaratishda xato.");
+        const normalizedError = normalizeModuleRunErrorPayload(created, {
+          moduleKey: "testcase_generator",
+          taskKey: normalizedTaskKey,
+          message: "Testcase run yaratishda xato.",
+        });
+        setModuleError(normalizedError);
+        setError(
+          normalizedError.status_banner
+            ? null
+            : getModuleRunErrorMessage(normalizedError, "Testcase run yaratishda xato."),
+        );
         return;
       }
       const runId = created?.run_id;
@@ -824,16 +846,27 @@ export function TestCaseGenerator() {
   }
 
   async function copyDebugJson() {
+    const debugPayload = agentPanelRun || result || moduleError || (
+      error
+        ? {
+          copied_at: new Date().toISOString(),
+          error,
+          module_key: "testcase_generator",
+          task_key: taskKey.trim().toUpperCase() || null,
+        }
+        : null
+    );
+    const debugJson = debugPayload ? JSON.stringify(debugPayload, null, 2) : "";
     if (!debugJson.trim()) {
       setCopyState("error");
       return;
     }
 
-    try {
-      await navigator.clipboard.writeText(debugJson);
+    const copied = await copyTextToClipboard(debugJson);
+    if (copied) {
       setCopyState("copied");
       window.setTimeout(() => setCopyState("idle"), 1600);
-    } catch {
+    } else {
       setCopyState("error");
     }
   }
@@ -844,6 +877,7 @@ export function TestCaseGenerator() {
     }
     setResult(null);
     setActiveRun(null);
+    setModuleError(null);
     setError(null);
     setCoverageFilter("all");
     setCopyState("idle");
@@ -853,6 +887,7 @@ export function TestCaseGenerator() {
     if (submitting || runInProgress) return;
     setSubmitting(true);
     setError(null);
+    setModuleError(null);
     setResult(null);
     setCoverageFilter("all");
     setActiveRun(null);
@@ -865,6 +900,9 @@ export function TestCaseGenerator() {
         | (TestcaseRunSnapshot & { error?: string })
         | null;
       if (!response.ok) {
+        if (response.status === 403 || response.status === 404) {
+          removeRecent(entry.run_id);
+        }
         setError(payload?.error || "Eski runni yuklab bo'lmadi.");
         return;
       }
@@ -919,7 +957,7 @@ export function TestCaseGenerator() {
               <Badge tone="soft">{recent.length}</Badge>
             </Link>
           </Button>
-          {agentPanelRun ? (
+          {canCopyDebug ? (
             <Button onClick={() => void copyDebugJson()} size="sm" type="button" variant="ghost">
               <Copy size={14} />
               {copyState === "copied" ? "Nusxalandi" : copyState === "error" ? "Copy xatosi" : "Copy JSON"}
@@ -938,6 +976,11 @@ export function TestCaseGenerator() {
           ) : null}
         </div>
       </div>
+
+      {moduleError?.status_banner ? <AnalysisStatusBannerView banner={moduleError.status_banner} /> : null}
+      {moduleError?.preflight_checks?.length ? <PreflightChecksView checks={moduleError.preflight_checks} /> : null}
+      {result?.status_banner ? <AnalysisStatusBannerView banner={result.status_banner} /> : null}
+      {error ? <Notice tone="error">{error}</Notice> : null}
 
       {showRunCard ? (
         <section className="grid gap-4">
@@ -1045,9 +1088,6 @@ export function TestCaseGenerator() {
           ) : null}
         </div>
       ) : null}
-
-      {error ? <Notice tone="error">{error}</Notice> : null}
-      {result?.status_banner ? <AnalysisStatusBannerView banner={result.status_banner} /> : null}
 
       {result?.success ? (
         <>

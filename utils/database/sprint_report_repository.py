@@ -6,7 +6,7 @@ repository. Keyingi bosqichda shu modul `PostgreSQL` backendga ko'chiriladi.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 from utils.database.repository_common import (
     uses_postgres_params as _uses_postgres_params,
@@ -16,7 +16,7 @@ from utils.database.repository_common import (
 
 
 def _cutoff_iso(days: int) -> str:
-    return (datetime.now() - timedelta(days=days)).isoformat()
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
 
 def fetch_total_tasks(cursor, company_id: int, days: int) -> int:

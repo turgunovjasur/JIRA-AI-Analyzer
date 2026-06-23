@@ -7,7 +7,7 @@ saqlaydi.
 from __future__ import annotations
 
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any
 
 from utils.database.repository_common import (
@@ -17,7 +17,7 @@ from utils.database.repository_common import (
 
 
 def _now_iso() -> str:
-    return datetime.now().isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _json_default(value: Any):

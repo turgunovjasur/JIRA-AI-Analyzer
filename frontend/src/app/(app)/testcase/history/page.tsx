@@ -23,7 +23,11 @@ export default async function TestcaseHistoryPage() {
     <RecentRunsHistory
       basePath="/testcase"
       moduleKey="testcase_generator"
-      storageKey="qa.open-run.testcase_generator"
+      recentScope={{
+        companyId: session.auth.company_id ?? null,
+        role: session.auth.role ?? null,
+        userId: session.auth.user_id ?? null,
+      }}
       title="Test Case Generator History"
     />
   );

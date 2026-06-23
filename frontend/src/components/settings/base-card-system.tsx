@@ -259,6 +259,7 @@ export function NumberField({
   min,
   onChange,
   required,
+  step,
   value,
   inputClassName = "settings-form-input",
 }: {
@@ -268,6 +269,7 @@ export function NumberField({
   onChange: (next: string) => void;
   min?: number;
   max?: number;
+  step?: number | string;
   required?: boolean;
   inputClassName?: string;
 }) {
@@ -290,6 +292,7 @@ export function NumberField({
           max={max}
           min={min}
           onChange={(event) => onChange(event.target.value)}
+          step={step}
           type="number"
           value={value}
         />
@@ -480,6 +483,7 @@ export type BaseCheckOption = {
   key: string;
   label: string;
   badge?: string;
+  disabled?: boolean;
 };
 
 export function BaseCheckGroup({
@@ -496,8 +500,13 @@ export function BaseCheckGroup({
     <div className="chk-group">
       {options.map((option) => {
         const checked = selected.includes(option.key);
+        const disabled = Boolean(option.disabled);
         return (
-          <label className={`chk-item${checked ? " chk-checked" : ""}`} key={option.key}>
+          <label
+            aria-disabled={disabled}
+            className={`chk-item${checked ? " chk-checked" : ""}${disabled ? " chk-disabled" : ""}`}
+            key={option.key}
+          >
             <div className="chk-box">
               {checked ? (
                 <svg fill="none" height="11" stroke="white" strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" viewBox="0 0 24 24" width="11">
@@ -507,7 +516,9 @@ export function BaseCheckGroup({
             </div>
             <input
               checked={checked}
+              disabled={disabled}
               onChange={(event) => {
+                if (disabled) return;
                 onChange(event.target.checked ? [...selected, option.key] : selected.filter((item) => item !== option.key));
               }}
               style={{ display: "none" }}

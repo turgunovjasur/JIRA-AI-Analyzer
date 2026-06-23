@@ -26,7 +26,7 @@ class Settings:
     # ==================== Gemini AI ====================
     GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
     GOOGLE_API_KEY_2 = os.getenv('GOOGLE_API_KEY_2')  # Fallback key (ixtiyoriy)
-    GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+    GEMINI_MODEL = os.getenv('GEMINI_MODEL', '')
 
     # ==================== Embedding ====================
     EMBEDDING_MODEL = os.getenv('EMBEDDING_MODEL', 'intfloat/multilingual-e5-large')

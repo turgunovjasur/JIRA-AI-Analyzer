@@ -30,6 +30,7 @@ export type SessionResponse = {
   success: boolean;
   auth: AuthPayload;
   companyModules: CompanyModules;
+  companySubscription?: CompanySubscription | null;
   expiresAt?: string | null;
 };
 
@@ -37,6 +38,7 @@ export type BackendSessionResponse = {
   success: boolean;
   auth: AuthPayload;
   company_modules: CompanyModules;
+  company_subscription?: CompanySubscription | null;
   expires_at?: string | null;
 };
 
@@ -479,6 +481,28 @@ export type AnalysisStatusBanner = {
   actions?: string[];
 };
 
+export type ModulePreflightCheck = {
+  id?: string;
+  label?: string;
+  status?: "ok" | "fail" | "warning" | "skipped" | string;
+  message?: string;
+  code?: string;
+  action?: string;
+  blocking?: boolean;
+};
+
+export type ModuleRunErrorPayload = {
+  success?: false;
+  module_key?: string;
+  task_key?: string | null;
+  run_state?: string;
+  active_phase?: string | null;
+  error?: string;
+  error_message?: string;
+  status_banner?: AnalysisStatusBanner | null;
+  preflight_checks?: ModulePreflightCheck[];
+};
+
 export type TZPRAnalysisResult = {
   success: boolean;
   task_key: string;
@@ -840,10 +864,9 @@ export type SystemSettingsView = {
     gemini_min_interval: number;
     blocked_check_interval: number;
     key_freeze_duration: number;
-    ai_max_retries: number;
+    gemini_max_retries: number;
     ai_max_input_tokens: number;
     chars_per_token: number;
-    db_busy_timeout: number;
     db_connection_timeout: number;
     http_timeout: number;
     executor_timeout: number;
@@ -953,6 +976,55 @@ export type GlobalAiDefaults = {
   testcase_agent3_primary_model?: string | null;
 };
 
+export type AiUsageSummary = {
+  candidates_token_count?: number | string | null;
+  cost_warning_count?: number | string | null;
+  estimated_total_cost_usd?: number | string | null;
+  event_count?: number | string | null;
+  prompt_token_count?: number | string | null;
+  thoughts_token_count?: number | string | null;
+  total_token_count?: number | string | null;
+};
+
+export type AiUsageCompanyRow = AiUsageSummary & {
+  company_code?: string | null;
+  company_id?: number | null;
+  company_name?: string | null;
+};
+
+export type AiUsageModuleRow = AiUsageSummary & {
+  module_key?: string | null;
+};
+
+export type AiUsageEventRow = {
+  agent_key?: string | null;
+  cached_content_token_count?: number | string | null;
+  candidates_token_count?: number | string | null;
+  company_code?: string | null;
+  company_id?: number | null;
+  cost_warning?: boolean | number | null;
+  created_at?: string | null;
+  estimated_total_cost_usd?: number | string | null;
+  id?: number | null;
+  model?: string | null;
+  module_key?: string | null;
+  pricing_tier?: string | null;
+  prompt_token_count?: number | string | null;
+  run_id?: string | null;
+  source?: string | null;
+  task_key?: string | null;
+  thoughts_token_count?: number | string | null;
+  total_token_count?: number | string | null;
+  user_id?: number | null;
+};
+
+export type AiUsageDashboard = {
+  by_company: AiUsageCompanyRow[];
+  by_module: AiUsageModuleRow[];
+  recent_events: AiUsageEventRow[];
+  summary: AiUsageSummary;
+};
+
 export type SuperAdminOverviewMetrics = {
   active: number;
   billable: number;
@@ -963,6 +1035,7 @@ export type SuperAdminOverviewMetrics = {
 };
 
 export type SuperAdminOverview = {
+  ai_usage?: AiUsageDashboard | null;
   auth_source?: string | null;
   current_admin: boolean;
   global_ai_defaults: GlobalAiDefaults;

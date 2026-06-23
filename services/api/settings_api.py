@@ -36,8 +36,40 @@ from utils.auth.auth_db import (
     save_user_credentials,
     save_user_module_settings,
 )
+from utils.auth.credential_crypto import get_sensitive_credential_fields, mask_secret_value
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
+
+
+def _mask_token_rows(value: Any) -> str:
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            return mask_secret_value(value)
+    else:
+        parsed = value
+    if not isinstance(parsed, list):
+        return ""
+    masked = []
+    for row in parsed:
+        item = dict(row or {}) if isinstance(row, dict) else {}
+        if "token" in item:
+            item["token"] = mask_secret_value(item.get("token"))
+        masked.append(item)
+    return json.dumps(masked, ensure_ascii=True)
+
+
+def _mask_settings_secrets(payload: dict[str, Any]) -> dict[str, Any]:
+    result = dict(payload or {})
+    for field in get_sensitive_credential_fields():
+        if field not in result:
+            continue
+        if field in {"figma_tokens", "webhook_figma_tokens"}:
+            result[field] = _mask_token_rows(result.get(field))
+        else:
+            result[field] = mask_secret_value(result.get(field))
+    return result
 
 
 class SharedApiKeysReadRequest(BaseModel):
@@ -91,15 +123,7 @@ class ModuleSettingsSaveRequest(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
 
 
-_CHECKER_VISIBLE_SECTIONS_ALLOWED = ("completed", "partial", "failed", "issues", "figma")
-_WEBHOOK_CHECKER_VISIBLE_SECTIONS_ALLOWED = (
-    "completed",
-    "partial",
-    "failed",
-    "issues",
-    "figma",
-    "contradictory_comments",
-)
+_CHECKER_VISIBLE_SECTIONS_ALLOWED = ("completed", "failed", "skipped", "issues", "figma")
 _CHECKER_AI_ORDER_ALLOWED = ("tz", "comments", "figma", "code")
 _TESTCASE_AI_ORDER_ALLOWED = ("tz", "comments", "custom_context", "code")
 _TESTCASE_TYPES_ALLOWED = ("positive", "negative", "boundary", "edge")
@@ -181,6 +205,8 @@ def _parse_ordered_list(
     order: list[str] = []
     for raw_item in value:
         item = raw_item.strip()
+        if item in {"partial", "contradictory_comments"}:
+            continue
         if not item or item in seen:
             continue
         if item not in allowed:
@@ -220,7 +246,7 @@ async def read_shared_api_keys(
             company_id = session_company_id
         if not company_id:
             raise HTTPException(status_code=400, detail="company_id is required for company admin")
-        return {"data": get_company_settings(company_id)}
+        return {"data": _mask_settings_secrets(get_company_settings(company_id))}
 
     if role in {"company_admin", "user"}:
         if payload.user_id not in (None, session_user_id):
@@ -229,11 +255,11 @@ async def read_shared_api_keys(
             raise HTTPException(status_code=403, detail="Boshqa company scope bilan o'qib bo'lmaydi")
         if not session_user_id:
             raise HTTPException(status_code=400, detail="user_id is required for user credentials")
-        return {"data": get_user_credentials(session_user_id)}
+        return {"data": _mask_settings_secrets(get_user_credentials(session_user_id))}
 
     if not payload.user_id:
         raise HTTPException(status_code=400, detail="user_id is required for user credentials")
-    return {"data": get_user_credentials(payload.user_id)}
+    return {"data": _mask_settings_secrets(get_user_credentials(payload.user_id))}
 
 
 @router.post("/api-keys/webhook/read")
@@ -251,7 +277,7 @@ async def read_webhook_api_keys(
         company_id = session_company_id
     if not company_id:
         raise HTTPException(status_code=400, detail="company_id is required")
-    return {"data": get_company_settings(company_id)}
+    return {"data": _mask_settings_secrets(get_company_settings(company_id))}
 
 
 @router.post("/api-keys/shared/save")
@@ -329,12 +355,12 @@ async def read_webhook_config(
     webhook_settings = app_settings.webhook_tz_pr
     webhook_testcase = app_settings.webhook_testcase
     queue_settings = app_settings.queue
-    visible_sections = list(webhook_settings.visible_sections or [])
+    visible_sections = [
+        item
+        for item in list(webhook_settings.visible_sections or [])
+        if item in _CHECKER_VISIBLE_SECTIONS_ALLOWED
+    ] or ["completed", "failed", "skipped", "issues", "figma"]
     show_contradictory = bool(webhook_settings.show_contradictory_comments)
-    if show_contradictory and "contradictory_comments" not in visible_sections:
-        visible_sections = [*visible_sections, "contradictory_comments"]
-    if not show_contradictory:
-        visible_sections = [item for item in visible_sections if item != "contradictory_comments"]
 
     return {
         "success": True,
@@ -402,6 +428,7 @@ async def save_webhook_config(
     raw_aliases = str(raw.get("trigger_status_aliases", "")).strip()
     raw_excluded = str(raw.get("excluded_assignees", "")).strip()
     raw_allowed_types = str(raw.get("allowed_issue_types", "")).strip()
+    raw_skip_present = "skip_code" in raw
     raw_skip = str(raw.get("skip_code", "")).strip()
     raw_return_status = str(raw.get("return_status", "")).strip()
     raw_return_notification_text = str(raw.get("return_notification_text", "")).strip()
@@ -435,8 +462,6 @@ async def save_webhook_config(
         raise HTTPException(status_code=400, detail="min_tz_description_chars 0 yoki undan katta bo'lishi kerak")
     if raw_checker_delay is not None and raw_checker_delay <= 0:
         raise HTTPException(status_code=400, detail="checker_delay_seconds 0 dan katta bo'lishi kerak")
-    if raw_max_skip_comments <= 0:
-        raise HTTPException(status_code=400, detail="max_skip_check_comments 1 yoki undan katta bo'lishi kerak")
 
     # trigger_statuses yuborilgan bo'lsa, trigger_status_aliases ni ulardan yig'ish
     if not raw_aliases:
@@ -484,17 +509,28 @@ async def save_webhook_config(
 
     visible_sections = _wh_ordered_list(
         "visible_sections",
-        _WEBHOOK_CHECKER_VISIBLE_SECTIONS_ALLOWED,
+        _CHECKER_VISIBLE_SECTIONS_ALLOWED,
         required_items=(),
-        default=["completed", "partial", "failed", "issues", "figma"],
+        default=["completed", "failed", "skipped", "issues", "figma"],
     )
-    show_contradictory = "contradictory_comments" in visible_sections
+    effective_skip_code = raw_skip if raw_skip_present else str(updated_wh.get("skip_code", "AI_SKIP") or "").strip()
+    effective_max_comments_to_read = _wh_non_negative_int("max_comments_to_read", 0)
+    if not effective_skip_code and raw_max_skip_comments <= 0:
+        raw_max_skip_comments = 1
+    if effective_skip_code and raw_max_skip_comments <= 0:
+        raise HTTPException(status_code=400, detail="max_skip_check_comments 1 yoki undan katta bo'lishi kerak")
+    if (
+        effective_skip_code
+        and effective_max_comments_to_read > 0
+        and raw_max_skip_comments >= effective_max_comments_to_read
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="max_comments_to_read skip tekshirish comment sonidan katta bo'lishi kerak",
+        )
+    show_contradictory = bool(updated_wh.get("show_contradictory_comments", True))
     if "show_contradictory_comments" in raw:
         show_contradictory = _parse_bool(raw.get("show_contradictory_comments"), "show_contradictory_comments")
-        if show_contradictory and "contradictory_comments" not in visible_sections:
-            visible_sections = [*visible_sections, "contradictory_comments"]
-        if not show_contradictory:
-            visible_sections = [item for item in visible_sections if item != "contradictory_comments"]
 
     updated_wh.update(
         {
@@ -520,11 +556,11 @@ async def save_webhook_config(
                 default=["tz", "comments", "figma", "code"],
             ),
             "read_comments_enabled": _wh_bool("read_comments_enabled", True),
-            "max_comments_to_read": _wh_non_negative_int("max_comments_to_read", 0),
+            "max_comments_to_read": effective_max_comments_to_read,
             "min_tz_description_chars": raw_min_tz,
             "excluded_assignees": raw_excluded,
             "allowed_issue_types": raw_allowed_types,
-            "skip_code": raw_skip or updated_wh.get("skip_code", "AI_SKIP"),
+            "skip_code": effective_skip_code,
             "max_skip_check_comments": raw_max_skip_comments,
             "return_notification_text": raw_return_notification_text or updated_wh.get("return_notification_text", ""),
             "skip_comment_text": raw_skip_comment_text or updated_wh.get("skip_comment_text", ""),
@@ -668,17 +704,16 @@ async def read_system_config(
     return {
         "success": True,
         "data": {
-            "queue_enabled": bool(queue_settings.queue_enabled),
+            "queue_enabled": True,
             "task_wait_timeout": int(queue_settings.task_wait_timeout),
             "checker_testcase_delay": int(queue_settings.checker_testcase_delay),
             "blocked_retry_delay": int(queue_settings.blocked_retry_delay),
             "gemini_min_interval": int(queue_settings.gemini_min_interval),
             "blocked_check_interval": int(queue_settings.blocked_check_interval),
             "key_freeze_duration": int(queue_settings.key_freeze_duration),
-            "ai_max_retries": int(queue_settings.ai_max_retries),
+            "gemini_max_retries": int(queue_settings.gemini_max_retries),
             "ai_max_input_tokens": AI_MAX_INPUT_TOKENS,
             "chars_per_token": CHARS_PER_TOKEN,
-            "db_busy_timeout": int(queue_settings.db_busy_timeout),
             "db_connection_timeout": int(queue_settings.db_connection_timeout),
             "http_timeout": int(queue_settings.http_timeout),
             "executor_timeout": int(queue_settings.executor_timeout),
@@ -694,95 +729,14 @@ async def save_system_config(
     session = load_api_session(x_session_id, allowed_roles={"super_admin", "company_admin"})
     company_id = _resolve_company_scope_for_webhook(session, payload.company_id)
 
-    raw = payload.data or {}
     current_queue = get_company_webhook_module_settings(company_id, "queue") or {}
 
-    def _get_current_or_default(key: str, default: int | bool) -> int | bool:
-        if key in raw:
-            return raw[key]
-        if key in current_queue:
-            return current_queue[key]
-        return default
-
-    queue_enabled = _parse_bool(
-        _get_current_or_default("queue_enabled", True),
-        "queue_enabled",
-    )
-    task_wait_timeout = _parse_positive_int(
-        _get_current_or_default("task_wait_timeout", 60),
-        "task_wait_timeout",
-        min_value=1,
-    )
-    checker_testcase_delay = _parse_positive_int(
-        _get_current_or_default("checker_testcase_delay", 15),
-        "checker_testcase_delay",
-        min_value=1,
-    )
-    blocked_retry_delay = _parse_positive_int(
-        _get_current_or_default("blocked_retry_delay", 5),
-        "blocked_retry_delay",
-        min_value=1,
-    )
-    gemini_min_interval = _parse_positive_int(
-        _get_current_or_default("gemini_min_interval", 6),
-        "gemini_min_interval",
-        min_value=1,
-    )
-    blocked_check_interval = _parse_positive_int(
-        _get_current_or_default("blocked_check_interval", 30),
-        "blocked_check_interval",
-        min_value=1,
-    )
-    key_freeze_duration = _parse_positive_int(
-        _get_current_or_default("key_freeze_duration", 600),
-        "key_freeze_duration",
-        min_value=1,
-    )
-    ai_max_retries = _parse_positive_int(
-        _get_current_or_default("ai_max_retries", 3),
-        "ai_max_retries",
-        min_value=1,
-    )
-    ai_max_input_tokens = AI_MAX_INPUT_TOKENS
-    chars_per_token = CHARS_PER_TOKEN
-    db_busy_timeout = _parse_positive_int(
-        _get_current_or_default("db_busy_timeout", 30000),
-        "db_busy_timeout",
-        min_value=1,
-    )
-    db_connection_timeout = _parse_positive_int(
-        _get_current_or_default("db_connection_timeout", 30),
-        "db_connection_timeout",
-        min_value=1,
-    )
-    http_timeout = _parse_positive_int(
-        _get_current_or_default("http_timeout", 30),
-        "http_timeout",
-        min_value=1,
-    )
-    executor_timeout = _parse_positive_int(
-        _get_current_or_default("executor_timeout", 120),
-        "executor_timeout",
-        min_value=1,
-    )
+    queue_enabled = True
 
     updated_queue = dict(current_queue)
     updated_queue.update(
         {
             "queue_enabled": queue_enabled,
-            "task_wait_timeout": task_wait_timeout,
-            "checker_testcase_delay": checker_testcase_delay,
-            "blocked_retry_delay": blocked_retry_delay,
-            "gemini_min_interval": gemini_min_interval,
-            "blocked_check_interval": blocked_check_interval,
-            "key_freeze_duration": key_freeze_duration,
-            "ai_max_retries": ai_max_retries,
-            "ai_max_input_tokens": ai_max_input_tokens,
-            "chars_per_token": chars_per_token,
-            "db_busy_timeout": db_busy_timeout,
-            "db_connection_timeout": db_connection_timeout,
-            "http_timeout": http_timeout,
-            "executor_timeout": executor_timeout,
         }
     )
 
@@ -811,7 +765,11 @@ async def read_module_config(
             "checker": {
                 "agent2_parallelism": int(getattr(checker, "agent2_parallelism", 5) or 5),
                 "agent2_batch_size": int(getattr(checker, "agent2_batch_size", 6) or 6),
-                "visible_sections": list(checker.visible_sections or []),
+                "visible_sections": [
+                    item
+                    for item in list(checker.visible_sections or [])
+                    if item in _CHECKER_VISIBLE_SECTIONS_ALLOWED
+                ] or ["completed", "failed", "skipped", "issues", "figma"],
                 "ai_data_section_order": list(checker.ai_data_section_order or []),
                 "read_comments_enabled": bool(checker.read_comments_enabled),
                 "max_comments_to_read": int(checker.max_comments_to_read),

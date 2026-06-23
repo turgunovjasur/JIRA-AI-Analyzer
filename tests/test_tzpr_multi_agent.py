@@ -295,3 +295,31 @@ def test_checker_excludes_technical_failures_from_compliance_denominator():
     )
 
     assert score == 100
+
+
+def test_checker_all_skipped_returns_none_not_zero():
+    # C1: barcha talablar skip/technical bo'lsa ballash mumkin emas → None
+    # (0 qaytarish xato auto-return'ga olib kelardi).
+    score = calculate_compliance_score_from_agent3(
+        {
+            "total_requirements": 3,
+            "completed_count": 0,
+            "failed_count": 0,
+            "technical_count": 1,
+            "skipped_count": 2,
+        }
+    )
+
+    assert score is None
+
+
+def test_checker_empty_inventory_stays_zero():
+    # Haqiqatan bo'sh inventar (0 talab) all-skipped'dan alohida — 0 qaytadi.
+    score = calculate_compliance_score_from_agent3(
+        {
+            "total_requirements": 0,
+            "requirements": [],
+        }
+    )
+
+    assert score == 0

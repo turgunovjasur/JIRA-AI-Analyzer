@@ -42,6 +42,8 @@ type WebhookSavePayload = {
   testcase_footer_text?: string;
 };
 
+const CHECKER_COMMENT_SECTIONS = ["completed", "failed", "skipped", "issues", "figma"];
+
 function ensureNumber(value: unknown, fallback: number) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -96,9 +98,9 @@ export async function GET() {
         read_comments_enabled: Boolean(data.read_comments_enabled ?? true),
         max_comments_to_read: ensureNumber(data.max_comments_to_read, 0),
         show_contradictory_comments: Boolean(data.show_contradictory_comments ?? true),
-        visible_sections: Array.isArray(data.visible_sections) ? data.visible_sections : ["completed", "partial", "failed", "issues", "figma"],
+        visible_sections: Array.isArray(data.visible_sections) ? data.visible_sections : CHECKER_COMMENT_SECTIONS,
         ai_data_section_order: Array.isArray(data.ai_data_section_order) ? data.ai_data_section_order : ["tz", "comments", "figma", "code"],
-        skip_code: String(data.skip_code || "AI_SKIP"),
+        skip_code: String(data.skip_code ?? "AI_SKIP"),
         skip_comment_text: String(data.skip_comment_text || "⏭️ AI tekshirish o'chirilgan. Dev tomanidan skip ko'rsatma berilgan. Manual tekshirish tavsiya etiladi."),
         trigger_status: trigger || "READY TO TEST",
         trigger_status_aliases: String(data.trigger_status_aliases || ""),
@@ -162,12 +164,14 @@ export async function POST(request: Request) {
       read_comments_enabled: Boolean(payload?.read_comments_enabled ?? true),
       max_comments_to_read: ensureNumber(payload?.max_comments_to_read, 0),
       show_contradictory_comments: Boolean(payload?.show_contradictory_comments ?? true),
-      visible_sections: Array.isArray(payload?.visible_sections) ? payload!.visible_sections! : ["completed", "partial", "failed", "issues", "figma"],
+      visible_sections: Array.isArray(payload?.visible_sections) ? payload!.visible_sections! : CHECKER_COMMENT_SECTIONS,
       ai_data_section_order: Array.isArray(payload?.ai_data_section_order) ? payload!.ai_data_section_order! : ["tz", "comments", "figma", "code"],
       min_tz_description_chars: ensureNumber(payload?.min_tz_description_chars, 50),
       excluded_assignees: String(payload?.excluded_assignees || "").trim(),
       allowed_issue_types: String(payload?.allowed_issue_types || "").trim(),
-      skip_code: String(payload?.skip_code || "AI_SKIP").trim(),
+      skip_code: Object.prototype.hasOwnProperty.call(payload || {}, "skip_code")
+        ? String(payload?.skip_code ?? "").trim()
+        : "AI_SKIP",
       skip_comment_text: String(payload?.skip_comment_text || "⏭️ AI tekshirish o'chirilgan. Dev tomanidan skip ko'rsatma berilgan. Manual tekshirish tavsiya etiladi.").trim(),
       max_skip_check_comments: ensureNumber(payload?.max_skip_check_comments, 5),
       auto_return_enabled: Boolean(payload?.auto_return_enabled),
@@ -185,6 +189,20 @@ export async function POST(request: Request) {
       testcase_use_adf_format: true,
       testcase_footer_text: String(payload?.testcase_footer_text || "").trim(),
     };
+
+    if (
+      cleanPayload.skip_code
+      && cleanPayload.max_comments_to_read > 0
+      && cleanPayload.max_skip_check_comments >= cleanPayload.max_comments_to_read
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Max commentlar skip tekshirish comment sonidan katta bo'lishi kerak.",
+        },
+        { status: 400 },
+      );
+    }
 
     await saveWebhookConfigWithBackend({
       company_id: companyId,

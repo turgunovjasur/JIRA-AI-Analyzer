@@ -14,7 +14,6 @@ from utils.database.checker_run_repository import (
     append_checker_run_event as repo_append_checker_run_event,
     build_checker_run_snapshot as repo_build_checker_run_snapshot,
     create_checker_run as repo_create_checker_run,
-    ensure_checker_run_tables,
     save_checker_run_final_result as repo_save_checker_run_final_result,
     seed_checker_agent_runs as repo_seed_checker_agent_runs,
     update_checker_agent_run as repo_update_checker_agent_run,
@@ -26,10 +25,9 @@ log = get_logger("checker.run.db")
 
 
 def _connect():
+    # P2: jadvallar startup migratsiyasida ensure qilinadi — bu yerda DDL yo'q.
     settings = _get_db_settings()
-    conn = connect_processing_db(timeout=settings.db_connection_timeout, row_factory=True)
-    ensure_checker_run_tables(conn)
-    return conn
+    return connect_processing_db(timeout=settings.db_connection_timeout, row_factory=True)
 
 
 def create_checker_run_record(

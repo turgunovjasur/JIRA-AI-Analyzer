@@ -15,6 +15,7 @@ from utils.auth.auth_db import (
     consume_password_reset_token,
     create_web_session,
     get_effective_company_modules,
+    get_company_subscription,
     get_web_session,
     request_password_reset_email,
     revoke_web_session_token,
@@ -58,9 +59,11 @@ async def login(payload: LoginRequest, request: Request, _rl: None = Depends(che
         }
 
     company_modules = None
+    company_subscription = None
     company_id = auth_payload.get("company_id")
     if company_id:
         company_modules = get_effective_company_modules(company_id)
+        company_subscription = get_company_subscription(company_id)
     else:
         company_modules = {}
 
@@ -73,6 +76,7 @@ async def login(payload: LoginRequest, request: Request, _rl: None = Depends(che
         "error_message": "",
         "auth": auth_payload,
         "company_modules": company_modules,
+        "company_subscription": company_subscription,
         "session_token": session.get("session_token"),
         "expires_at": session.get("expires_at"),
     }
@@ -120,11 +124,13 @@ async def me(x_session_id: str | None = Header(default=None, alias="X-Session-ID
     auth_payload = session.get("auth") or {}
     company_id = auth_payload.get("company_id")
     company_modules = get_effective_company_modules(company_id) if company_id else {}
+    company_subscription = get_company_subscription(company_id) if company_id else None
 
     return {
         "success": True,
         "auth": auth_payload,
         "company_modules": company_modules,
+        "company_subscription": company_subscription,
         "expires_at": session.get("expires_at"),
     }
 

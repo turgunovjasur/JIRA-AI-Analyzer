@@ -5,7 +5,7 @@ from typing import Any
 from services.checkers.tzpr_constants import FINAL_ANALYSIS_SECTION_TITLES
 
 
-def calculate_compliance_score_from_agent3(agent3: dict[str, Any]) -> int:
+def calculate_compliance_score_from_agent3(agent3: dict[str, Any]) -> int | None:
     try:
         total = int(agent3.get("total_requirements") or 0)
         completed = int(agent3.get("completed_count") or 0)
@@ -40,7 +40,9 @@ def calculate_compliance_score_from_agent3(agent3: dict[str, Any]) -> int:
     # Skip qilingan (dev izohi) va technical requirementlar balъ maxrajiga kirmaydi.
     verifiable_total = max(total - technical - skipped, 0)
     if verifiable_total <= 0:
-        return 0
+        # Talablar bor, lekin hammasi skip/technical — ballash mumkin emas.
+        # 0 qaytarish xato auto-return'ga olib keladi; manual review uchun None.
+        return None
     return max(0, min(100, round((completed / verifiable_total) * 100)))
 
 
@@ -48,7 +50,7 @@ def build_final_analysis_text(
     *,
     summary: str,
     decisions: list[dict[str, Any]],
-    compliance_score: int,
+    compliance_score: int | None,
     figma_data: dict[str, Any] | None,
     extra_issues: list[str],
 ) -> str:
@@ -84,7 +86,11 @@ def build_final_analysis_text(
         *figma_output_lines,
         "",
         "## 📊 MOSLIK BALI",
-        f"**COMPLIANCE_SCORE: {compliance_score}%**",
+        (
+            f"**COMPLIANCE_SCORE: {compliance_score}%**"
+            if compliance_score is not None
+            else "**COMPLIANCE_SCORE: N/A — barcha talablar skip/technical, manual review kerak**"
+        ),
     ]
     return "\n".join(sections).strip()
 

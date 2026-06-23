@@ -88,7 +88,7 @@ def test_get_task_details_reuses_short_lived_cache(monkeypatch):
     issue = _make_issue()
     calls = {"issue": 0, "dev_status": 0}
 
-    def fake_get_issue(issue_key):
+    def fake_get_issue(issue_key, **kwargs):
         calls["issue"] += 1
         return issue
 
@@ -140,7 +140,7 @@ def test_get_task_details_can_skip_pr_lookup(monkeypatch):
     issue = _make_issue()
     calls = {"issue": 0, "dev_status": 0}
 
-    def fake_get_issue(issue_key):
+    def fake_get_issue(issue_key, **kwargs):
         calls["issue"] += 1
         return issue
 

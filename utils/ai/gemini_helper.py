@@ -6,6 +6,7 @@ import time
 from threading import Lock
 from core.logger import get_logger
 from config.token_limits import GEMINI_HELPER_DEFAULT_MAX_OUTPUT_TOKENS
+from utils.ai.usage_cost import estimate_gemini_usage_cost
 
 load_dotenv()
 
@@ -26,6 +27,7 @@ def _get_gemini_settings():
             class DefaultSettings:
                 gemini_min_interval = 6
                 key_freeze_duration = 600
+                gemini_max_retries = 3
             _settings_cache = DefaultSettings()
     return _settings_cache
 
@@ -63,6 +65,7 @@ class GeminiHelper:
         model_name: str = None,
         fallback_model_name: str = None,
         shared_state: dict | None = None,
+        usage_context: dict | None = None,
     ):
         if api_keys is not None:
             if not api_keys:
@@ -70,7 +73,7 @@ class GeminiHelper:
             self.api_keys = [k for k in api_keys if k and k.strip()]
             if not self.api_keys:
                 raise RuntimeError("Kompaniya Gemini API kalitlari bo'sh. Sozlamalar sahifasida kalit kiriting.")
-            log.info(f"GeminiHelper: {len(self.api_keys)} ta kalit yuklandi (1-kalit: ...{self.api_keys[0][-6:]})")
+            log.info(f"GeminiHelper: {len(self.api_keys)} ta kalit yuklandi")
         else:
             self.api_keys = self._load_keys()
 
@@ -84,7 +87,12 @@ class GeminiHelper:
         else:
             self._frozen_until = {}
         self._current_idx = 0
-        self.model_name = model_name or os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+        self.model_name = (model_name or os.getenv('GEMINI_MODEL', '')).strip()
+        if not self.model_name:
+            raise RuntimeError(
+                "Gemini modeli sozlanmagan. Modul agent modelini yoki Super Admin global AI defaultini tanlang."
+            )
+        self._fallback_model_explicit = fallback_model_name is not None
         self.fallback_model_name = (fallback_model_name or "").strip()
         self.last_request_time = 0
         self.request_count = 0
@@ -95,8 +103,10 @@ class GeminiHelper:
         self.last_cached_content_token_count = 0
         self.last_prompt_token_count = 0
         self.last_candidates_token_count = 0
+        self.last_thoughts_token_count = 0
         self.last_total_token_count = 0
         self.last_usage_metadata: dict[str, int] = {}
+        self.usage_context: dict = dict(usage_context or {})
         self._client = genai.Client(api_key=self.api_keys[self._current_idx])
 
     def _load_keys(self) -> list[str]:
@@ -191,10 +201,39 @@ class GeminiHelper:
 
     def _get_fallback_model(self) -> str | None:
         """Per-helper fallback yoki GEMINI_FALLBACK_MODEL olinadi. Asosiy model bilan bir xil bo'lsa None."""
-        fallback = self.fallback_model_name or os.getenv('GEMINI_FALLBACK_MODEL', '').strip()
+        fallback = self.fallback_model_name
+        if not self._fallback_model_explicit:
+            fallback = os.getenv('GEMINI_FALLBACK_MODEL', '').strip()
         if fallback and fallback != self.model_name:
             return fallback
         return None
+
+    def set_usage_context(self, **context) -> None:
+        """Keyingi AI chaqiruv uchun usage ledger contextini yangilash."""
+        self.usage_context = {
+            key: value
+            for key, value in dict(context or {}).items()
+            if value is not None
+        }
+
+    def count_tokens(self, prompt, model_name: str | None = None) -> int:
+        """Gemini API orqali real prompt token count olish."""
+        self._rate_limit()
+        response = self._client.models.count_tokens(
+            model=model_name or self.model_name,
+            contents=prompt,
+        )
+        return int(getattr(response, "total_tokens", 0) or 0)
+
+    def _default_retry_delays(self) -> list[int]:
+        """Transient (503/overload) retry backoff ro'yxati — `gemini_max_retries` sozlamasidan.
+
+        N marta retry → backoff 5s, 10s, 20s, ... (har safar 2x, eng ko'pi 60s).
+        Default 3 → [5, 10, 20] (eski xulq saqlanadi).
+        """
+        settings = _get_gemini_settings()
+        n = max(1, int(getattr(settings, "gemini_max_retries", 3) or 3))
+        return [min(5 * (2 ** i), 60) for i in range(n)]
 
     def _request(self, prompt, generation_config, model_name: str = None, retry_delays: list[int] | None = None):
         """Bitta Gemini so'rov — transient xato bo'lsa backoff bilan N marta qayta urinish.
@@ -203,7 +242,7 @@ class GeminiHelper:
         retry_delays=[]   → retry yo'q (bitta urinish), pro modeli 503 da tezroq fallback uchun
         """
         target_model = model_name or self.model_name
-        effective_delays = list(self.TRANSIENT_RETRY_DELAYS) if retry_delays is None else list(retry_delays)
+        effective_delays = self._default_retry_delays() if retry_delays is None else list(retry_delays)
         last_error = None
         for attempt, delay in enumerate([0] + effective_delays):
             if delay > 0:
@@ -221,6 +260,7 @@ class GeminiHelper:
                 )
                 usage = getattr(response, "usage_metadata", None)
                 self._set_last_usage_metadata(usage)
+                self._record_usage_event(target_model)
                 return response.text
             except Exception as e:
                 last_error = e
@@ -242,6 +282,7 @@ class GeminiHelper:
         self.last_cached_content_token_count = 0
         self.last_prompt_token_count = 0
         self.last_candidates_token_count = 0
+        self.last_thoughts_token_count = 0
         self.last_total_token_count = 0
         self.last_usage_metadata = {}
 
@@ -249,13 +290,56 @@ class GeminiHelper:
         self.last_cached_content_token_count = int(getattr(usage, "cached_content_token_count", 0) or 0)
         self.last_prompt_token_count = int(getattr(usage, "prompt_token_count", 0) or 0)
         self.last_candidates_token_count = int(getattr(usage, "candidates_token_count", 0) or 0)
+        self.last_thoughts_token_count = int(getattr(usage, "thoughts_token_count", 0) or 0)
         self.last_total_token_count = int(getattr(usage, "total_token_count", 0) or 0)
         self.last_usage_metadata = {
             "cached_content_token_count": self.last_cached_content_token_count,
             "prompt_token_count": self.last_prompt_token_count,
             "candidates_token_count": self.last_candidates_token_count,
+            "thoughts_token_count": self.last_thoughts_token_count,
             "total_token_count": self.last_total_token_count,
         }
+
+    def _record_usage_event(self, actual_model: str) -> None:
+        context = dict(self.usage_context or {})
+        if not context:
+            return
+
+        usage = dict(self.last_usage_metadata or {})
+        cost = estimate_gemini_usage_cost(actual_model, usage)
+        metadata = dict(context.get("metadata") or {})
+        for key in ("prompt_size_chars", "estimated_prompt_tokens", "max_output_tokens", "request_kind"):
+            if key in context:
+                metadata[key] = context.get(key)
+        metadata.update(
+            {
+                "model_family": cost.get("model_family"),
+                "long_context_pricing": bool(cost.get("long_context_pricing")),
+            }
+        )
+        used_fallback = bool(actual_model and actual_model != self.model_name)
+
+        try:
+            from utils.database.ai_usage_db import record_ai_usage_event
+
+            record_ai_usage_event(
+                company_id=context.get("company_id"),
+                user_id=context.get("user_id"),
+                run_id=context.get("run_id"),
+                task_key=str(context.get("task_key") or ""),
+                module_key=str(context.get("module_key") or "unknown"),
+                agent_key=str(context.get("agent_key") or ""),
+                source=str(context.get("source") or ""),
+                model=str(actual_model or self.model_name),
+                primary_model=str(self.model_name or ""),
+                fallback_model=str(self._get_fallback_model() or ""),
+                used_fallback=used_fallback,
+                usage=usage,
+                cost=cost,
+                metadata=metadata,
+            )
+        except Exception as exc:
+            log.warning(f"AI usage ledger yozilmadi: {exc}")
 
     def create_cache(
         self,
@@ -352,7 +436,7 @@ class GeminiHelper:
                 last_error = e
 
                 # Transient xato (503/unavailable): kalit yaxshi, server band —
-                # GEMINI_FALLBACK_MODEL bilan urinib ko'rish (flash default retry bilan)
+                # Explicit fallback model bo'lsa, shu model bilan urinib ko'rish.
                 if self._is_transient_error(e):
                     fallback_model = self._get_fallback_model()
                     if cached_content and not fallback_cached_content:

@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 
 import { AnalysisStatusBannerView } from "@/components/analysis-status-banner";
+import { PreflightChecksView } from "@/components/preflight-checks";
 import { PRDetailsStack } from "@/components/pr-details-stack";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -33,9 +34,17 @@ import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
 import { SectionHeader } from "@/components/ui/section-header";
 import { SettingsBaseCard } from "@/components/settings/base-card-system";
-import { useRecentRuns, type RecentRun } from "@/lib/use-recent-runs";
+import {
+  getOpenRunStorageKey,
+  useRecentRuns,
+  type RecentRun,
+  type RecentRunScope,
+} from "@/lib/use-recent-runs";
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { cn } from "@/lib/cn";
+import { getModuleRunErrorMessage, normalizeModuleRunErrorPayload } from "@/lib/module-errors";
 import type {
+  ModuleRunErrorPayload,
   TZPRAgentRunSnapshot,
   TZPRAnalysisResult,
   TZPRExecutionMode,
@@ -51,28 +60,28 @@ type RequirementFilter = "all" | "completed" | "failed" | "skipped" | "extra";
 
 const DEFAULT_EXECUTION_MODE: TZPRExecutionMode = "multi_agent";
 const RUN_POLL_INTERVAL_MS = 2000;
-const HISTORY_OPEN_STORAGE_KEY = "qa.open-run.tz_pr_checker";
+const MODULE_KEY = "tz_pr_checker";
 
 const FALLBACK_AGENTS: TZPRAgentRunSnapshot[] = [
   {
     agent_key: "agent1_scope_builder",
     agent_label: "Scope Builder",
     agent_order: 1,
-    primary_model: "gemini",
+    primary_model: "",
     state: "pending",
   },
   {
     agent_key: "agent2_verifier",
     agent_label: "Verifier",
     agent_order: 2,
-    primary_model: "gemini",
+    primary_model: "",
     state: "pending",
   },
   {
     agent_key: "agent3_arbiter",
     agent_label: "Arbiter",
     agent_order: 3,
-    primary_model: "gemini",
+    primary_model: "",
     state: "pending",
   },
 ];
@@ -752,13 +761,19 @@ function StatCard({
   );
 }
 
-export function TZPRChecker() {
+type TZPRCheckerProps = {
+  recentScope?: RecentRunScope;
+};
+
+export function TZPRChecker({ recentScope }: TZPRCheckerProps) {
   const [taskKey, setTaskKey] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [moduleError, setModuleError] = useState<ModuleRunErrorPayload | null>(null);
   const [result, setResult] = useState<TZPRAnalysisResult | null>(null);
   const [activeRun, setActiveRun] = useState<TZPRRunSnapshot | null>(null);
-  const { recent, addRecent } = useRecentRuns("tz_pr_checker");
+  const { recent, addRecent, removeRecent } = useRecentRuns(MODULE_KEY, recentScope);
+  const openRunStorageKey = getOpenRunStorageKey(MODULE_KEY, recentScope);
   const [requirementFilter, setRequirementFilter] = useState<RequirementFilter>("all");
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
 
@@ -795,7 +810,7 @@ export function TZPRChecker() {
   const figmaSummaries = result?.figma_data?.summaries || [];
   const showRunSignals = Boolean((result?.warnings || []).length || figmaSummaries.length);
   const runEvents = agentPanelRun?.run_events || result?.run_events || [];
-  const debugJson = agentPanelRun ? JSON.stringify(agentPanelRun, null, 2) : "";
+  const canCopyDebug = Boolean(agentPanelRun || result || moduleError || error);
 
   useEffect(() => {
     const runId = activeRun?.run_id;
@@ -839,13 +854,13 @@ export function TZPRChecker() {
 
   useEffect(() => {
     setCopyState("idle");
-  }, [agentPanelRun?.run_id, agentPanelRun?.updated_at]);
+  }, [agentPanelRun?.run_id, agentPanelRun?.updated_at, result?.task_key, moduleError?.error, error]);
 
   useEffect(() => {
     try {
-      const raw = window.sessionStorage.getItem(HISTORY_OPEN_STORAGE_KEY);
+      const raw = window.sessionStorage.getItem(openRunStorageKey);
       if (!raw) return;
-      window.sessionStorage.removeItem(HISTORY_OPEN_STORAGE_KEY);
+      window.sessionStorage.removeItem(openRunStorageKey);
       const entry = JSON.parse(raw) as RecentRun | null;
       if (entry?.run_id?.trim()) {
         void reopenRun(entry);
@@ -853,7 +868,7 @@ export function TZPRChecker() {
     } catch {
       /* Historydan auto-open bo'lmasa, sahifa oddiy holatda qoladi. */
     }
-  }, []);
+  }, [openRunStorageKey]);
 
   function rememberRun(snapshot: TZPRRunSnapshot) {
     const runId = snapshot.run_id?.trim();
@@ -868,6 +883,7 @@ export function TZPRChecker() {
   }
 
   function applyRunSnapshot(snapshot: TZPRRunSnapshot, options?: { persistFinal?: boolean }) {
+    setModuleError(null);
     setActiveRun(snapshot);
 
     // Run yaratilishi/yangilanishi bilanoq recent ro'yxatga yoziladi (dedupe hook ichida).
@@ -894,6 +910,7 @@ export function TZPRChecker() {
     if (submitting || runInProgress) return;
     setSubmitting(true);
     setError(null);
+    setModuleError(null);
     setResult(null);
     setActiveRun(null);
     setRequirementFilter("all");
@@ -907,6 +924,9 @@ export function TZPRChecker() {
         | (TZPRRunSnapshot & { error?: string })
         | null;
       if (!response.ok) {
+        if (response.status === 403 || response.status === 404) {
+          removeRecent(entry.run_id);
+        }
         setError(payload?.error || "Eski runni yuklab bo'lmadi.");
         return;
       }
@@ -930,29 +950,36 @@ export function TZPRChecker() {
   }
 
   async function copyDebugJson() {
+    const debugPayload = agentPanelRun || result || moduleError || (
+      error
+        ? {
+          copied_at: new Date().toISOString(),
+          error,
+          module_key: "tz_pr_checker",
+          task_key: taskKey.trim().toUpperCase() || null,
+        }
+        : null
+    );
+    const debugJson = debugPayload ? JSON.stringify(debugPayload, null, 2) : "";
     if (!debugJson.trim()) {
       setCopyState("error");
       return;
     }
 
-    try {
-      await navigator.clipboard.writeText(debugJson);
+    const copied = await copyTextToClipboard(debugJson);
+    if (copied) {
       setCopyState("copied");
       window.setTimeout(() => setCopyState("idle"), 1600);
-    } catch {
+    } else {
       setCopyState("error");
     }
   }
 
   async function startRun() {
     const normalizedTaskKey = taskKey.trim().toUpperCase();
-    if (!normalizedTaskKey) {
-      setError("Task key kiriting.");
-      return;
-    }
-
     setSubmitting(true);
     setError(null);
+    setModuleError(null);
     setResult(null);
     setActiveRun(null);
     setRequirementFilter("all");
@@ -974,7 +1001,17 @@ export function TZPRChecker() {
         | null;
 
       if (!response.ok) {
-        setError(payload?.error || "TZ-PR multi-agent run yaratib bo'lmadi.");
+        const normalizedError = normalizeModuleRunErrorPayload(payload, {
+          moduleKey: "tz_pr_checker",
+          taskKey: normalizedTaskKey,
+          message: "TZ-PR multi-agent run yaratib bo'lmadi.",
+        });
+        setModuleError(normalizedError);
+        setError(
+          normalizedError.status_banner
+            ? null
+            : getModuleRunErrorMessage(normalizedError, "TZ-PR multi-agent run yaratib bo'lmadi."),
+        );
         return;
       }
       if (!payload) {
@@ -1007,6 +1044,7 @@ export function TZPRChecker() {
     }
     setResult(null);
     setActiveRun(null);
+    setModuleError(null);
     setError(null);
     setRequirementFilter("all");
     setCopyState("idle");
@@ -1047,7 +1085,7 @@ export function TZPRChecker() {
               <Badge tone="soft">{recent.length}</Badge>
             </Link>
           </Button>
-          {agentPanelRun ? (
+          {canCopyDebug ? (
             <Button onClick={() => void copyDebugJson()} size="sm" type="button" variant="ghost">
               <Copy size={14} />
               {copyState === "copied" ? "Nusxalandi" : copyState === "error" ? "Copy xatosi" : "Copy JSON"}
@@ -1066,6 +1104,11 @@ export function TZPRChecker() {
           ) : null}
         </div>
       </div>
+
+      {moduleError?.status_banner ? <AnalysisStatusBannerView banner={moduleError.status_banner} /> : null}
+      {moduleError?.preflight_checks?.length ? <PreflightChecksView checks={moduleError.preflight_checks} /> : null}
+      {result?.status_banner ? <AnalysisStatusBannerView banner={result.status_banner} /> : null}
+      {error ? <Notice tone="error">{error}</Notice> : null}
 
       {showRunCard ? (
         <section className="grid gap-4">
@@ -1159,9 +1202,6 @@ export function TZPRChecker() {
           ) : null}
         </div>
       ) : null}
-
-      {error ? <Notice tone="error">{error}</Notice> : null}
-      {result?.status_banner ? <AnalysisStatusBannerView banner={result.status_banner} /> : null}
 
       {result?.success ? (
         <div className="grid gap-5">

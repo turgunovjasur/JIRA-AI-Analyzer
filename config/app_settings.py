@@ -187,9 +187,9 @@ class TZPRCheckerSettings:
     show_contradictory_comments: bool = True
 
     # ━━━ Comment Bo'limlarini Ko'rsatish ━━━
-    # Faqat bu ro'yxatdagi bo'limlar JIRA comment'ga yoziladigan (token tejash)
+    # UI final report va JIRA comment bir xil canonical bo'lim contractidan foydalanadi.
     visible_sections: List[str] = field(default_factory=lambda: [
-        'completed', 'partial', 'failed', 'issues', 'figma'
+        'completed', 'failed', 'skipped', 'issues', 'figma'
     ])
 
     # ━━━ Webhook Filtrlari ━━━
@@ -277,12 +277,12 @@ class TZPRCheckerSettings:
         "Agent2 bir Gemini chaqiruvida nechta requirement tekshirishi. "
         "1 = eski per-requirement rejim, 6 = default batch."
     )
-    agent1_primary_model_help: str = "Agent1 Scope Builder primary modeli. Bo'sh bo'lsa global default meros olinadi."
-    agent1_fallback_model_help: str = "Agent1 Scope Builder fallback modeli. Bo'sh bo'lsa global default meros olinadi."
-    agent2_primary_model_help: str = "Agent2 Verifier primary modeli. Bo'sh bo'lsa global default meros olinadi."
-    agent2_fallback_model_help: str = "Agent2 Verifier fallback modeli. Bo'sh bo'lsa global default meros olinadi."
-    agent3_primary_model_help: str = "Agent3 Arbiter primary modeli. Bo'sh bo'lsa global default meros olinadi."
-    agent3_fallback_model_help: str = "Agent3 Arbiter fallback modeli. Bo'sh bo'lsa global default meros olinadi."
+    agent1_primary_model_help: str = "Agent1 Scope Builder primary modeli. Bo'sh bo'lsa global default meros olinadi; global ham bo'sh bo'lsa modul ishga tushmaydi."
+    agent1_fallback_model_help: str = "Agent1 Scope Builder fallback modeli. Bo'sh bo'lsa global default meros olinadi; global ham bo'sh bo'lsa fallback ishlamaydi."
+    agent2_primary_model_help: str = "Agent2 Verifier primary modeli. Bo'sh bo'lsa global default meros olinadi; global ham bo'sh bo'lsa modul ishga tushmaydi."
+    agent2_fallback_model_help: str = "Agent2 Verifier fallback modeli. Bo'sh bo'lsa global default meros olinadi; global ham bo'sh bo'lsa fallback ishlamaydi."
+    agent3_primary_model_help: str = "Agent3 Arbiter primary modeli. Bo'sh bo'lsa global default meros olinadi; global ham bo'sh bo'lsa modul ishga tushmaydi."
+    agent3_fallback_model_help: str = "Agent3 Arbiter fallback modeli. Bo'sh bo'lsa global default meros olinadi; global ham bo'sh bo'lsa fallback ishlamaydi."
     auto_return_help: str = "Moslik past bo'lganda avtomatik Return statusga o'tkazish"
     trigger_status_help: str = "Qaysi statusda TZ-PR tekshirish boshlanadi"
     trigger_aliases_help: str = "Trigger status uchun alternativ nomlar (vergul bilan ajrating)"
@@ -297,10 +297,11 @@ class TZPRCheckerSettings:
     recheck_comment_help: str = "Task qaytarildigan so'ng yana tekshirilayotgan bo'lganda ko'rinadigan xabar"
     read_comments_help: str = "JIRA task comment'larini AI ga yuborish. O'chirilsa faqat TZ asosida ishlaydi"
     max_comments_help: str = "AI ga yuborilgan comment'lar soni. 0 = barcha comment'lar"
-    show_contradictory_comments_help: str = "Zid commentlar (TZ ni o'zgartiruvchi) panelini JIRA comment'da ko'rsatish"
+    show_contradictory_comments_help: str = (
+        "Legacy flag. Checker final report UI va webhook commentda bir xil canonical section contract orqali render qilinadi."
+    )
     visible_sections_help: str = (
-        "JIRA comment'ga yoziladigan bo'limlar. "
-        "O'chirilgan bo'limlar comment'ga kiritmaydi (token tejash)."
+        "Checker final report bo'limlari: UI HTML ko'rinishida, webhook esa JIRA comment ko'rinishida bir xil contractni render qiladi."
     )
     max_skip_check_comments_help: str = (
         "AI_SKIP kodi qidirilayotganda JIRA ning oxirgi nechta commenti tekshiriladi. "
@@ -308,6 +309,7 @@ class TZPRCheckerSettings:
     )
 
     _AI_DATA_ORDER_ALLOWED = ("tz", "comments", "figma", "code")
+    _VISIBLE_SECTIONS_ALLOWED = ("completed", "failed", "skipped", "issues", "figma")
 
     def __post_init__(self):
         """Sozlamalar validatsiyasi — noto'g'ri qiymatlar exception chiqaradi"""
@@ -327,6 +329,17 @@ class TZPRCheckerSettings:
             raise ValueError(
                 f"max_skip_check_comments {self.max_skip_check_comments} noto'g'ri: 1 dan katta bo'lishi kerak"
             )
+        visible_sections = []
+        for item in self.visible_sections or []:
+            key = str(item or "").strip()
+            if key in {"partial", "contradictory_comments"} or not key or key in visible_sections:
+                continue
+            if key not in self._VISIBLE_SECTIONS_ALLOWED:
+                raise ValueError(
+                    f"visible_sections noto'g'ri: {key}. Ruxsat: {list(self._VISIBLE_SECTIONS_ALLOWED)}"
+                )
+            visible_sections.append(key)
+        self.visible_sections = visible_sections or ["completed", "failed", "skipped", "issues", "figma"]
         # ai_data_section_order: faqat ruxsat etilgan qiymatlar, takrorlanishsiz
         order = list(dict.fromkeys(self.ai_data_section_order or []))
         invalid = [x for x in order if x not in self._AI_DATA_ORDER_ALLOWED]
@@ -399,12 +412,12 @@ class TestcaseGeneratorSettings:
     test_types_help: str = "Default test turlari: positive (asosiy), negative (xato holatlari)"
     testcases_per_requirement_help: str = "Har bir talab uchun yoziladigan test case soni (1-3). Default: 3"
     ai_max_output_tokens_help: str = "AI javob uchun maksimal token soni (platform policy bo'yicha boshqariladi)"
-    agent1_primary_model_help: str = "Testcase Agent1 Requirements primary modeli. Bo'sh bo'lsa global default meros olinadi."
-    agent1_fallback_model_help: str = "Testcase Agent1 Requirements fallback modeli. Bo'sh bo'lsa global default meros olinadi."
-    agent2_primary_model_help: str = "Testcase Agent2 Generator primary modeli. Bo'sh bo'lsa global default meros olinadi."
-    agent2_fallback_model_help: str = "Testcase Agent2 Generator fallback modeli. Bo'sh bo'lsa global default meros olinadi."
-    agent3_primary_model_help: str = "Testcase Agent3 Auditor primary modeli. Bo'sh bo'lsa global default meros olinadi."
-    agent3_fallback_model_help: str = "Testcase Agent3 Auditor fallback modeli. Bo'sh bo'lsa global default meros olinadi."
+    agent1_primary_model_help: str = "Testcase Agent1 Requirements primary modeli. Bo'sh bo'lsa global default meros olinadi; global ham bo'sh bo'lsa modul ishga tushmaydi."
+    agent1_fallback_model_help: str = "Testcase Agent1 Requirements fallback modeli. Bo'sh bo'lsa global default meros olinadi; global ham bo'sh bo'lsa fallback ishlamaydi."
+    agent2_primary_model_help: str = "Testcase Agent2 Generator primary modeli. Bo'sh bo'lsa global default meros olinadi; global ham bo'sh bo'lsa modul ishga tushmaydi."
+    agent2_fallback_model_help: str = "Testcase Agent2 Generator fallback modeli. Bo'sh bo'lsa global default meros olinadi; global ham bo'sh bo'lsa fallback ishlamaydi."
+    agent3_primary_model_help: str = "Testcase Agent3 Auditor primary modeli. Bo'sh bo'lsa global default meros olinadi; global ham bo'sh bo'lsa modul ishga tushmaydi."
+    agent3_fallback_model_help: str = "Testcase Agent3 Auditor fallback modeli. Bo'sh bo'lsa global default meros olinadi; global ham bo'sh bo'lsa fallback ishlamaydi."
     ai_data_section_order_help: str = (
         "AI ga ma'lumotlar qaysi tartibda berilishi. Birinchi o'rinda eng ustun. "
         "tz = TZ, comments = comment'lar, custom_context = qo'shimcha kontekst, "
@@ -477,76 +490,75 @@ class QueueSettings:
     blocked_check_interval: int = 30   # DEFAULT 30 sek
     # API KEY muzlatish muddati — limit xatosida (sekund)
     key_freeze_duration: int = 600     # DEFAULT 600 sek (10 daqiqa)
-    # AI so'rov muvaffaqiyatsiz bo'lsa qayta urinish limiti
-    ai_max_retries: int = 3            # DEFAULT 3 marta
+    # Gemini vaqtinchalik xato (503/overload) bersa, necha marta qayta urinish
+    gemini_max_retries: int = 3        # DEFAULT 3 marta
     # Gemini ga yuboriladigan max input token soni
     ai_max_input_tokens: int = AI_MAX_INPUT_TOKENS  # DEFAULT 900K (Gemini 2.5 Flash limit 1M)
     # Token hisoblash koeffitsiyenti (1 token ≈ nechta belgi)
     chars_per_token: int = CHARS_PER_TOKEN           # DEFAULT 4 belgi
-    # DB lock/retry kutish budjeti (millisekund)
-    db_busy_timeout: int = 30000       # DEFAULT 30000 ms (30 sek)
-    # DB ulanish timeout (sekund)
+    # DB ulanish (pool'dan bo'sh ulanish kutish) timeout (sekund)
     db_connection_timeout: int = 30    # DEFAULT 30 sek
     # GitHub/API so'rov timeout (sekund)
     http_timeout: int = 30             # DEFAULT 30 sek
     # Testcase executor yakunlash timeout (sekund)
     executor_timeout: int = 120        # DEFAULT 120 sek (2 daqiqa)
 
-    # Yordam matnlari
-    queue_enabled_help: str = "Ko'p task birdan kelgan bo'lsa queue ile birma-bir tekshirish (AI rate limit himoya)"
+    # Yordam matnlari (UI'da har sozlama yonida ko'rsatiladi — sodda, misol bilan)
+    queue_enabled_help: str = (
+        "Bir kompaniyada ko'p task birdan 'Testing'ga tushsa, ularni birma-bir (navbat bilan) "
+        "tekshirish. Yoqilgan (tavsiya): Gemini'ni urib qulashdan saqlaydi. O'chirilgan: "
+        "hammasi birdan ishlaydi — faqat juda kuchli Gemini kvotasi bo'lsa."
+    )
     task_wait_timeout_help: str = (
-        "Birinci task ishlanmoqda, ikkinchi keldi — ikkinchi qancha sekunda kutadi? "
-        "Timeout etgan bo'lsa JIRA'ga error comment yoziladi va task manual tekshirishga qoladi."
+        "Navbatda turgan task eng ko'p necha SEKUND kutadi. Shu vaqtda ham navbat bo'shamasa, "
+        "task 'blocked' bo'ladi va keyinroq avtomatik qayta urinadi (yo'qolmaydi). "
+        "Misol: 60 = 1 daqiqa kutadi."
     )
     checker_testcase_delay_help: str = (
-        "Bitta task ichida checker comment yozgandan so'ng, testcase commentgacha "
-        "qancha sekunda kutiladi? Bu AI rate limit'dan himoya qiladi."
+        "Bitta task ichida checker (Servis-1) izohini yozgandan keyin, testcase (Servis-2) "
+        "boshlanguncha necha SEKUND kutiladi. Bu Gemini'ga ikki so'rovni juda yaqin yubormaslik uchun. "
+        "Misol: 15 = 15 soniya."
     )
     blocked_retry_delay_help: str = (
-        "AI timeout yoki 429 limit sabab blocked bo'lgan task necha daqiqadan keyin "
-        "qayta ishga tushiriladi. Masalan: 5 daqiqa = 5 daqiqadan keyin qayta urinadi."
+        "Gemini band bo'lib (timeout yoki 429 kvota) bloklangan task necha DAQIQAdan keyin qayta urinadi. "
+        "Misol: 5 = 5 daqiqadan keyin yana sinab ko'radi."
     )
     gemini_min_interval_help: str = (
-        "Gemini AI ga ketma-ket so'rov yuborishda min kutish vaqti (sekund). "
-        "Google rate limit: 10 so'rov/daqiqa = 6 sekund. "
-        "Agar limitga tushsangiz bu qiymatni oshiring."
+        "Gemini'ga ketma-ket so'rovlar orasida eng kam necha SEKUND tanaffus. "
+        "Google bepul limiti: 10 so'rov/daqiqa = har 6 soniyada 1 ta. "
+        "Tez-tez '429 limit' ko'rsangiz bu qiymatni oshiring."
     )
     blocked_check_interval_help: str = (
-        "Blocked bo'lgan tasklar uchun scheduler har necha sekundda DB ni tekshiradi. "
-        "Kichik qiymat — tezroq retry, katta qiymat — kamroq DB yuklanma."
+        "Bloklangan tasklarni qayta urinish uchun tizim har necha SEKUNDda tekshirib turadi. "
+        "Kichik = tezroq qayta urinadi (DB'ga ko'proq yuk); katta = kamroq tekshiradi."
     )
     key_freeze_duration_help: str = (
-        "Gemini API KEY_1 limit xatosi bo'lganda, KEY_1 necha sekundga muzlatiladi. "
-        "Bu vaqt ichida faqat KEY_2 ishlatiladi. Muddat tugagach KEY_1 ga qaytiladi."
+        "Bir Gemini kaliti '429 kvota' xatosi bersa, o'sha kalit necha SEKUNDga 'dam oladi' (muzlatiladi). "
+        "Shu vaqt ichida boshqa kalit ishlatiladi. Misol: 600 = 10 daqiqa."
     )
-    ai_max_retries_help: str = (
-        "AI so'rov muvaffaqiyatsiz bo'lganda necha marta qayta urinish. "
-        "Har bir urinish orasida kutish bo'ladi."
+    gemini_max_retries_help: str = (
+        "Gemini vaqtincha band bo'lsa (503/overload), so'rov necha MARTA qayta urinadi "
+        "(har urinish orasida ko'payib boruvchi tanaffus: 5s → 10s → 20s). Misol: 3 = 3 marta sinaydi."
     )
     ai_max_input_tokens_help: str = (
-        "Gemini AI ga yuboriladigan max input token soni. "
-        "Gemini 2.5 Flash limiti 1M token. Platform policy bo'yicha boshqariladi. "
-        "Katta TZ+PR lar uchun oshirish mumkin."
+        "Gemini'ga yuboriladigan matn (TZ + PR) eng ko'p necha TOKEN bo'lishi mumkin. "
+        "Gemini 2.5 limiti ~1M token. Juda katta TZ/PR kesilmasligi uchun oshirish mumkin."
     )
     chars_per_token_help: str = (
-        "Token hisoblash koeffitsiyenti — 1 token taxminan nechta belgiga teng. "
-        "Platform policy bo'yicha boshqariladi."
-    )
-    db_busy_timeout_help: str = (
-        "DB lock/retry holatlarida qancha vaqt kutish budjeti beriladi (millisekund). "
-        "30000 = 30 sekund."
+        "Matn uzunligini token soniga taxminan o'girish koeffitsiyenti (1 token ≈ shuncha belgi). "
+        "Odatda 4. Faqat token hisobini aniqlashtirish uchun."
     )
     db_connection_timeout_help: str = (
-        "DB ga ulanish ochish timeout (sekund). "
-        "Normal sharoitda 30 sekund yetarli."
+        "Bazaga ulanish (pool'dan bo'sh ulanish) olishda eng ko'p necha SEKUND kutiladi. "
+        "Hammasi band bo'lsa shuncha kutib, bo'lmasa xato beradi. Odatda 30 yetarli."
     )
     http_timeout_help: str = (
-        "GitHub API va boshqa HTTP so'rovlar uchun timeout (sekund). "
-        "Sekin internet yoki katta repository bo'lsa oshiring."
+        "Tashqi xizmatlarga (GitHub, JIRA, Figma) HTTP so'rovlar uchun timeout (SEKUND). "
+        "Sekin internet yoki katta repository/fayl bo'lsa oshiring. Odatda 30 yetarli."
     )
     executor_timeout_help: str = (
-        "Testcase generation executor yakunlash timeout (sekund). "
-        "Katta task bo'lsa va AI javob sekin bo'lsa oshiring. 120 = 2 daqiqa."
+        "Testcase yaratish jarayoni eng ko'p necha SEKUND ishlashi mumkin. "
+        "Katta task va sekin AI javobida oshiring. Misol: 120 = 2 daqiqa."
     )
 
     def __post_init__(self):
@@ -566,6 +578,10 @@ class QueueSettings:
         if self.key_freeze_duration <= 0:
             raise ValueError(
                 f"key_freeze_duration {self.key_freeze_duration}s noto'g'ri: 0 dan katta bo'lishi kerak"
+            )
+        if self.gemini_max_retries <= 0:
+            raise ValueError(
+                f"gemini_max_retries {self.gemini_max_retries} noto'g'ri: 0 dan katta bo'lishi kerak"
             )
         if not 0 < self.ai_max_input_tokens <= 2_000_000:
             raise ValueError(
@@ -822,12 +838,12 @@ class AppSettingsManager:
 _settings_manager: Optional[AppSettingsManager] = None
 
 _CHECKER_AGENT_MODEL_DEFAULTS = {
-    "agent1_primary_model": "gemini-2.5-flash",
-    "agent1_fallback_model": "gemini-2.5-flash",
-    "agent2_primary_model": "gemini-2.5-pro",
-    "agent2_fallback_model": "gemini-2.5-flash",
-    "agent3_primary_model": "gemini-2.5-flash",
-    "agent3_fallback_model": "gemini-2.5-flash",
+    "agent1_primary_model": "",
+    "agent1_fallback_model": "",
+    "agent2_primary_model": "",
+    "agent2_fallback_model": "",
+    "agent3_primary_model": "",
+    "agent3_fallback_model": "",
 }
 
 _CHECKER_AGENT_MODEL_GLOBAL_KEYS = {
@@ -836,12 +852,12 @@ _CHECKER_AGENT_MODEL_GLOBAL_KEYS = {
 }
 
 _TESTCASE_AGENT_MODEL_DEFAULTS = {
-    "agent1_primary_model": "gemini-2.5-flash",
-    "agent1_fallback_model": "gemini-2.5-flash",
-    "agent2_primary_model": "gemini-2.5-pro",
-    "agent2_fallback_model": "gemini-2.5-flash",
-    "agent3_primary_model": "gemini-2.5-flash",
-    "agent3_fallback_model": "gemini-2.5-flash",
+    "agent1_primary_model": "",
+    "agent1_fallback_model": "",
+    "agent2_primary_model": "",
+    "agent2_fallback_model": "",
+    "agent3_primary_model": "",
+    "agent3_fallback_model": "",
 }
 
 _TESTCASE_AGENT_MODEL_GLOBAL_KEYS = {
@@ -850,6 +866,13 @@ _TESTCASE_AGENT_MODEL_GLOBAL_KEYS = {
 }
 
 _AGENT_MODEL_OVERRIDE_FIELDS = set(_CHECKER_AGENT_MODEL_DEFAULTS) | set(_TESTCASE_AGENT_MODEL_DEFAULTS)
+_QUEUE_COMPANY_OVERRIDE_FIELDS = set()
+
+
+def _company_queue_overrides(raw_queue: dict) -> dict:
+    if not isinstance(raw_queue, dict):
+        return {}
+    return {key: value for key, value in raw_queue.items() if key in _QUEUE_COMPANY_OVERRIDE_FIELDS}
 
 
 def _parse_positive_int_or_default(raw: str, default: int) -> int:
@@ -864,8 +887,8 @@ def _apply_global_queue_overrides(settings: AppSettings) -> AppSettings:
     """
     Platform-level (super admin) queue override qiymatlarini qo'llash.
 
-    Bu override'lar global_setting jadvalidan o'qiladi va company-level queue
-    sozlamalari bilan birga yakuniy runtime qiymatni shakllantiradi.
+    Bu override'lar global_setting jadvalidan o'qiladi va platform queue
+    fieldlari uchun company override'larini chetlab o'tadi.
     """
     try:
         from utils.auth.auth_db import get_global_setting
@@ -874,17 +897,34 @@ def _apply_global_queue_overrides(settings: AppSettings) -> AppSettings:
 
     current = settings.queue
     queue_overrides = {
-        "ai_max_retries": _parse_positive_int_or_default(
-            get_global_setting("queue_ai_max_retries", str(current.ai_max_retries)),
-            current.ai_max_retries,
+        "queue_enabled": True,
+        "task_wait_timeout": _parse_positive_int_or_default(
+            get_global_setting("queue_task_wait_timeout_sec", str(current.task_wait_timeout)),
+            current.task_wait_timeout,
+        ),
+        "checker_testcase_delay": _parse_positive_int_or_default(
+            get_global_setting("queue_checker_testcase_delay_sec", str(current.checker_testcase_delay)),
+            current.checker_testcase_delay,
+        ),
+        "blocked_retry_delay": _parse_positive_int_or_default(
+            get_global_setting("queue_blocked_retry_delay_min", str(current.blocked_retry_delay)),
+            current.blocked_retry_delay,
+        ),
+        "gemini_min_interval": _parse_positive_int_or_default(
+            get_global_setting("queue_gemini_min_interval_sec", str(current.gemini_min_interval)),
+            current.gemini_min_interval,
+        ),
+        "blocked_check_interval": _parse_positive_int_or_default(
+            get_global_setting("queue_blocked_check_interval_sec", str(current.blocked_check_interval)),
+            current.blocked_check_interval,
+        ),
+        "gemini_max_retries": _parse_positive_int_or_default(
+            get_global_setting("queue_gemini_max_retries", str(current.gemini_max_retries)),
+            current.gemini_max_retries,
         ),
         "key_freeze_duration": _parse_positive_int_or_default(
             get_global_setting("queue_key_freeze_duration_sec", str(current.key_freeze_duration)),
             current.key_freeze_duration,
-        ),
-        "db_busy_timeout": _parse_positive_int_or_default(
-            get_global_setting("queue_db_busy_timeout_ms", str(current.db_busy_timeout)),
-            current.db_busy_timeout,
         ),
         "db_connection_timeout": _parse_positive_int_or_default(
             get_global_setting("queue_db_connection_timeout_sec", str(current.db_connection_timeout)),
@@ -909,7 +949,8 @@ def _apply_global_checker_overrides(settings: AppSettings) -> AppSettings:
     Platform-level (super admin) TZ-PR agent model defaultlarini qo'llash.
 
     Company/user settings bo'sh string qoldirsa, bu global qiymatlar meros bo'lib
-    ishlaydi. Yangi Gemini model nomlari kod validatsiyasisiz saqlanishi mumkin.
+    ishlaydi. Global qiymat ham bo'sh bo'lsa hardcoded modelga tushilmaydi.
+    Yangi Gemini model nomlari kod validatsiyasisiz saqlanishi mumkin.
     """
     try:
         from utils.auth.auth_db import get_global_setting
@@ -931,7 +972,8 @@ def _apply_global_testcase_overrides(settings: AppSettings) -> AppSettings:
     Platform-level (super admin) Testcase agent model defaultlarini qo'llash.
 
     Company/user settings bo'sh string qoldirsa, bu global qiymatlar meros bo'lib
-    ishlaydi. Checker kabi model nomlari kod validatsiyasisiz saqlanadi.
+    ishlaydi. Global qiymat ham bo'sh bo'lsa hardcoded modelga tushilmaydi.
+    Checker kabi model nomlari kod validatsiyasisiz saqlanadi.
     """
     try:
         from utils.auth.auth_db import get_global_setting
@@ -993,7 +1035,7 @@ def get_app_settings_for_company(company_id: int) -> AppSettings:
     Ishlash tartibi:
     1. Global default sozlamalar yuklanadi (app_settings.json)
     2. DB dan kompaniyaning module_settings JSON o'qiladi
-    3. Kompaniya sozlamalari global default ustiga yoziladi (override)
+    3. Kompaniya sozlamalari global default ustiga yoziladi (queue platform fieldlari bundan mustasno)
     4. AppSettings qaytariladi
 
     Agar kompaniyada modul sozlamalari bo'lmasa — global default qaytariladi.
@@ -1045,7 +1087,7 @@ def get_app_settings_for_company(company_id: int) -> AppSettings:
         webhook_tz_pr=merged_webhook_tz_pr,
         testcase_generator=base.testcase_generator,
         webhook_testcase=merged_webhook_testcase,
-        queue=_merge(base.queue,                       company_wh.get('queue', {})),
+        queue=_merge(base.queue,                       _company_queue_overrides(company_wh.get('queue', {}))),
     )
     return _enforce_token_policy(settings)
 
@@ -1057,7 +1099,7 @@ def get_app_settings_for_user(user_id: int, company_id: int) -> AppSettings:
     Ishlash tartibi:
     - Standalone modullar (tz_pr_checker, testcase_generator, bug_analyzer, statistics)
       → user_module_settings DB dan (har user izolyatsiyalangan)
-    - Webhook modullar (webhook_tz_pr, webhook_testcase, queue)
+    - Webhook modullar (webhook_tz_pr, webhook_testcase, queue tenant fieldlari)
       → company_settings.webhook_module_settings DB dan (kompaniya uchun umumiy)
     - Modul ko'rinishi → company enabled_modules dan
     - Agar DB da topilmasa → global default (app_settings.json) ishlatiladi
@@ -1110,6 +1152,6 @@ def get_app_settings_for_user(user_id: int, company_id: int) -> AppSettings:
         webhook_tz_pr=merged_webhook_tz_pr,
         testcase_generator=_merge(base.testcase_generator, user_mods.get('testcase_generator', {})),
         webhook_testcase=merged_webhook_testcase,
-        queue=_merge(base.queue,                          company_wh.get('queue', {})),
+        queue=_merge(base.queue,                          _company_queue_overrides(company_wh.get('queue', {}))),
     )
     return _enforce_token_policy(settings)

@@ -21,7 +21,6 @@ from utils.database.task_repository import (
     fetch_status_history_for_report as repo_fetch_status_history_for_report,
 )
 from utils.database.job_queue_repository import (
-    ensure_job_queue_tables,
     enqueue_job as repo_enqueue_job,
     claim_next_job as repo_claim_next_job,
     mark_job_done as repo_mark_job_done,
@@ -29,7 +28,6 @@ from utils.database.job_queue_repository import (
     mark_job_failed as repo_mark_job_failed,
     fetch_queue_snapshot as repo_fetch_queue_snapshot,
 )
-from utils.database.checker_run_repository import ensure_checker_run_tables
 
 log = get_logger("database")
 
@@ -52,31 +50,32 @@ def _get_db_settings():
 
 
 def init_db() -> None:
-    """PostgreSQL runtime jadvallarini idempotent yaratish/tekshirish."""
+    """PostgreSQL schemani versiyalangan migratsiya orqali tayyorlash.
+
+    Runtime jadvallar (job_queue/checker/analysis) endi har ulanishda emas, shu
+    yerda — startup'da bir marta ensure qilinadi (P2: hot-path DDL olib tashlandi).
+    """
     try:
-        settings = _get_db_settings()
-        conn = connect_processing_db(timeout=settings.db_connection_timeout)
-        ensure_job_queue_tables(conn)
-        ensure_checker_run_tables(conn)
-        conn.close()
+        from utils.database.migrations import run_migrations
+        run_migrations()
         log.info("DB initialized (postgres runtime)")
 
     except Exception as e:
         log.warning(f"DB initialization error: {e}")
         raise
 
-def get_task(task_id: str) -> Optional[Dict[str, Any]]:
+def get_task(task_id: str, company_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
     """Berilgan task_id bo'yicha task ma'lumotlarini PostgreSQLdan o'qish."""
     try:
         settings = _get_db_settings()
-        return fetch_task_by_id(connect_processing_db, task_id, settings.db_connection_timeout)
+        return fetch_task_by_id(connect_processing_db, task_id, settings.db_connection_timeout, company_id=company_id)
 
     except Exception as e:
         log.warning(f"[{task_id}] get_task error: {e}")
         return None
 
 
-def upsert_task(task_id: str, fields: Dict[str, Any]) -> None:
+def upsert_task(task_id: str, fields: Dict[str, Any], company_id: Optional[int] = None) -> None:
     """
     Task ma'lumotlarini yangilash (UPDATE) yoki yangi yaratish (INSERT).
 
@@ -103,6 +102,7 @@ def upsert_task(task_id: str, fields: Dict[str, Any]) -> None:
             task_id,
             fields,
             settings.db_connection_timeout,
+            company_id=company_id,
         )
 
     except Exception as e:
@@ -146,20 +146,20 @@ def mark_progressing(task_id: str, jira_status: str, update_time: Optional[datet
     if company_id is not None:
         fields['company_id'] = company_id
 
-    upsert_task(task_id, fields)
+    upsert_task(task_id, fields, company_id=company_id)
 
 
-def mark_completed(task_id: str):
+def mark_completed(task_id: str, company_id: Optional[int] = None):
     """
     Task holatini 'completed' ga o'zgartirish
     """
     upsert_task(task_id, {
         'task_status': 'completed',
         'last_processed_at': datetime.now().isoformat()
-    })
+    }, company_id=company_id)
 
 
-def mark_returned(task_id: str) -> None:
+def mark_returned(task_id: str, company_id: Optional[int] = None) -> None:
     """
     Task holatini ``'returned'`` ga o'zgartirish — task TZ/PR muammo sababli qaytarilganda.
 
@@ -187,10 +187,10 @@ def mark_returned(task_id: str) -> None:
         'service2_status': 'pending',  # Service2 pending (error emas)
         'service2_error': None,
         'last_processed_at': datetime.now().isoformat()
-    })
+    }, company_id=company_id)
 
 
-def mark_returned_pr_not_merged(task_id: str) -> None:
+def mark_returned_pr_not_merged(task_id: str, company_id: Optional[int] = None) -> None:
     """
     PR merged emas sababli task qaytarilganda DB holatini belgilash.
 
@@ -219,10 +219,10 @@ def mark_returned_pr_not_merged(task_id: str) -> None:
         'service2_error': None,
         'compliance_score': None,       # Eski ball tozalanadi
         'last_processed_at': datetime.now().isoformat()
-    })
+    }, company_id=company_id)
 
 
-def mark_error(task_id: str, error_message: str):
+def mark_error(task_id: str, error_message: str, company_id: Optional[int] = None):
     """
     Task holatini 'error' ga o'zgartirish
     
@@ -234,22 +234,22 @@ def mark_error(task_id: str, error_message: str):
         'task_status': 'error',
         'error_message': error_message,
         'last_processed_at': datetime.now().isoformat()
-    })
+    }, company_id=company_id)
 
 
-def increment_return_count(task_id: str):
+def increment_return_count(task_id: str, company_id: Optional[int] = None):
     """
     Return count ni 1 ga oshirish
     """
-    task = get_task(task_id)
+    task = get_task(task_id, company_id=company_id)
     if task:
         new_count = (task.get('return_count') or 0) + 1
-        upsert_task(task_id, {'return_count': new_count})
+        upsert_task(task_id, {'return_count': new_count}, company_id=company_id)
     else:
-        upsert_task(task_id, {'return_count': 1})
+        upsert_task(task_id, {'return_count': 1}, company_id=company_id)
 
 
-def set_return_reason(task_id: str, reason: str) -> None:
+def set_return_reason(task_id: str, reason: str, company_id: Optional[int] = None) -> None:
     """
     Task qaytarilish sababini DB ga saqlash.
 
@@ -259,10 +259,10 @@ def set_return_reason(task_id: str, reason: str) -> None:
     Navbatdagi signal kelganda servis bu codeni o'qib,
     qanday harakat qilishini belgilaydi.
     """
-    upsert_task(task_id, {'return_reason': reason})
+    upsert_task(task_id, {'return_reason': reason}, company_id=company_id)
 
 
-def set_skip_detected(task_id: str):
+def set_skip_detected(task_id: str, company_id: Optional[int] = None):
     """
     Skip detected flag ni True ga o'rnatish
     """
@@ -270,10 +270,10 @@ def set_skip_detected(task_id: str):
         'skip_detected': True,
         'task_status': 'completed',  # yoki 'skipped'
         'last_processed_at': datetime.now().isoformat()
-    })
+    }, company_id=company_id)
 
 
-def set_service1_done(task_id: str, compliance_score: Optional[int] = None):
+def set_service1_done(task_id: str, compliance_score: Optional[int] = None, company_id: Optional[int] = None):
     """
     Service1 (TZ-PR) holatini 'done' ga o'zgartirish
     
@@ -289,10 +289,15 @@ def set_service1_done(task_id: str, compliance_score: Optional[int] = None):
     if compliance_score is not None:
         fields['compliance_score'] = compliance_score
     
-    upsert_task(task_id, fields)
+    upsert_task(task_id, fields, company_id=company_id)
 
 
-def set_service1_error(task_id: str, error_msg: str, keep_service2_pending: bool = False) -> None:
+def set_service1_error(
+    task_id: str,
+    error_msg: str,
+    keep_service2_pending: bool = False,
+    company_id: Optional[int] = None,
+) -> None:
     """
     Service1 (TZ-PR checker) holatini ``'error'`` ga o'zgartirish.
 
@@ -333,10 +338,10 @@ def set_service1_error(task_id: str, error_msg: str, keep_service2_pending: bool
         fields['service2_status'] = 'error'
         fields['service2_error'] = 'Blocked by Service1 failure'
 
-    upsert_task(task_id, fields)
+    upsert_task(task_id, fields, company_id=company_id)
 
 
-def set_service2_done(task_id: str):
+def set_service2_done(task_id: str, company_id: Optional[int] = None):
     """
     Service2 (Testcase) holatini 'done' ga o'zgartirish
     """
@@ -346,10 +351,10 @@ def set_service2_done(task_id: str):
         'service2_error': None,
         'task_status': 'completed',
         'last_processed_at': datetime.now().isoformat()
-    })
+    }, company_id=company_id)
 
 
-def set_service2_error(task_id: str, error_msg: str):
+def set_service2_error(task_id: str, error_msg: str, company_id: Optional[int] = None):
     """
     Service2 (Testcase) holatini 'error' ga o'zgartirish
     
@@ -362,10 +367,10 @@ def set_service2_error(task_id: str, error_msg: str):
         'service2_error': error_msg,
         'task_status': 'error',
         'last_processed_at': datetime.now().isoformat()
-    })
+    }, company_id=company_id)
 
 
-def set_task_timeout_error(task_id: str, error_msg: str):
+def set_task_timeout_error(task_id: str, error_msg: str, company_id: Optional[int] = None):
     """
     Task queue timeout xatosi - barcha servislar error holatga
 
@@ -381,10 +386,10 @@ def set_task_timeout_error(task_id: str, error_msg: str):
         'service2_error': 'Blocked by timeout',
         'error_message': error_msg,
         'last_processed_at': datetime.now().isoformat()
-    })
+    }, company_id=company_id)
 
 
-def mark_blocked(task_id: str, reason: str, retry_minutes: int = 5):
+def mark_blocked(task_id: str, reason: str, retry_minutes: int = 5, company_id: Optional[int] = None):
     """
     Task holatini 'blocked' ga o'zgartirish (AI timeout/429 limit)
 
@@ -402,10 +407,10 @@ def mark_blocked(task_id: str, reason: str, retry_minutes: int = 5):
         'blocked_retry_at': retry_at.isoformat(),
         'block_reason': reason,
         'last_processed_at': now.isoformat()
-    })
+    }, company_id=company_id)
 
 
-def set_service1_blocked(task_id: str, reason: str, retry_minutes: int = 5):
+def set_service1_blocked(task_id: str, reason: str, retry_minutes: int = 5, company_id: Optional[int] = None):
     """
     Service1 ni 'blocked' va task ni 'blocked' ga o'zgartirish
     Service2 'pending' qoladi
@@ -427,10 +432,10 @@ def set_service1_blocked(task_id: str, reason: str, retry_minutes: int = 5):
         'blocked_retry_at': retry_at.isoformat(),
         'block_reason': reason,
         'last_processed_at': now.isoformat()
-    })
+    }, company_id=company_id)
 
 
-def set_service2_blocked(task_id: str, reason: str, retry_minutes: int = 5):
+def set_service2_blocked(task_id: str, reason: str, retry_minutes: int = 5, company_id: Optional[int] = None):
     """
     Service2 ni 'blocked' va task ni 'blocked' ga o'zgartirish
     Service1 o'zgarmaydi (done yoki skip)
@@ -451,10 +456,10 @@ def set_service2_blocked(task_id: str, reason: str, retry_minutes: int = 5):
         'blocked_retry_at': retry_at.isoformat(),
         'block_reason': reason,
         'last_processed_at': now.isoformat()
-    })
+    }, company_id=company_id)
 
 
-def set_service1_skip(task_id: str):
+def set_service1_skip(task_id: str, company_id: Optional[int] = None):
     """
     Service1 ni 'skip' ga o'zgartirish (AI_SKIP code topilganda)
     Score 100 qo'yiladi (threshold check o'tishi uchun)
@@ -465,7 +470,7 @@ def set_service1_skip(task_id: str):
         'service1_error': None,
         'compliance_score': 100,
         'skip_detected': True
-    })
+    }, company_id=company_id)
 
 
 def get_blocked_tasks_ready_for_retry() -> List[Dict[str, Any]]:
@@ -533,7 +538,7 @@ def delete_task(task_id: str, company_id: Optional[int] = None) -> bool:
         return False
 
 
-def reset_service_statuses(task_id: str) -> None:
+def reset_service_statuses(task_id: str, company_id: Optional[int] = None) -> None:
     """
     Servis holatlarini noldan boshlash uchun qayta tiklash (re-check stsenariysida).
 
@@ -569,7 +574,7 @@ def reset_service_statuses(task_id: str) -> None:
         'service1_done_at': None,
         'service2_done_at': None,
         'compliance_score': None
-    })
+    }, company_id=company_id)
 
 
 def _extract_task_type(task_details: Dict) -> str:
@@ -692,7 +697,8 @@ def _extract_features_from_pr_files(pr_files: List[Dict]) -> tuple:
 def update_task_metadata(
     task_id: str,
     task_details: Dict,
-    pr_info: Optional[Dict] = None
+    pr_info: Optional[Dict] = None,
+    company_id: Optional[int] = None,
 ):
     """
     Update task metadata: assignee, task_type, feature_name, technology_stack.
@@ -719,7 +725,7 @@ def update_task_metadata(
             'task_type': task_type,
             'feature_name': feature_name,
             'technology_stack': technology_stack
-        })
+        }, company_id=company_id)
 
     except Exception as e:
         log.warning(f"[{task_id}] Metadata update error: {e}")
@@ -816,7 +822,7 @@ def log_status_change(
         log.warning(f"[{task_id}] log_status_change error: {e}")
 
 
-def get_status_history_for_report(days: int = 30) -> List[Dict[str, Any]]:
+def get_status_history_for_report(days: int = 30, company_id: Optional[int] = None) -> List[Dict[str, Any]]:
     """
     Sprint report uchun status o'zgarishlar tarixini o'qish.
 
@@ -833,7 +839,7 @@ def get_status_history_for_report(days: int = 30) -> List[Dict[str, Any]]:
         List[Dict]: Tarix qatorlari ro'yxati
     """
     try:
-        return repo_fetch_status_history_for_report(connect_processing_db, days)
+        return repo_fetch_status_history_for_report(connect_processing_db, days, company_id=company_id)
 
     except Exception as e:
         log.warning(f"get_status_history_for_report error: {e}")

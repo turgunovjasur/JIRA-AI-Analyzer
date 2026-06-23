@@ -20,6 +20,56 @@ if TYPE_CHECKING:
 log = get_logger("webhook.skip_detector")
 
 
+def _comment_body(comment) -> str:
+    if isinstance(comment, dict):
+        return str(comment.get("body") or "")
+    return str(getattr(comment, "body", "") or "")
+
+
+def _comment_author(comment) -> str:
+    if isinstance(comment, dict):
+        return str(comment.get("author") or "Unknown")
+    author = getattr(comment, "author", None)
+    return str(getattr(author, "displayName", None) or getattr(author, "name", None) or "Unknown")
+
+
+def _comment_created(comment) -> str:
+    if isinstance(comment, dict):
+        return str(comment.get("created") or "")
+    return str(getattr(comment, "created", "") or "")
+
+
+def check_skip_code_in_comments(
+        task_key: str,
+        skip_code: str,
+        comments,
+        *,
+        max_comments: int,
+) -> bool:
+    """Oldindan olingan commentlar ichidan skip code'ni qidirish."""
+    code = str(skip_code or "").strip()
+    if not code:
+        return False
+
+    try:
+        comments_to_check = int(max_comments)
+    except (TypeError, ValueError):
+        comments_to_check = 5
+    if comments_to_check <= 0:
+        comments_to_check = 5
+
+    recent_comments = list(comments or [])[-comments_to_check:]
+    for comment in reversed(recent_comments):
+        comment_body = _comment_body(comment)
+        if code.upper() in comment_body.upper():
+            log.info(
+                f"[{task_key}] Skip code '{code}' topildi: "
+                f"author={_comment_author(comment)}, created={_comment_created(comment)}"
+            )
+            return True
+    return False
+
+
 async def _check_skip_code(
         task_key: str,
         skip_code: str,
@@ -66,23 +116,18 @@ async def _check_skip_code(
             try:
                 from config.app_settings import get_app_settings
 
-                comments_to_check = int(get_app_settings().tz_pr_checker.max_skip_check_comments)
+                comments_to_check = int(get_app_settings().webhook_tz_pr.max_skip_check_comments)
             except Exception:
                 comments_to_check = 5
             if comments_to_check <= 0:
                 comments_to_check = 5
 
-        # Faqat so'nggi N ta comment tekshiriladi (performance uchun)
-        for comment in comments[:comments_to_check]:
-            comment_body = comment.body if comment.body else ""
-            if skip_code.upper() in comment_body.upper():
-                log.info(
-                    f"[{task_key}] Skip code '{skip_code}' topildi: "
-                    f"author={comment.author.displayName}, created={comment.created}"
-                )
-                return True
-
-        return False
+        return check_skip_code_in_comments(
+            task_key,
+            skip_code,
+            comments,
+            max_comments=comments_to_check,
+        )
 
     except Exception as e:
         log.error(f"[{task_key}] Skip code check xato: {e}")

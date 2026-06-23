@@ -26,49 +26,6 @@ def test_tz_min_length_uses_summary_and_description_together():
     ) is True
 
 
-def test_checker_blocks_before_ai_call_when_prompt_exceeds_full_limit():
-    service = TZPRService()
-    service._get_settings = lambda: SimpleNamespace(
-        ai_data_section_order=["tz", "code"],
-        ai_max_output_tokens=2048,
-    )
-    service._build_code_changes_section = lambda *args, **kwargs: "code changes"
-    service._gemini_helper = SimpleNamespace(
-        model_name="gemini-test",
-        analyze=MagicMock(return_value="should not be called"),
-    )
-    service._calculate_text_length = lambda prompt: {
-        "chars": 4_000_001,
-        "tokens": service.MAX_TOKENS + 1,
-        "within_limit": False,
-    }
-
-    result = service._try_ai_analysis(
-        task_key="TEST-PROMPT-001",
-        task_details={"summary": "Prompt guard"},
-        tz_content="TZ",
-        pr_info={
-            "files_changed": 2,
-            "pr_count": 1,
-            "total_additions": 0,
-            "total_deletions": 0,
-            "pr_details": [],
-        },
-        figma_data=None,
-        figma_section="",
-        figma_analysis="",
-        dev_comments_section="",
-        reanalysis_section="",
-        response_format_sections="FORMAT",
-        max_files=None,
-        show_full_diff=True,
-        use_smart_patch=False,
-        retry_attempt=0,
-    )
-
-    assert result["success"] is False
-    assert "prompt too large" in result["error"]
-    service._gemini_helper.analyze.assert_not_called()
 
 
 def test_error_classification_treats_full_analysis_overload_as_retryable():

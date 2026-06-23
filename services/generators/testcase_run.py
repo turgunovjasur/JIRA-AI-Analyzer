@@ -32,9 +32,30 @@ EXECUTION_MODE = "multi_agent"
 
 # Seed qilinadigan agentlar (testcase: talab ajratuvchi + test case yozuvchi + auditor).
 _AGENTS = [
-    {"agent_key": "agent1_requirements", "agent_label": "Agent1 — Talablar", "agent_order": 1, "state": "pending"},
-    {"agent_key": "agent2_testcase", "agent_label": "Agent2 — Test case", "agent_order": 2, "state": "pending"},
-    {"agent_key": "agent3_audit", "agent_label": "Agent3 — Audit", "agent_order": 3, "state": "pending"},
+    {
+        "agent_key": "agent1_requirements",
+        "agent_label": "Agent1 — Talablar",
+        "agent_order": 1,
+        "primary_model": "",
+        "fallback_model": "",
+        "state": "pending",
+    },
+    {
+        "agent_key": "agent2_testcase",
+        "agent_label": "Agent2 — Test case",
+        "agent_order": 2,
+        "primary_model": "",
+        "fallback_model": "",
+        "state": "pending",
+    },
+    {
+        "agent_key": "agent3_audit",
+        "agent_label": "Agent3 — Audit",
+        "agent_order": 3,
+        "primary_model": "",
+        "fallback_model": "",
+        "state": "pending",
+    },
 ]
 
 _AGENT_INPUT_SUMMARIES = {
@@ -42,6 +63,41 @@ _AGENT_INPUT_SUMMARIES = {
     "agent2_testcase": "Agent1 ajratgan talablar, real TZ va user qo'shimcha buyrug'i asosida testcase yoziladi.",
     "agent3_audit": "Agent2 yozgan testcase'lar duplicate, expected result va scenario grouping bo'yicha tekshiriladi.",
 }
+
+_AGENT_MODEL_FIELDS = {
+    "agent1_requirements": ("agent1_primary_model", "agent1_fallback_model"),
+    "agent2_testcase": ("agent2_primary_model", "agent2_fallback_model"),
+    "agent3_audit": ("agent3_primary_model", "agent3_fallback_model"),
+}
+
+
+def _resolve_agent_model_names(settings: Any, agent_key: str) -> tuple[str, str]:
+    primary_field, fallback_field = _AGENT_MODEL_FIELDS.get(agent_key, ("", ""))
+    primary = str(getattr(settings, primary_field, "") or "").strip()
+    fallback = str(getattr(settings, fallback_field, "") or "").strip()
+    return primary, fallback
+
+
+def _build_testcase_agent_sequence(settings: Any | None = None) -> list[dict[str, Any]]:
+    agents = []
+    for item in _AGENTS:
+        agent = dict(item)
+        if settings is not None:
+            primary, fallback = _resolve_agent_model_names(settings, str(agent.get("agent_key") or ""))
+            agent["primary_model"] = primary
+            agent["fallback_model"] = fallback
+        agents.append(agent)
+    return agents
+
+
+def _resolve_testcase_settings(company_id: int | None, user_id: int | None):
+    from config.app_settings import get_app_settings, get_app_settings_for_company, get_app_settings_for_user
+
+    if user_id is not None and company_id is not None:
+        return get_app_settings_for_user(user_id, company_id).testcase_generator
+    if company_id is not None:
+        return get_app_settings_for_company(company_id).webhook_testcase
+    return get_app_settings().testcase_generator
 
 
 def _now() -> str:
@@ -60,6 +116,11 @@ def create_testcase_run(
 ) -> dict[str, Any]:
     """Testcase run yaratadi (queued). Snapshot qaytaradi (run_id ichida)."""
     run_id = f"tc-{uuid.uuid4().hex}"
+    agents = _AGENTS
+    try:
+        agents = _build_testcase_agent_sequence(_resolve_testcase_settings(company_id, user_id))
+    except Exception:
+        agents = _AGENTS
     return create_analysis_run_record(
         run_id=run_id,
         module_key=MODULE_KEY,
@@ -75,7 +136,7 @@ def create_testcase_run(
             "custom_context": custom_context or "",
             "execution_mode": EXECUTION_MODE,
         },
-        agents=_AGENTS,
+        agents=agents,
     )
 
 
@@ -85,6 +146,21 @@ def execute_testcase_run(run_id: str) -> dict[str, Any] | None:
     if not snapshot:
         raise RuntimeError(f"Testcase run topilmadi: {run_id}")
     return _TestcaseRunExecutor(snapshot).run()
+
+
+def run_testcase_for_webhook(run_id: str):
+    """Run'ni bajaradi va JONLI `TestCaseGenerationResult` obyektini qaytaradi.
+
+    UI yo'li (`execute_testcase_run`) snapshot dict qaytaradi (brauzer o'qiydi).
+    Webhook esa natijani JIRA comment formatter'iga uzatadi — engine bir xil,
+    faqat qaytariladigan ko'rinish farq qiladi.
+    """
+    snapshot = get_analysis_run_snapshot(run_id)
+    if not snapshot:
+        raise RuntimeError(f"Testcase run topilmadi: {run_id}")
+    executor = _TestcaseRunExecutor(snapshot)
+    executor.run()
+    return executor.final_result_obj
 
 
 class _TestcaseRunExecutor:
@@ -98,6 +174,8 @@ class _TestcaseRunExecutor:
         self._agent2_started = False
         self._agent3_started = False
         self._agent_events: dict[str, list[dict[str, str]]] = {item["agent_key"]: [] for item in _AGENTS}
+        # Webhook yetkazib berish qatlami uchun jonli natija obyekti (asdict EMAS).
+        self.final_result_obj: Any | None = None
 
     def run(self) -> dict[str, Any] | None:
         update_analysis_run_record(
@@ -125,6 +203,9 @@ class _TestcaseRunExecutor:
         except Exception as exc:
             log.log_error(self.task_key or "?", "testcase_run", str(exc))
             return self._finish(run_state="error", final_result=None, error_message=f"Kutilmagan xatolik: {exc}")
+
+        # Webhook yetkazib berish qatlami jonli result obyektini oladi (success/fail farqsiz).
+        self.final_result_obj = result
 
         if not getattr(result, "success", False):
             self._fail_active_agent(getattr(result, "error_message", "") or "")

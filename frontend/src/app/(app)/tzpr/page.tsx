@@ -18,5 +18,13 @@ export default async function TZPRPage() {
     );
   }
 
-  return <TZPRChecker />;
+  return (
+    <TZPRChecker
+      recentScope={{
+        companyId: session.auth.company_id ?? null,
+        role: session.auth.role ?? null,
+        userId: session.auth.user_id ?? null,
+      }}
+    />
+  );
 }

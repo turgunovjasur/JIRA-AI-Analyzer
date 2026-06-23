@@ -20,6 +20,15 @@ from utils.jira.task_details_cache import (
 _log = get_logger("jira.client")
 
 
+def _http_timeout(default: int = 30) -> int:
+    """Tashqi HTTP so'rovlar timeouti — `queue.http_timeout` sozlamasidan (lazy)."""
+    try:
+        from config.app_settings import get_app_settings
+        return int(get_app_settings(force_reload=False).queue.http_timeout) or default
+    except Exception:
+        return default
+
+
 class JiraClient:
     """JIRA API bilan ishlash"""
 
@@ -144,10 +153,20 @@ class JiraClient:
             print(f"❌ JIRA ulanish xatosi: {e}")
             return False
 
-    def get_issue(self, issue_key: str, expand: str = 'changelog,renderedFields') -> Optional[Any]:
+    def get_issue(
+            self,
+            issue_key: str,
+            expand: str = 'changelog,renderedFields',
+            fields: Optional[str] = None,
+    ) -> Optional[Any]:
         """Bitta issue ni olish"""
         try:
-            issue = self.client.issue(issue_key, expand=expand)
+            kwargs = {}
+            if expand is not None:
+                kwargs["expand"] = expand
+            if fields is not None:
+                kwargs["fields"] = fields
+            issue = self.client.issue(issue_key, **kwargs)
             return issue
         except Exception as e:
             print(f"❌ Issue olishda xatolik: {e}")
@@ -168,6 +187,85 @@ class JiraClient:
                 ) from e
             return None
 
+    def _task_detail_fields(self) -> str:
+        fields = [
+            "summary",
+            "description",
+            "issuetype",
+            "status",
+            "assignee",
+            "reporter",
+            "priority",
+            self.story_points_field,
+            self.pr_field,
+            "created",
+            "resolutiondate",
+            "labels",
+            "components",
+        ]
+        return ",".join(dict.fromkeys(field for field in fields if field))
+
+    def _normalize_comment(self, comment: Any) -> Dict[str, Any]:
+        def _value(key: str, default: Any = None) -> Any:
+            if isinstance(comment, dict):
+                return comment.get(key, default)
+            return getattr(comment, key, default)
+
+        created = str(_value("created", "") or "")
+        return {
+            "author": self._resolve_user_name(_value("author"), "Unknown"),
+            "body": _value("body", "") or "",
+            "created": created[:16].replace("T", " ") if created else "",
+        }
+
+    def _comments_from_issue_fields(self, fields: Any) -> List[Dict]:
+        comments = []
+        if hasattr(fields, 'comment') and hasattr(fields.comment, 'comments'):
+            for comment in fields.comment.comments:
+                comments.append(self._normalize_comment(comment))
+        return comments
+
+    def _fetch_recent_comments(self, issue_key: str, max_comments: int) -> Optional[List[Dict]]:
+        """JIRA comment endpointidan faqat oxirgi N ta commentni olish."""
+        try:
+            limit = int(max_comments)
+        except (TypeError, ValueError):
+            return None
+        if limit <= 0:
+            return None
+
+        url = f"{self.server}/rest/api/2/issue/{issue_key}/comment"
+        try:
+            first = requests.get(
+                url,
+                auth=(self.email, self.token),
+                params={"startAt": 0, "maxResults": 1, "orderBy": "created"},
+                timeout=_http_timeout(),
+            )
+            if first.status_code != 200:
+                _log.warning(f"JIRA comments API status={first.status_code}: {first.text[:200]}")
+                return None
+
+            first_payload = first.json() or {}
+            total = int(first_payload.get("total") or 0)
+            start_at = max(total - limit, 0)
+
+            response = requests.get(
+                url,
+                auth=(self.email, self.token),
+                params={"startAt": start_at, "maxResults": limit, "orderBy": "created"},
+                timeout=_http_timeout(),
+            )
+            if response.status_code != 200:
+                _log.warning(f"JIRA comments API status={response.status_code}: {response.text[:200]}")
+                return None
+
+            payload = response.json() or {}
+            return [self._normalize_comment(item) for item in payload.get("comments", []) or []]
+        except Exception as exc:
+            _log.warning(f"JIRA comments API error: {exc}")
+            return None
+
     def get_task_details(
             self,
             issue_key: str,
@@ -175,13 +273,21 @@ class JiraClient:
             include_pr_urls: bool = True,
             include_figma_links: bool = True,
             use_cache: bool = True,
+            max_comments_to_read: int | None = None,
     ) -> Optional[Dict]:
         """
         Task ning asosiy ma'lumotlarini olish (TZ uchun)
 
         ✅ YANGI: figma_links field qo'shildi!
         """
+        try:
+            comment_limit = int(max_comments_to_read or 0)
+        except (TypeError, ValueError):
+            comment_limit = 0
+        limited_comments = comment_limit > 0
+
         cache_key = make_task_details_cache_key(self.server, self.email, issue_key)
+        use_cache = bool(use_cache and not limited_comments)
         if use_cache:
             cached = get_cached_task_details(
                 cache_key,
@@ -216,21 +322,26 @@ class JiraClient:
                     )
                 return cached_task
 
-        issue = self.get_issue(issue_key)
+        issue = self.get_issue(
+            issue_key,
+            fields=self._task_detail_fields() if limited_comments else None,
+        )
         if not issue:
             return None
 
         fields = issue.fields
 
         # Comments olish
-        comments = []
-        if hasattr(fields, 'comment') and hasattr(fields.comment, 'comments'):
-            for c in fields.comment.comments:
-                comments.append({
-                    'author': self._resolve_user_name(c.author, 'Unknown'),
-                    'body': c.body,
-                    'created': c.created[:16].replace('T', ' ')
-                })
+        comments = self._fetch_recent_comments(issue_key, comment_limit) if limited_comments else None
+        if comments is None and limited_comments:
+            fallback_issue = self.get_issue(issue_key)
+            if fallback_issue:
+                issue = fallback_issue
+                fields = fallback_issue.fields
+        if comments is None:
+            comments = self._comments_from_issue_fields(fields)
+            if limited_comments and comments:
+                comments = comments[-comment_limit:]
 
         task_details = {
             'issue_id': str(getattr(issue, 'id', '') or ''),
@@ -358,7 +469,7 @@ class JiraClient:
                 url,
                 auth=(self.email, self.token),
                 params=params,
-                timeout=10
+                timeout=_http_timeout()
             )
 
             if response.status_code == 200:

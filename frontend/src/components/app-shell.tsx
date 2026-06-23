@@ -3,6 +3,7 @@
 import { startTransition, useEffect, useState } from "react";
 import {
   Activity,
+  AlertTriangle,
   LayoutDashboard,
   LogOut,
   Moon,
@@ -21,6 +22,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import type { SessionResponse } from "@/lib/types";
+import { clearRunHistoryStorage } from "@/lib/use-recent-runs";
 
 type NavSection = "Workspace" | "Administration";
 
@@ -124,6 +126,48 @@ function getPageMeta(pathname: string) {
   return map[pathname] ?? { kicker: "Workspace", title: pathname.slice(1) || "Dashboard" };
 }
 
+function parseBillingDate(value: string | null | undefined) {
+  const raw = String(value || "").slice(0, 10);
+  if (!raw) return null;
+  const date = new Date(`${raw}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatBillingDate(value: string | null | undefined) {
+  const raw = String(value || "").slice(0, 10);
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return raw;
+  return `${match[3]}.${match[2]}.${match[1]}`;
+}
+
+function daysUntilBillingEnd(value: string | null | undefined) {
+  const date = parseBillingDate(value);
+  if (!date) return null;
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.ceil((date.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+function getSubscriptionAlert(session: SessionResponse) {
+  if (session.auth.role === "super_admin") return null;
+  const subscription = session.companySubscription;
+  const status = String(subscription?.subscription_status || "").trim().toLowerCase();
+  if (!["active", "trial", "past_due"].includes(status)) return null;
+
+  const endDate = subscription?.billing_end_date || "";
+  const daysLeft = daysUntilBillingEnd(endDate);
+  if (daysLeft === null || daysLeft > 1) return null;
+
+  const formattedEndDate = formatBillingDate(endDate);
+  if (daysLeft < 0) {
+    return `Obuna muddati ${formattedEndDate} kuni tugagan. Super admin muddatni uzaytirguncha billing ogohlantirishi ko'rinadi.`;
+  }
+  if (daysLeft === 0) {
+    return `Obuna muddati bugun (${formattedEndDate}) tugaydi. Super admin muddatni uzaytirishi kerak.`;
+  }
+  return `Obuna muddati ertaga (${formattedEndDate}) tugaydi. Super admin muddatni uzaytirishi kerak.`;
+}
+
 type AppShellProps = {
   children: ReactNode;
   session: SessionResponse;
@@ -139,6 +183,7 @@ export function AppShell({ children, session }: AppShellProps) {
   const navItems = getNavItems(session);
   const pageMeta = getPageMeta(pathname);
   const sessionCode = session.auth.company_code || "global";
+  const subscriptionAlert = getSubscriptionAlert(session);
   const navSections: NavSection[] = ["Workspace", "Administration"];
   const [theme, setTheme] = useState<ThemeMode>("light");
   const [themeReady, setThemeReady] = useState(false);
@@ -176,6 +221,7 @@ export function AppShell({ children, session }: AppShellProps) {
   }
 
   async function logout() {
+    clearRunHistoryStorage();
     await fetch("/api/auth/logout", { method: "POST" });
     startTransition(() => {
       router.push("/login");
@@ -266,6 +312,13 @@ export function AppShell({ children, session }: AppShellProps) {
             <Badge tone="soft">v2.5</Badge>
           </div>
         </header>
+
+        {subscriptionAlert ? (
+          <div className="qa-billing-alert" role="alert">
+            <AlertTriangle size={18} />
+            <span>{subscriptionAlert}</span>
+          </div>
+        ) : null}
 
         <div className="qa-page-body">{children}</div>
       </main>

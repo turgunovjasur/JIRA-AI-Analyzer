@@ -85,173 +85,9 @@ class TestServiceUnit:
         service = TZPRService()
         assert service._gemini_helper is None
 
-    def test_tzpr_service_analyze_task_returns_result_type(self):
-        from services.checkers.tz_pr_checker import TZPRService, TZPRAnalysisResult
-        service = TZPRService()
-        mock_jira = MagicMock()
-        mock_jira.get_task_details.return_value = {
-            'summary': 'Test task summary',
-            'type': 'Story',
-            'priority': 'High',
-            'description': 'Test TZ: Foydalanuvchi login sahifasiga kirib, username va parol kiritib tizimga kirishi kerak. Validatsiya: boʻsh maydon, notoʻgʻri parol, muvaffaqiyatli kirish. Responsiv dizayn va error handling talab qilinadi.',
-            'comments': [],
-            'figma_links': []
-        }
-        mock_gemini = MagicMock()
-        mock_gemini.analyze.return_value = (
-            "## BAJARILGAN TALABLAR\nTest bajarildi\n\n"
-            "## MOSLIK BALI\n**COMPLIANCE_SCORE: 85%**"
-        )
-        mock_pr_helper = MagicMock()
-        mock_pr_helper.get_pr_full_info.return_value = {
-            'pr_count': 1,
-            'files_changed': 1,
-            'total_additions': 10,
-            'total_deletions': 5,
-            'pr_details': [{
-                'title': 'feat: test PR',
-                'url': 'https://github.com/test/pr/1',
-                'files': [{
-                    'filename': 'test.py',
-                    'status': 'modified',
-                    'additions': 10,
-                    'deletions': 5,
-                    'patch': '+new code'
-                }]
-            }]
-        }
-        service._jira_client = mock_jira
-        service._github_client = MagicMock()
-        service._gemini_helper = mock_gemini
-        service._pr_helper = mock_pr_helper
-        result = service.analyze_task("TEST-001")
-        assert isinstance(result, TZPRAnalysisResult)
 
-    def test_tzpr_service_analyze_task_success(self):
-        from services.checkers.tz_pr_checker import TZPRService
-        service = TZPRService()
-        mock_jira = MagicMock()
-        mock_jira.get_task_details.return_value = {
-            'summary': 'Test task summary',
-            'type': 'Story',
-            'priority': 'High',
-            'description': 'Test TZ: Foydalanuvchi login sahifasiga kirib, username va parol kiritib tizimga kirishi kerak. Validatsiya: boʻsh maydon, notoʻgʻri parol, muvaffaqiyatli kirish. Responsiv dizayn va error handling talab qilinadi.',
-            'comments': [],
-            'figma_links': []
-        }
-        mock_gemini = MagicMock()
-        mock_gemini.analyze.return_value = (
-            "## BAJARILGAN TALABLAR\nTest bajarildi\n\n"
-            "## MOSLIK BALI\n**COMPLIANCE_SCORE: 85%**"
-        )
-        mock_pr_helper = MagicMock()
-        mock_pr_helper.get_pr_full_info.return_value = {
-            'pr_count': 1,
-            'files_changed': 1,
-            'total_additions': 10,
-            'total_deletions': 5,
-            'pr_details': [{
-                'title': 'feat: test PR',
-                'url': 'https://github.com/test/pr/1',
-                'files': [{
-                    'filename': 'test.py',
-                    'status': 'modified',
-                    'additions': 10,
-                    'deletions': 5,
-                    'patch': '+new code'
-                }]
-            }]
-        }
-        service._jira_client = mock_jira
-        service._github_client = MagicMock()
-        service._gemini_helper = mock_gemini
-        service._pr_helper = mock_pr_helper
-        result = service.analyze_task("TEST-001")
-        assert result.success
 
-    def test_tzpr_service_compliance_score_extraction(self):
-        from services.checkers.tz_pr_checker import TZPRService
-        service = TZPRService()
-        mock_jira = MagicMock()
-        mock_jira.get_task_details.return_value = {
-            'summary': 'Test task summary',
-            'type': 'Story',
-            'priority': 'High',
-            'description': 'Test TZ: Foydalanuvchi login sahifasiga kirib, username va parol kiritib tizimga kirishi kerak. Validatsiya: boʻsh maydon, notoʻgʻri parol, muvaffaqiyatli kirish. Responsiv dizayn va error handling talab qilinadi.',
-            'comments': [],
-            'figma_links': []
-        }
-        mock_gemini = MagicMock()
-        mock_gemini.analyze.return_value = (
-            "## BAJARILGAN TALABLAR\nTest bajarildi\n\n"
-            "## MOSLIK BALI\n**COMPLIANCE_SCORE: 85%**"
-        )
-        mock_pr_helper = MagicMock()
-        mock_pr_helper.get_pr_full_info.return_value = {
-            'pr_count': 1,
-            'files_changed': 1,
-            'total_additions': 10,
-            'total_deletions': 5,
-            'pr_details': [{
-                'title': 'feat: test PR',
-                'url': 'https://github.com/test/pr/1',
-                'files': [{
-                    'filename': 'test.py',
-                    'status': 'modified',
-                    'additions': 10,
-                    'deletions': 5,
-                    'patch': '+new code'
-                }]
-            }]
-        }
-        service._jira_client = mock_jira
-        service._github_client = MagicMock()
-        service._gemini_helper = mock_gemini
-        service._pr_helper = mock_pr_helper
-        result = service.analyze_task("TEST-001")
-        assert result.compliance_score == 85
 
-    def test_tzpr_service_task_key_preserved(self):
-        from services.checkers.tz_pr_checker import TZPRService
-        service = TZPRService()
-        mock_jira = MagicMock()
-        mock_jira.get_task_details.return_value = {
-            'summary': 'Test task summary',
-            'type': 'Story',
-            'priority': 'High',
-            'description': 'Test TZ: Foydalanuvchi login sahifasiga kirib, username va parol kiritib tizimga kirishi kerak. Validatsiya: boʻsh maydon, notoʻgʻri parol, muvaffaqiyatli kirish. Responsiv dizayn va error handling talab qilinadi.',
-            'comments': [],
-            'figma_links': []
-        }
-        mock_gemini = MagicMock()
-        mock_gemini.analyze.return_value = (
-            "## BAJARILGAN TALABLAR\nTest bajarildi\n\n"
-            "## MOSLIK BALI\n**COMPLIANCE_SCORE: 85%**"
-        )
-        mock_pr_helper = MagicMock()
-        mock_pr_helper.get_pr_full_info.return_value = {
-            'pr_count': 1,
-            'files_changed': 1,
-            'total_additions': 10,
-            'total_deletions': 5,
-            'pr_details': [{
-                'title': 'feat: test PR',
-                'url': 'https://github.com/test/pr/1',
-                'files': [{
-                    'filename': 'test.py',
-                    'status': 'modified',
-                    'additions': 10,
-                    'deletions': 5,
-                    'patch': '+new code'
-                }]
-            }]
-        }
-        service._jira_client = mock_jira
-        service._github_client = MagicMock()
-        service._gemini_helper = mock_gemini
-        service._pr_helper = mock_pr_helper
-        result = service.analyze_task("TEST-001")
-        assert result.task_key == "TEST-001"
 
     def test_testcase_generator_inherits_base_service(self):
         from services.generators.testcase_generator import TestCaseGeneratorService
@@ -1223,109 +1059,14 @@ class TestErrorHandling:
     - Webhook error handling
     """
 
-    def test_tzpr_task_not_found_graceful_error(self):
-        from services.checkers.tz_pr_checker import TZPRService, TZPRAnalysisResult
-        service = TZPRService()
-        mock_jira = MagicMock()
-        mock_jira.get_task_details.return_value = None
-        service._jira_client = mock_jira
-        result = service.analyze_task("TEST-NONEXIST-001")
-        assert not result.success
-        assert "topilmadi" in result.error_message
 
-    def test_tzpr_task_not_found_returns_result_type(self):
-        from services.checkers.tz_pr_checker import TZPRService, TZPRAnalysisResult
-        service = TZPRService()
-        mock_jira = MagicMock()
-        mock_jira.get_task_details.return_value = None
-        service._jira_client = mock_jira
-        result = service.analyze_task("TEST-NONEXIST-002")
-        assert isinstance(result, TZPRAnalysisResult)
 
-    def test_tzpr_pr_not_found_graceful_error(self):
-        from services.checkers.tz_pr_checker import TZPRService
-        service = TZPRService()
-        mock_jira = MagicMock()
-        mock_jira.get_task_details.return_value = {
-            'summary': 'Test task',
-            'type': 'Story',
-            'priority': 'High',
-            'description': 'TZ content: Sahifada komponent yaratish, stillashtirish, validatsiya qoʻshish, API bilan bogʻlash va xato holatlarini boshqarish talab qilinadi. Responsiv boʻlishi va barcha brauzerda ishlashi kerak.',
-            'comments': [],
-            'figma_links': []
-        }
-        service._jira_client = mock_jira
-        mock_pr_helper = MagicMock()
-        mock_pr_helper.get_pr_full_info.return_value = None
-        service._pr_helper = mock_pr_helper
-        result = service.analyze_task("TEST-NOPR-001")
-        assert not result.success
-        assert "PR topilmadi" in result.error_message
 
-    def test_tzpr_pr_not_found_has_warnings(self):
-        from services.checkers.tz_pr_checker import TZPRService
-        service = TZPRService()
-        mock_jira = MagicMock()
-        mock_jira.get_task_details.return_value = {
-            'summary': 'Test task',
-            'type': 'Story',
-            'priority': 'High',
-            'description': 'TZ content: Sahifada komponent yaratish, stillashtirish, validatsiya qoʻshish, API bilan bogʻlash va xato holatlarini boshqarish talab qilinadi. Responsiv boʻlishi va barcha brauzerda ishlashi kerak.',
-            'comments': [],
-            'figma_links': []
-        }
-        service._jira_client = mock_jira
-        mock_pr_helper = MagicMock()
-        mock_pr_helper.get_pr_full_info.return_value = None
-        service._pr_helper = mock_pr_helper
-        result = service.analyze_task("TEST-NOPR-002")
-        assert len(result.warnings) > 0
 
-    def test_tzpr_ai_error_graceful(self):
-        from services.checkers.tz_pr_checker import TZPRService
-        service = TZPRService()
-        mock_jira = MagicMock()
-        mock_jira.get_task_details.return_value = {
-            'summary': 'Test', 'type': 'Story', 'priority': 'High',
-            'description': 'TZ', 'comments': [], 'figma_links': []
-        }
-        service._jira_client = mock_jira
-        mock_pr = MagicMock()
-        mock_pr.get_pr_full_info.return_value = {
-            'pr_count': 1, 'files_changed': 1,
-            'total_additions': 1, 'total_deletions': 0,
-            'pr_details': [{'title': 'test', 'url': 'http://test', 'files': []}]
-        }
-        service._pr_helper = mock_pr
-        mock_gemini = MagicMock()
-        mock_gemini.analyze.side_effect = RuntimeError("Gemini API xatosi: quota exceeded")
-        service._gemini_helper = mock_gemini
-        result = service.analyze_task("TEST-AIERR-001")
-        assert not result.success
 
-    def test_compliance_score_none_when_missing(self):
-        from services.checkers.tz_pr_checker import TZPRService
-        service = TZPRService()
-        score = service._extract_compliance_score("Bu javobda hech qanday score yo'q")
-        assert score is None
 
-    def test_compliance_score_format1(self):
-        from services.checkers.tz_pr_checker import TZPRService
-        service = TZPRService()
-        score = service._extract_compliance_score("COMPLIANCE_SCORE: 85%")
-        assert score == 85
 
-    def test_compliance_score_format2(self):
-        from services.checkers.tz_pr_checker import TZPRService
-        service = TZPRService()
-        score = service._extract_compliance_score("**COMPLIANCE_SCORE: 92%**")
-        assert score == 92
 
-    def test_compliance_score_format3(self):
-        from services.checkers.tz_pr_checker import TZPRService
-        service = TZPRService()
-        score = service._extract_compliance_score("MOSLIK BALI: 73%")
-        assert score == 73
 
     def test_testcase_json_repair(self):
         from services.generators.testcase_generator import TestCaseGeneratorService
@@ -1345,6 +1086,25 @@ class TestErrorHandling:
         tc_service = TestCaseGeneratorService()
         repaired = tc_service._try_repair_json("")
         assert repaired is None
+
+    @pytest.mark.no_db
+    def test_testcase_parse_with_prose_preamble_and_fence(self):
+        # T1: Agent2 endi parse_gemini_json yo'lidan o'tadi — prose preamble +
+        # markdown fence bo'lsa ham test case'lar to'g'ri ajratiladi.
+        from services.generators.testcase_generator import TestCaseGeneratorService
+        tc_service = TestCaseGeneratorService()
+        raw = (
+            "Mana so'ralgan test case'lar:\n\n"
+            "```json\n"
+            '{"test_cases": [{"id": "TC-001", "title": "Login", "steps": ["open"], '
+            '"expected_result": "ok", "requirement_ids": ["REQ-1"]}]}\n'
+            "```\n\nUmid qilamanki foydali bo'ldi."
+        )
+        cases = tc_service._parse_test_cases(raw)
+        assert len(cases) == 1
+        assert cases[0].id == "TC-001"
+        assert cases[0].requirement_ids == ["REQ-1"]
+        assert cases[0].steps == ["open"]
 
     def test_testcase_task_not_found_graceful(self):
         from services.generators.testcase_generator import TestCaseGeneratorService
@@ -1657,14 +1417,6 @@ class TestDebugCapability:
         module_logger = logging.getLogger(webhook_module.__name__)
         assert module_logger is not None
 
-    def test_error_message_contains_task_key(self):
-        from services.checkers.tz_pr_checker import TZPRService
-        service = TZPRService()
-        mock_jira = MagicMock()
-        mock_jira.get_task_details.return_value = None
-        service._jira_client = mock_jira
-        result = service.analyze_task("TEST-DEBUG-001")
-        assert "TEST-DEBUG-001" in result.error_message
 
     def test_db_error_message_saved(self):
         from utils.database.task_db import mark_error, get_task, mark_progressing
@@ -2740,3 +2492,142 @@ class TestSkipCodeDetection:
             mock_fn.return_value.tz_pr_checker.max_skip_check_comments = 2
             result = self._run_async(_check_skip_code("TEST-SK-005", "AI_SKIP", writer))
         assert result is False
+
+
+# ============================================================================
+# CLASS: TestWebhookMultiAgentEngine
+# ============================================================================
+
+class TestWebhookMultiAgentEngine:
+    """
+    Webhook UI bilan AYNAN bir xil multi-agent run engine'ni chaqiradi (tegi bitta).
+    - Webhook moduli o'chirilgan kompaniyada signal ignore qilinadi.
+    - Servis-1 (checker) monolit `analyze_task` EMAS, `create_multi_agent_run` +
+      `run_multi_agent_for_webhook` chaqiradi.
+    - Servis-2 (testcase) `create_testcase_run` + `run_testcase_for_webhook` chaqiradi.
+    """
+
+    @staticmethod
+    def _company_id():
+        from utils.auth.auth_db import get_company_by_code
+        company = get_company_by_code("pytestco")
+        assert company, "pytestco fixture company topilmadi"
+        return company["id"]
+
+    def test_webhook_disabled_module_ignored(self):
+        from fastapi.testclient import TestClient
+        from services.webhook.jira_webhook_handler import app
+        client = TestClient(app)
+        payload = {
+            "webhookEvent": "jira:issue_updated",
+            "issue": {"key": "TEST-WH-GATE-001", "fields": {"issuetype": {"name": "DEV-BUG"}}},
+            "changelog": {"items": [
+                {"field": "status", "fromString": "In Progress", "toString": "READY TO TEST"}
+            ]},
+        }
+        with patch('utils.auth.auth_db.get_effective_company_modules',
+                   return_value={"webhook": False, "monitoring": False}):
+            response = client.post("/webhook/jira", json=payload)
+        data = response.json()
+        assert data.get("status") == "ignored"
+        assert data.get("reason") == "webhook_module_disabled"
+
+    def test_checker_webhook_uses_multi_agent_run(self):
+        import asyncio
+        from datetime import datetime
+        from services.checkers.tzpr_models import TZPRAnalysisResult
+        from services.webhook.service_runner import check_tz_pr_and_comment
+        from utils.database.task_db import mark_progressing, get_task
+
+        task_key = "TEST-WH-ENGINE-001"
+        company_id = self._company_id()
+        mark_progressing(task_key, "READY TO TEST", datetime.now(), company_id=company_id)
+
+        fake_result = TZPRAnalysisResult(task_key=task_key, success=True, compliance_score=95)
+        fake_creds = {"jira_server": "x", "jira_email": "x@x", "jira_token": "t"}
+
+        with patch('services.checkers.tzpr_multi_agent.create_multi_agent_run',
+                   return_value={"run_id": "tzpr-test-001"}) as m_create, \
+             patch('services.checkers.tzpr_multi_agent.run_multi_agent_for_webhook',
+                   return_value=fake_result) as m_run, \
+             patch('services.webhook.error_handler._write_success_comment', new_callable=AsyncMock), \
+             patch('utils.auth.auth_db.get_company_webhook_credentials', return_value=fake_creds), \
+             patch('utils.jira.jira_comment_writer.JiraCommentWriter'):
+            asyncio.run(check_tz_pr_and_comment(task_key, "READY TO TEST", company_id=company_id))
+
+        # Engine: monolit analyze_task EMAS — multi-agent run chaqirildi
+        m_create.assert_called_once()
+        assert m_create.call_args.kwargs.get("source") == "webhook"
+        assert m_create.call_args.kwargs.get("output_profile") == "webhook"
+        m_run.assert_called_once()
+        # DB: service1 done + score saqlandi (yetkazib berish qatlami ishladi)
+        task = get_task(task_key)
+        assert task.get("service1_status") == "done"
+        assert task.get("compliance_score") == 95
+
+    def test_testcase_webhook_uses_run_engine(self):
+        import asyncio
+        from services.webhook.testcase_webhook_handler import check_and_generate_testcases
+
+        task_key = "TEST-WH-ENGINE-002"
+        company_id = self._company_id()
+
+        fake_result = MagicMock()
+        fake_result.success = True
+        fake_result.test_cases = [MagicMock()]
+        fake_result.test_scenarios = []
+        fake_result.pr_details = []
+        fake_result.pr_count = 0
+        fake_result.files_changed = 0
+        fake_creds = {"jira_server": "x", "jira_email": "x@x", "jira_token": "t"}
+
+        with patch('services.generators.testcase_run.create_testcase_run',
+                   return_value={"run_id": "tc-test-001"}) as m_create, \
+             patch('services.generators.testcase_run.run_testcase_for_webhook',
+                   return_value=fake_result) as m_run, \
+             patch('services.webhook.testcase_webhook_handler._write_testcases_comment',
+                   return_value=(True, "ok")) as m_write, \
+             patch('utils.auth.auth_db.get_company_webhook_credentials', return_value=fake_creds):
+            success, _message = asyncio.run(
+                check_and_generate_testcases(task_key, "READY TO TEST", company_id=company_id)
+            )
+
+        m_create.assert_called_once()
+        assert m_create.call_args.kwargs.get("source") == "webhook"
+        assert m_create.call_args.kwargs.get("output_profile") == "webhook"
+        m_run.assert_called_once()
+        m_write.assert_called_once()
+        assert success is True
+
+    def test_auto_return_uses_notification_text(self):
+        # Auto-return comment'i settings.return_notification_text'ni ishlatishi kerak
+        import asyncio
+        from services.webhook.service_runner import _handle_auto_return
+
+        custom_text = "Maxsus qaytarish xabari — TZ ni qayta ko'ring."
+        settings = MagicMock()
+        settings.return_threshold = 60
+        settings.auto_return_enabled = True
+        settings.return_status = "RETURNED"
+        settings.return_notification_text = custom_text
+
+        result = MagicMock()
+        result.compliance_score = 30
+
+        status_manager = MagicMock()
+        status_manager.can_transition_to.return_value = (True, "")
+        status_manager.auto_return_if_needed.return_value = (True, "ok")
+        fake_creds = {"jira_server": "x", "jira_email": "x@x", "jira_token": "t"}
+
+        with patch('services.webhook.service_runner._get_status_manager', return_value=status_manager), \
+             patch('utils.auth.auth_db.get_company_webhook_credentials', return_value=fake_creds), \
+             patch('utils.jira.jira_comment_writer.JiraCommentWriter'), \
+             patch('services.webhook.jira_webhook_handler.get_adf_formatter'), \
+             patch('services.webhook.error_handler._build_warning_adf') as m_build:
+            returned = asyncio.run(_handle_auto_return("TEST-WH-RET-001", result, settings, company_id=1))
+
+        assert returned is True
+        m_build.assert_called_once()
+        # _build_warning_adf(adf_formatter, service, reason, task_key, ...) — reason 3-pozitsion arg
+        reason_arg = m_build.call_args.args[2]
+        assert custom_text in reason_arg

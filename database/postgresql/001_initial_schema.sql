@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS company_settings (
     webhook_figma_tokens TEXT NOT NULL DEFAULT '[]',
     webhook_gemini_api_key_1 TEXT NOT NULL DEFAULT '',
     webhook_gemini_api_key_2 TEXT NOT NULL DEFAULT '',
+    webhook_secret TEXT NOT NULL DEFAULT '',
     enabled_modules TEXT NOT NULL DEFAULT '{}',
     webhook_project_keys TEXT NOT NULL DEFAULT '',
     webhook_trigger_status TEXT NOT NULL DEFAULT '',
@@ -91,6 +92,14 @@ CREATE TABLE IF NOT EXISTS company_settings (
     webhook_return_threshold INTEGER NOT NULL DEFAULT 60,
     webhook_module_settings TEXT NOT NULL DEFAULT '{}',
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS company_webhook_project_keys (
+    company_id BIGINT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    project_key VARCHAR(64) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (company_id, project_key),
+    UNIQUE(project_key)
 );
 
 CREATE TABLE IF NOT EXISTS user_credentials (
@@ -192,10 +201,42 @@ CREATE TABLE IF NOT EXISTS job_runs (
     metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 
+CREATE TABLE IF NOT EXISTS ai_usage_events (
+    id BIGSERIAL PRIMARY KEY,
+    company_id BIGINT NULL,
+    user_id BIGINT NULL,
+    run_id TEXT NULL,
+    task_key TEXT NOT NULL DEFAULT '',
+    module_key TEXT NOT NULL,
+    agent_key TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL,
+    primary_model TEXT NOT NULL DEFAULT '',
+    fallback_model TEXT NOT NULL DEFAULT '',
+    used_fallback BOOLEAN NOT NULL DEFAULT FALSE,
+    prompt_token_count INTEGER NOT NULL DEFAULT 0,
+    candidates_token_count INTEGER NOT NULL DEFAULT 0,
+    thoughts_token_count INTEGER NOT NULL DEFAULT 0,
+    cached_content_token_count INTEGER NOT NULL DEFAULT 0,
+    total_token_count INTEGER NOT NULL DEFAULT 0,
+    billable_input_tokens INTEGER NOT NULL DEFAULT 0,
+    billable_output_tokens INTEGER NOT NULL DEFAULT 0,
+    billable_cached_tokens INTEGER NOT NULL DEFAULT 0,
+    estimated_input_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
+    estimated_output_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
+    estimated_cached_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
+    estimated_total_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
+    pricing_tier TEXT NOT NULL DEFAULT '',
+    pricing_source TEXT NOT NULL DEFAULT '',
+    cost_warning BOOLEAN NOT NULL DEFAULT FALSE,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS task_processing (
     id BIGSERIAL PRIMARY KEY,
-    task_id VARCHAR(128) NOT NULL UNIQUE,
-    company_id BIGINT REFERENCES companies(id) ON DELETE CASCADE,
+    task_id VARCHAR(128) NOT NULL,
+    company_id BIGINT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
     task_status VARCHAR(32) NOT NULL DEFAULT 'none',
     task_update_time TIMESTAMPTZ,
     return_count INTEGER NOT NULL DEFAULT 0,
@@ -219,7 +260,8 @@ CREATE TABLE IF NOT EXISTS task_processing (
     blocked_retry_at TIMESTAMPTZ,
     block_reason TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(company_id, task_id)
 );
 
 CREATE TABLE IF NOT EXISTS task_status_history (
@@ -246,5 +288,8 @@ CREATE INDEX IF NOT EXISTS idx_password_reset_user_created_at ON user_password_r
 CREATE INDEX IF NOT EXISTS idx_audit_logs_company_created_at ON audit_logs(company_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_company_status ON jobs(company_id, status);
 CREATE INDEX IF NOT EXISTS idx_job_runs_job_id_started_at ON job_runs(job_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_usage_company_created ON ai_usage_events(company_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_usage_run_id ON ai_usage_events(run_id);
+CREATE INDEX IF NOT EXISTS idx_ai_usage_module_created ON ai_usage_events(module_key, created_at DESC);
 
 COMMIT;

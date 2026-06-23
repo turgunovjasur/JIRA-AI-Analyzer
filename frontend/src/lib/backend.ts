@@ -30,6 +30,50 @@ type BackendRequestOptions = Omit<RequestInit, "body"> & {
 
 const SESSION_COOKIE = "qa_backend_session";
 
+export class BackendRequestError extends Error {
+  status: number;
+  payload: unknown;
+
+  constructor(message: string, status: number, payload: unknown) {
+    super(message);
+    this.name = "BackendRequestError";
+    this.status = status;
+    this.payload = payload;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function unwrapBackendErrorPayload(payload: unknown): unknown {
+  if (!isRecord(payload) || !("detail" in payload)) return payload;
+  const detail = payload.detail;
+  if (isRecord(detail)) return detail;
+  if (typeof detail === "string" && detail.trim()) {
+    return { success: false, error: detail, error_message: detail };
+  }
+  return payload;
+}
+
+function extractBackendErrorMessage(payload: unknown, fallback: string) {
+  const unwrapped = unwrapBackendErrorPayload(payload);
+  if (isRecord(unwrapped)) {
+    const banner = unwrapped.status_banner;
+    if (typeof unwrapped.error === "string" && unwrapped.error.trim()) return unwrapped.error;
+    if (typeof unwrapped.error_message === "string" && unwrapped.error_message.trim()) {
+      return unwrapped.error_message;
+    }
+    if (isRecord(banner) && typeof banner.message === "string" && banner.message.trim()) {
+      return banner.message;
+    }
+  }
+  if (isRecord(payload) && typeof payload.detail === "string" && payload.detail.trim()) {
+    return payload.detail;
+  }
+  return fallback || "Backend request failed";
+}
+
 async function buildBackendHeaders(existingHeaders?: HeadersInit) {
   const headers = new Headers(existingHeaders);
   if (!headers.has("Content-Type")) {
@@ -63,11 +107,12 @@ export async function backendRequest<T>(
 
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
-    const detail =
-      (payload && typeof payload === "object" && "detail" in payload
-        ? payload.detail
-        : null) || response.statusText;
-    throw new Error(typeof detail === "string" ? detail : "Backend request failed");
+    const errorPayload = unwrapBackendErrorPayload(payload);
+    throw new BackendRequestError(
+      extractBackendErrorMessage(payload, response.statusText),
+      response.status,
+      errorPayload,
+    );
   }
 
   return payload as T;
@@ -101,6 +146,7 @@ export function getBackendSession(sessionToken: string) {
     success: payload.success,
     auth: payload.auth,
     companyModules: payload.company_modules || {},
+    companySubscription: payload.company_subscription || null,
     expiresAt: payload.expires_at,
   }));
 }
@@ -242,7 +288,7 @@ export function readSystemConfigWithBackend(payload: {
 
 export function saveSystemConfigWithBackend(payload: {
   company_id?: number | null;
-  data: SystemSettingsSaveRequest;
+  data: Partial<SystemSettingsSaveRequest>;
 }) {
   return backendRequest<{ success: boolean }>("/api/settings/system/config/save", {
     method: "POST",

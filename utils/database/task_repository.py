@@ -19,16 +19,27 @@ def fetch_task_by_id(
     connect_processing: Callable[..., Any],
     task_id: str,
     timeout: float,
+    company_id: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
     conn = connect_processing(timeout=timeout, row_factory=True)
-    cursor = _execute(
-        conn,
-        """
-        SELECT * FROM task_processing
-        WHERE task_id = ?
-        """,
-        [task_id],
-    )
+    if company_id is None:
+        cursor = _execute(
+            conn,
+            """
+            SELECT * FROM task_processing
+            WHERE task_id = ?
+            """,
+            [task_id],
+        )
+    else:
+        cursor = _execute(
+            conn,
+            """
+            SELECT * FROM task_processing
+            WHERE task_id = ? AND company_id = ?
+            """,
+            [task_id, company_id],
+        )
     row = cursor.fetchone()
     conn.close()
     return _row_to_dict(row) if row else None
@@ -39,19 +50,30 @@ def upsert_task_record(
     task_id: str,
     fields: Dict[str, Any],
     timeout: float,
+    company_id: Optional[int] = None,
 ) -> None:
     payload = dict(fields)
+    scoped_company_id = company_id if company_id is not None else payload.get("company_id")
+    if scoped_company_id is not None:
+        payload["company_id"] = scoped_company_id
     conn = connect_processing(timeout=timeout)
     cursor = conn.cursor()
-    cursor.execute(_prepare_query(conn, "SELECT task_id FROM task_processing WHERE task_id = ?"), [task_id])
+    if scoped_company_id is None:
+        cursor.execute(_prepare_query(conn, "SELECT id FROM task_processing WHERE task_id = ?"), [task_id])
+    else:
+        cursor.execute(
+            _prepare_query(conn, "SELECT id FROM task_processing WHERE task_id = ? AND company_id = ?"),
+            [task_id, scoped_company_id],
+        )
     exists = cursor.fetchone()
     payload["updated_at"] = datetime.now().isoformat()
 
     if exists:
+        existing_id = exists[0] if not isinstance(exists, dict) else exists.get("id")
         set_clause = ", ".join(f"{key} = %s" for key in payload.keys())
-        values = list(payload.values()) + [task_id]
+        values = list(payload.values()) + [existing_id]
         cursor.execute(
-            _prepare_query(conn, f"UPDATE task_processing SET {set_clause} WHERE task_id = ?"),
+            _prepare_query(conn, f"UPDATE task_processing SET {set_clause} WHERE id = ?"),
             values,
         )
     else:
@@ -179,15 +201,21 @@ def insert_status_history(
 def fetch_status_history_for_report(
     connect_processing: Callable[..., Any],
     days: int,
+    company_id: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     conn = connect_processing(row_factory=True)
     cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+    company_clause = "AND company_id = ?" if company_id is not None else ""
+    params: list[Any] = [cutoff]
+    if company_id is not None:
+        params.append(company_id)
     cursor = _execute(
         conn,
-        """
+        f"""
         SELECT
             id,
             task_id,
+            company_id,
             from_status,
             to_status,
             changed_at,
@@ -196,9 +224,10 @@ def fetch_status_history_for_report(
             issue_type
         FROM task_status_history
         WHERE changed_at >= ?
+          {company_clause}
         ORDER BY task_id, changed_at ASC
         """,
-        [cutoff],
+        params,
     )
     rows = cursor.fetchall()
     conn.close()

@@ -105,6 +105,7 @@ def run_module_preflight(
             task_key,
             include_pr_urls=policy.pr_check,
             include_figma_links=policy.figma_check,
+            max_comments_to_read=max_comments_to_read,
         )
         if not task_details:
             ctx._set("jira_fetch", "fail", f"{task_key} topilmadi")

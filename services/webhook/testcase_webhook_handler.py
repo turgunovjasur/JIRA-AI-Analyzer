@@ -56,27 +56,33 @@ async def check_and_generate_testcases(
         return False, f"Status '{new_status}' is not a trigger"
 
     try:
-        # 3. Test case'lar yaratish
-        from services.generators.testcase_generator import TestCaseGeneratorService
+        # 3. Test case'lar yaratish — UI bilan AYNAN bir xil multi-agent run engine.
+        #    Faqat kirish nuqtasi (webhook) va yetkazib berish (JIRA comment) farq qiladi.
+        from services.generators.testcase_run import (
+            create_testcase_run, run_testcase_for_webhook,
+        )
 
         if company_id is not None:
-            from utils.auth.auth_db import get_company_credentials
             try:
                 from utils.auth.auth_db import get_company_webhook_credentials
                 get_company_webhook_credentials(company_id)  # kalit yo'q bo'lsa RuntimeError
             except RuntimeError as key_err:
                 log.warning(f"[{task_key}] {key_err}")
                 return False, str(key_err)
-            service = TestCaseGeneratorService(company_id=company_id)
-        else:
-            service = TestCaseGeneratorService()
 
-        result = service.generate_test_cases(
+        run = create_testcase_run(
             task_key=task_key,
+            company_id=company_id,
+            user_id=None,
+            source="webhook",
             test_types=tc_settings.default_test_types,
             custom_context="",
-            status_callback=lambda t, m: log.info(f"[{task_key}] {t.upper()} -> {m}")
+            output_profile="webhook",
         )
+        result = run_testcase_for_webhook((run or {}).get("run_id"))
+        if result is None:
+            log.warning(f"[{task_key}] Testcase run natija qaytarmadi")
+            return False, "Testcase run natija qaytarmadi"
 
         if not result.success:
             error_msg = result.error_message or "Test case generation failed"

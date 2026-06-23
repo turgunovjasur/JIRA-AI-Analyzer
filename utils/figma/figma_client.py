@@ -12,6 +12,15 @@ from core.logger import get_logger
 _log = get_logger("figma.client")
 
 
+def _http_timeout(default: int = 30) -> int:
+    """Tashqi HTTP so'rovlar timeouti — `queue.http_timeout` sozlamasidan (lazy)."""
+    try:
+        from config.app_settings import get_app_settings
+        return int(get_app_settings(force_reload=False).queue.http_timeout) or default
+    except Exception:
+        return default
+
+
 @dataclass
 class FigmaFrame:
     """Figma frame ma'lumotlari"""
@@ -48,7 +57,7 @@ class FigmaClient:
         """Get file metadata (depth=1 — sahifa tuzilmasi, to'liq fayl yuklanmaydi)."""
         try:
             url = f"{self.base_url}/files/{file_key}"
-            response = requests.get(url, headers=self.headers, timeout=15, params={'depth': 1})
+            response = requests.get(url, headers=self.headers, timeout=_http_timeout(), params={'depth': 1})
 
             if response.status_code == 200:
                 data = response.json()
@@ -76,7 +85,7 @@ class FigmaClient:
         """
         try:
             url = f"{self.base_url}/files/{file_key}"
-            response = requests.get(url, headers=self.headers, timeout=20, params={'depth': 2})
+            response = requests.get(url, headers=self.headers, timeout=_http_timeout(), params={'depth': 2})
 
             if response.status_code != 200:
                 return []
@@ -248,7 +257,7 @@ class FigmaClient:
                 response = requests.get(
                     url,
                     headers=self.headers,
-                    timeout=20,
+                    timeout=_http_timeout(),
                     params={'ids': normalized, 'depth': 12}
                 )
                 if response.status_code != 200:
@@ -263,7 +272,7 @@ class FigmaClient:
                 response = requests.get(
                     url,
                     headers=self.headers,
-                    timeout=25,
+                    timeout=_http_timeout(),
                     params={'depth': 5}
                 )
                 if response.status_code != 200:
@@ -296,7 +305,7 @@ class FigmaClient:
         try:
             url = f"{self.base_url}/files/{file_key}/nodes"
             response = requests.get(
-                url, headers=self.headers, timeout=15,
+                url, headers=self.headers, timeout=_http_timeout(),
                 params={'ids': normalized, 'depth': 8}
             )
             if response.status_code != 200:
@@ -325,7 +334,7 @@ class FigmaClient:
         normalized = self._normalize_node_id(node_id)
         try:
             url = f"{self.base_url}/files/{file_key}/comments"
-            response = requests.get(url, headers=self.headers, timeout=15)
+            response = requests.get(url, headers=self.headers, timeout=_http_timeout())
             if response.status_code != 200:
                 return []
 
@@ -370,7 +379,6 @@ class FigmaClient:
             if not token:
                 _log.warning(f"Figma: [{name}] token bo'sh, o'tkazib yuborildi")
                 continue
-            token_preview = f"...{token[-6:]}" if len(token) > 6 else token
             try:
                 resp = requests.get(
                     f"https://api.figma.com/v1/files/{file_key}",
@@ -378,7 +386,7 @@ class FigmaClient:
                     timeout=8,
                     params={'depth': 1}
                 )
-                _log.info(f"Figma: [{name}] ({token_preview}) → HTTP {resp.status_code}")
+                _log.info(f"Figma: [{name}] → HTTP {resp.status_code}")
                 if resp.status_code == 200:
                     _log.info(f"Figma: [{name}] ishlaydi, ishlatilmoqda")
                     return token

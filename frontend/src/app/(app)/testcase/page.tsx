@@ -19,5 +19,13 @@ export default async function TestCasePage() {
     );
   }
 
-  return <TestCaseGenerator />;
+  return (
+    <TestCaseGenerator
+      recentScope={{
+        companyId: session.auth.company_id ?? null,
+        role: session.auth.role ?? null,
+        userId: session.auth.user_id ?? null,
+      }}
+    />
+  );
 }

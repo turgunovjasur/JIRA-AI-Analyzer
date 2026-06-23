@@ -1,36 +1,31 @@
 from __future__ import annotations
 
-import os
 from typing import Any
 
 
 EXECUTION_MODE_MULTI = "multi_agent"
-PRO_MODEL_NAME = "gemini-2.5-pro"
-FALLBACK_MODEL_NAME = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
+PRO_MODEL_NAME = ""
+FALLBACK_MODEL_NAME = ""
 
 AGENT_MODEL_FIELDS = {
     "agent1_scope_builder": ("agent1_primary_model", "agent1_fallback_model"),
-    "agent1b_merger": ("agent1b_primary_model", "agent1b_fallback_model"),
+    "agent1b_merger": ("agent1_primary_model", "agent1_fallback_model"),
     "agent2_verifier": ("agent2_primary_model", "agent2_fallback_model"),
     "agent3_arbiter": ("agent3_primary_model", "agent3_fallback_model"),
 }
 
 DEFAULT_AGENT_MODEL_NAMES = {
-    "agent1_scope_builder": ("gemini-2.5-flash", "gemini-2.5-flash"),
-    "agent1b_merger": ("gemini-2.5-flash", "gemini-2.5-flash"),
-    "agent2_verifier": (PRO_MODEL_NAME, FALLBACK_MODEL_NAME),
-    "agent3_arbiter": ("gemini-2.5-flash", "gemini-2.5-flash"),
+    "agent1_scope_builder": ("", ""),
+    "agent1b_merger": ("", ""),
+    "agent2_verifier": ("", ""),
+    "agent3_arbiter": ("", ""),
 }
 
 
 def resolve_agent_model_names(checker_settings: Any, agent_key: str) -> tuple[str, str]:
     primary_field, fallback_field = AGENT_MODEL_FIELDS.get(agent_key, ("", ""))
-    default_primary, default_fallback = DEFAULT_AGENT_MODEL_NAMES.get(
-        agent_key,
-        (PRO_MODEL_NAME, FALLBACK_MODEL_NAME),
-    )
-    primary = str(getattr(checker_settings, primary_field, "") or "").strip() or default_primary
-    fallback = str(getattr(checker_settings, fallback_field, "") or "").strip() or default_fallback
+    primary = str(getattr(checker_settings, primary_field, "") or "").strip()
+    fallback = str(getattr(checker_settings, fallback_field, "") or "").strip()
     return primary, fallback
 
 

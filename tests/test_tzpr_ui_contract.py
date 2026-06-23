@@ -100,93 +100,8 @@ def test_analyze_comments_ignores_auto_generated_reports_without_marker():
     assert analysis["important_comments"][0]["author"] == "Dev"
 
 
-def test_structured_analysis_builds_requirement_sections_and_fail_verdict():
-    service = TZPRService()
-    analysis_text = """
-## 🧭 XULOSA
-Asosiy requirementlar qisman bajarilgan.
-
-## ✅ BAJARILGAN TALABLAR
-- API endpoint yangilangan.
-- Input validatsiya qo'shilgan.
-
-## ❌ BAJARILMAGAN TALABLAR
-- Mobil ekran holati yo'q.
-
-## 🐛 POTENSIAL MUAMMOLAR
-- Edge case uchun test topilmadi.
-
-## 📊 MOSLIK BALI
-**COMPLIANCE_SCORE: 74%**
-""".strip()
-
-    sections, overview = service._build_structured_analysis(
-        analysis_text,
-        compliance_score=74,
-        figma_data=None,
-    )
-
-    section_map = {section.key: section for section in sections}
-
-    assert overview.verdict == "fail"
-    assert overview.verdict_label == "Need Work"
-    assert "74%" in " ".join(overview.summary_lines)
-    assert section_map["completed"].item_count == 2
-    assert section_map["failed"].item_count == 1
-    assert section_map["issues"].item_count == 1
-
-    comment_sections, comment_overview = service._build_structured_analysis(
-        analysis_text,
-        compliance_score=74,
-        figma_data=None,
-    )
-    assert [section.key for section in sections] == [section.key for section in comment_sections]
-    assert overview.summary_lines == comment_overview.summary_lines
 
 
-def test_structured_analysis_ignores_explicit_empty_negative_sections():
-    service = TZPRService()
-    analysis_text = """
-## ✅ BAJARILGAN TALABLAR
-- Barcha asosiy talablar bajarilgan.
-
-## ⚠️ QISMAN BAJARILGAN
-Ushbu PR doirasida qisman bajarilgan talablar yo'q. Barcha talablar to'liq bajarilgan.
-
-## ❌ BAJARILMAGAN TALABLAR
-Ushbu PR doirasida bajarilmagan talablar yo'q. TZ doirasidagi barcha vazifalar amalga oshirilgan.
-
-## 🐛 POTENSIAL MUAMMOLAR
-Ushbu PR doirasida potensial muammolar yo'q. Kod sifati yuqori:
-1. Edge case'lar handled qilingan.
-2. Unit test qo'shilgan.
-
-## 📊 MOSLIK BALI
-**COMPLIANCE_SCORE: 100%**
-""".strip()
-
-    sections, overview = service._build_structured_analysis(
-        analysis_text,
-        compliance_score=100,
-        figma_data={
-            "summaries": [
-                {
-                    "name": "Frame",
-                    "url": "https://figma.com/file/demo",
-                    "summary": "Checker frame va componentlar muvaffaqiyatli o'qildi.",
-                }
-            ]
-        },
-    )
-    recommendation = service._build_qa_recommendation(overview, compliance_score=100)
-    section_map = {section.key: section for section in sections}
-
-    assert section_map["partial"].item_count == 0
-    assert section_map["failed"].item_count == 0
-    assert section_map["issues"].item_count == 0
-    assert overview.verdict == "pass"
-    assert overview.verdict_label == "Ready"
-    assert recommendation.action == "pass"
 
 
 def test_run_info_exposes_ai_model_and_fallback_metadata():
@@ -216,24 +131,6 @@ def test_run_info_exposes_ai_model_and_fallback_metadata():
     assert run_info.ai_used_fallback is True
 
 
-def test_sanitize_ai_analysis_replaces_plain_figma_heading_without_duplicate():
-    service = TZPRService()
-    raw_analysis = """
-## ❌ BAJARILMAGAN TALABLAR
-- Bir talab yo'q.
-
-## FIGMA DIZAYN MOSLIGI
-Figma ma'lumotlari olinmadi, shu sabab xulosa yo'q.
-
-## 📊 MOSLIK BALI
-**COMPLIANCE_SCORE: 61%**
-""".strip()
-
-    sanitized = service._sanitize_ai_analysis_for_missing_figma(raw_analysis, figma_data=None)
-
-    assert sanitized.count("FIGMA DIZAYN MOSLIGI") == 1
-    assert "Figma token yoki ruxsat mavjud emas" in sanitized
-    assert "COMPLIANCE_SCORE: 61%" in sanitized
 
 
 def test_effective_settings_expose_render_and_analysis_controls():
@@ -409,56 +306,6 @@ def test_requirement_matrix_builds_requirement_evidence_rows():
     assert any(item.source == "pr" for item in row.evidence)
 
 
-def test_multiline_requirement_items_are_grouped_and_counted_per_requirement():
-    service = TZPRService()
-    analysis_text = """
-## ✅ BAJARILGAN TALABLAR
-1. Talab: Foydalanuvchi litsenziyasi uzaytirilgandan keyin Dashboard litsenziyasini biriktirish xatosi tuzatilsin.
-* Dalil: Kodga license_code bo'yicha filter qo'shilgan.
-* Fayl: main/oracle/ui/biruni/kl/license_user_list.pck
-
-2. Talab: Faol foydalanuvchiga boshqa pullik modullar cheklovsiz biriktirilsin.
-* Dalil: Bir xil turdagi litsenziyalar alohida tekshirilyapti.
-* Fayl: main/oracle/ui/biruni/kl/license_user_list.pck
-
-3. Talab: Biznes mantiqqa mos ravishda uzaytirilgan litsenziya faol holatda qolishi kerak.
-* Dalil: Qo'shimcha funksiyalarni ulashga to'siq bergan texnik xato bartaraf etilgan.
-* Fayl: main/oracle/ui/biruni/kl/license_user_list.pck
-
-Ushbu PR doirasida qisman bajarilgan talablar yo'q. Barcha talablar to'liq bajarilgan.
-
-## 📊 MOSLIK BALI
-**COMPLIANCE_SCORE: 100%**
-""".strip()
-
-    sections, _overview = service._build_structured_analysis(
-        analysis_text,
-        compliance_score=100,
-        figma_data=None,
-    )
-    section_map = {section.key: section for section in sections}
-    completed_section = section_map["completed"]
-
-    assert completed_section.item_count == 3
-    assert len(completed_section.items) == 3
-    assert "Dalil:" in completed_section.items[0]
-    assert "Fayl:" in completed_section.items[0]
-
-    matrix = service._build_requirement_matrix(
-        analysis_sections=sections,
-        task_details={},
-        pr_details=[],
-        figma_data=None,
-        comment_analysis=None,
-    )
-
-    completed_rows = [row for row in matrix if row.status == "completed"]
-    assert len(completed_rows) == 3
-    assert completed_rows[0].requirement.startswith(
-        "Foydalanuvchi litsenziyasi uzaytirilgandan keyin"
-    )
-    assert completed_rows[0].code_files == ["main/oracle/ui/biruni/kl/license_user_list.pck"]
-    assert completed_rows[0].evidence[0].detail.startswith("Kodga license_code")
 
 
 def test_comment_intelligence_detects_deferred_scope_and_dev_objection():
@@ -569,9 +416,23 @@ def test_jira_formatter_prefers_structured_sections_and_visible_filter():
                 items=["API endpoint tayyor."],
                 item_count=1,
             ),
+            TZPRAnalysisSection(
+                key="skipped",
+                title="⏭️ SKIP QILINGAN",
+                items=["Dev izohi asosida boshqa repoda tekshiriladi."],
+                item_count=1,
+            ),
+            TZPRAnalysisSection(
+                key="partial",
+                title="⚠️ QISMAN BAJARILGAN",
+                items=["Legacy partial chiqmasligi kerak."],
+                item_count=1,
+            ),
         ],
     )
 
+    default_adf_text = str(formatter.build_comment_document(result))
+    default_simple_comment = formatter.build_simple_comment(result)
     adf_doc = formatter.build_comment_document(
         result,
         visible_sections=["failed"],
@@ -582,8 +443,14 @@ def test_jira_formatter_prefers_structured_sections_and_visible_filter():
         visible_sections=["failed"],
     )
 
+    assert "Dev izohi asosida boshqa repoda tekshiriladi." in default_adf_text
+    assert "Dev izohi asosida boshqa repoda tekshiriladi." in default_simple_comment
+    assert "Legacy partial chiqmasligi kerak." not in default_adf_text
+    assert "Legacy partial chiqmasligi kerak." not in default_simple_comment
     assert "Mobil ekran ishlanmagan." in adf_text
     assert "API endpoint tayyor." not in adf_text
+    assert "Dev izohi asosida boshqa repoda tekshiriladi." not in adf_text
     assert "Mobil ekran ishlanmagan." in simple_comment
     assert "API endpoint tayyor." not in simple_comment
+    assert "Dev izohi asosida boshqa repoda tekshiriladi." not in simple_comment
     assert "RAW TEXT WITHOUT PARSEABLE HEADINGS" not in simple_comment

@@ -6,8 +6,10 @@ from __future__ import annotations
 import os
 
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from core.module_start_preflight import run_start_preflight
 from services.checkers.tzpr_multi_agent import (
     create_multi_agent_run,
     execute_multi_agent_run,
@@ -48,10 +50,22 @@ async def create_tzpr_run(
             session,
             payload.user_id,
             payload.company_id,
-            module_key="tz_pr_checker",
         )
+        task_key = payload.task_key.strip().upper()
+        preflight = run_start_preflight(
+            module_key="tz_pr_checker",
+            task_key=task_key,
+            company_id=company_id,
+            user_id=user_id,
+            source="manual",
+        )
+        if not preflight.ok:
+            return JSONResponse(status_code=400, content=preflight.to_error_payload())
+
+        user_id = preflight.user_id
+        company_id = preflight.company_id
         run = create_multi_agent_run(
-            task_key=payload.task_key.strip().upper(),
+            task_key=task_key,
             company_id=company_id,
             user_id=user_id,
             source="manual",
@@ -67,9 +81,9 @@ async def create_tzpr_run(
         if _worker_queue_enabled():
             enqueue_background_job(
                 "tzpr_multi_agent_run",
-                payload.task_key.strip().upper(),
+                task_key,
                 company_id=company_id,
-                payload={"run_id": run_id, "task_key": payload.task_key.strip().upper()},
+                payload={"run_id": run_id, "task_key": task_key},
                 dedupe_key=f"tzpr_multi_agent_run:{run_id}",
                 max_attempts=3,
             )

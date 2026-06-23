@@ -111,8 +111,7 @@ async def _write_success_comment(
 
     Qo'shimcha imkoniyatlar:
     - is_recheck=True bo'lsa — "Re-check" belgisi bilan comment
-    - show_contradictory_comments=False bo'lsa — zid commentlar paneli yashiriladi
-    - visible_sections — AI javobining qaysi bo'limlari ko'rinishini boshqaradi
+    - comment bo'limlari UI checker final report contracti bilan bir xil render qilinadi
 
     Args:
         task_key: JIRA task identifikatori (masalan: 'DEV-1234')
@@ -124,20 +123,12 @@ async def _write_success_comment(
         is_recheck: Agar True bo'lsa, comment'da re-check belgisi ko'rinadi
     """
     try:
-        comment_analysis = getattr(result, 'comment_analysis', None)
-
-        # Zid commentlar panelini ko'rsatish/yashirish sozlamasi
-        if not settings.show_contradictory_comments:
-            comment_analysis = None
-
         adf_doc = adf_formatter.build_comment_document(
             result,
             new_status,
-            comment_analysis=comment_analysis,
             footer_text=settings.tz_pr_footer_text,
             is_recheck=is_recheck,
             recheck_text=settings.recheck_comment_text,
-            visible_sections=settings.visible_sections,
             dev_objections=dev_objections or []
         )
         success = comment_writer.add_comment_adf(task_key, adf_doc)
@@ -148,7 +139,6 @@ async def _write_success_comment(
             simple_comment = adf_formatter.build_simple_comment(
                 result,
                 new_status,
-                visible_sections=settings.visible_sections,
             )
             comment_writer.add_comment(task_key, simple_comment)
 

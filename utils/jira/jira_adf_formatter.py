@@ -26,30 +26,31 @@ class AnalysisSection:
     title: str
     emoji: str
     items: List[str]
-    section_type: str  # 'completed', 'partial', 'failed', 'issues'
+    section_type: str  # 'completed', 'failed', 'skipped', 'issues', 'figma'
 
 
 class JiraADFFormatter(BaseADFFormatter):
     """Jira ADF formatda comment yaratish"""
 
     _contradictory_action_text = "ishlov bering!"
-    _default_visible_sections = ['completed', 'partial', 'failed', 'issues', 'figma']
+    _default_visible_sections = ['completed', 'failed', 'skipped', 'issues', 'figma']
 
     def __init__(self):
         """Initialize formatter"""
         self.section_patterns = {
-            'completed': r'##\s*✅\s*BAJARILGAN\s*TALABLAR?\s*(.*?)(?=##\s*[⚠❌🐛🎨📊]|$)',
-            'partial': r'##\s*⚠️?\s*QISMAN\s*BAJARILGAN\s*(.*?)(?=##\s*[✅❌🐛🎨📊]|$)',
-            'failed': r'##\s*❌\s*BAJARILMAGAN\s*TALABLAR?\s*(.*?)(?=##\s*[✅⚠🐛🎨📊]|$)',
-            'issues': r'##\s*🐛\s*POTENSIAL\s*MUAMMOLAR?\s*(.*?)(?=##\s*[✅⚠❌🎨📊]|$)',
-            'figma': r'##\s*🎨\s*FIGMA\s*DIZAYN\s*MOSLIGI?\s*(.*?)(?=##\s*[✅⚠❌🐛📊]|$)',
+            'completed': r'##\s*✅\s*BAJARILGAN\s*TALABLAR?\s*(.*?)(?=##\s*[⚠⏭❌🐛🎨📊]|$)',
+            'partial': r'##\s*⚠️?\s*QISMAN\s*BAJARILGAN\s*(.*?)(?=##\s*[✅⏭❌🐛🎨📊]|$)',
+            'failed': r'##\s*❌\s*BAJARILMAGAN\s*TALABLAR?\s*(.*?)(?=##\s*[✅⚠⏭🐛🎨📊]|$)',
+            'skipped': r'##\s*⏭️?\s*SKIP\s*QILINGAN[^\n]*\n?(.*?)(?=##\s*[✅⚠❌🐛🎨📊]|$)',
+            'issues': r'##\s*🐛\s*POTENSIAL\s*MUAMMOLAR?\s*(.*?)(?=##\s*[✅⚠⏭❌🎨📊]|$)',
+            'figma': r'##\s*🎨\s*FIGMA\s*DIZAYN\s*MOSLIGI?\s*(.*?)(?=##\s*[✅⚠⏭❌🐛📊]|$)',
             'score': r'##\s*📊\s*MOSLIK\s*BALI?\s*(.*?)(?=##|$)'
         }
 
         self.section_titles = {
             'completed': ('✅ Bajarilgan talablar', 'completed'),
-            'partial': ('⚠️ Qisman bajarilgan', 'partial'),
             'failed': ('❌ Bajarilmagan talablar', 'failed'),
+            'skipped': ('⏭️ Skip qilingan talablar', 'skipped'),
             'issues': ('🐛 Potensial muammolar', 'issues'),
             'figma': ('🎨 Figma dizayn mosligi', 'figma')
         }
@@ -65,8 +66,8 @@ class JiraADFFormatter(BaseADFFormatter):
         Returns:
             {
                 'completed': AnalysisSection(...),
-                'partial': AnalysisSection(...),
                 'failed': AnalysisSection(...),
+                'skipped': AnalysisSection(...),
                 'issues': AnalysisSection(...)
             }
         """
@@ -250,6 +251,11 @@ class JiraADFFormatter(BaseADFFormatter):
                 self._colored_text(f"{score}%", score_color)
             ]
             content.append(self._paragraph(score_content))
+
+        summary_lines = self._summary_lines_from_result(result)
+        if summary_lines:
+            content.append(self._heading("🧭 Xulosa", 3))
+            content.append(self._bullet_list(summary_lines))
         content.append(self._rule())
 
         # ━━━ RE-CHECK PANEL ━━━
@@ -271,7 +277,13 @@ class JiraADFFormatter(BaseADFFormatter):
             content.append(self._expand_panel(panel_title, [self._bullet_list(obj_items)]))
             content.append(self._rule())
 
-        # ━━━ ZID COMMENTLAR PANEL ━━━
+        # ━━━ RUN SIGNALLARI ━━━
+        warnings = [str(item).strip() for item in (getattr(result, "warnings", None) or []) if str(item).strip()]
+        if warnings:
+            content.append(self._expand_panel("⚠ Run signallari", [self._bullet_list(warnings)]))
+            content.append(self._rule())
+
+        # ━━━ ZID COMMENTLAR PANELI (legacy direct callerlar uchun) ━━━
         if comment_analysis:
             contradictory_panel = self._build_contradictory_comments_panel(comment_analysis)
             if contradictory_panel:
@@ -320,7 +332,7 @@ class JiraADFFormatter(BaseADFFormatter):
         sections = self._sections_from_result(result)
         _visible = self._normalize_visible_sections(visible_sections)
 
-        for section_key in ['completed', 'partial', 'failed', 'issues', 'figma']:
+        for section_key in self._default_visible_sections:
             if section_key not in _visible:
                 continue
             if section_key in sections:
@@ -410,7 +422,7 @@ class JiraADFFormatter(BaseADFFormatter):
         if ai_analysis:
             sections = self.parse_ai_analysis(ai_analysis)
 
-            for section_key in ['completed', 'partial', 'failed']:
+            for section_key in self._default_visible_sections:
                 if section_key in sections:
                     section = sections[section_key]
                     if section.items:
@@ -476,6 +488,12 @@ class JiraADFFormatter(BaseADFFormatter):
             comment += "\n*🧭 Xulosa:*\n"
             for line in summary_lines:
                 comment += f"• {line}\n"
+
+        warnings = [str(item).strip() for item in (getattr(result, "warnings", None) or []) if str(item).strip()]
+        if warnings:
+            comment += "\n*⚠ Run signallari:*\n"
+            for warning in warnings:
+                comment += f"• {warning}\n"
 
         comment += f"""
 ----

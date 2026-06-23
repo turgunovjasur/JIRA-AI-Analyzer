@@ -139,7 +139,7 @@ async def delete_monitoring_task(
     x_session_id: str | None = Header(default=None, alias="X-Session-ID"),
 ):
     normalized_task_key = task_key.strip().upper()
-    session = load_api_session(x_session_id, allowed_roles={"super_admin", "company_admin"})
+    session = load_api_session(x_session_id, allowed_roles={"super_admin"})
     scoped_company_id = require_company_scope(session, company_id)
     try:
         from utils.database.task_db import delete_task

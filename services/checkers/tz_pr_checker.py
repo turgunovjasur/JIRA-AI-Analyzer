@@ -14,17 +14,13 @@ Clean Code Principles:
 Author: JASUR TURGUNOV
 Version: 7.0 WITH FIGMA
 """
-from typing import Any, Dict, List, Optional, Callable
+from typing import Any, Dict, List, Optional
 from fnmatch import fnmatch
 import re
 from urllib.parse import parse_qs, urlparse
 
 # Core imports
-from core import BaseService, PRHelper, PRNotMergedError, TZHelper, CommentSeparator, RECHECK_REASONS
-from core.analysis_policy import (
-    build_full_analysis_blocked,
-    build_full_policy_input_violation,
-)
+from core import BaseService, PRHelper, TZHelper, RECHECK_REASONS
 from core.logger import get_logger
 from services.checkers.tzpr_models import (
     TZPRAnalysisOverview,
@@ -49,7 +45,6 @@ log = get_logger("tzpr.checker")
 # CONSTANTS
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-SMART_PATCH_AVAILABLE = True
 
 DEFAULT_EXCLUDED_FILE_PATTERNS = (
     "package-lock.json,yarn.lock,pnpm-lock.yaml,"
@@ -186,7 +181,7 @@ _SECTION_PROMPT_BLOCKS = {
 
 # Canonical order in which sections appear in the prompt
 _SECTION_ORDER = ['summary', 'completed', 'partial', 'failed', 'issues', 'figma']
-_PRESENTATION_SECTION_KEYS = ['completed', 'partial', 'failed', 'issues', 'figma']
+_PRESENTATION_SECTION_KEYS = ['completed', 'failed', 'skipped', 'issues', 'figma']
 _PRESENTATION_SECTION_KEY_SET = set(_PRESENTATION_SECTION_KEYS)
 
 _ANALYSIS_TITLE_TO_KEY = {
@@ -270,7 +265,7 @@ class TZPRService(BaseService):
         """Ko'rinish uchun ishlatiladigan sectionlar — analysisni emas, faqat renderni boshqaradi."""
         configured = self._get_settings().visible_sections or []
         filtered = [key for key in configured if key in _PRESENTATION_SECTION_KEY_SET]
-        return filtered or ['partial', 'failed', 'figma']
+        return filtered or ['completed', 'failed', 'skipped', 'issues', 'figma']
 
     def _build_effective_settings(
             self,
@@ -328,292 +323,6 @@ class TZPRService(BaseService):
             self._pr_helper = PRHelper(self.github)
         return self._pr_helper
 
-    def analyze_task(
-            self,
-            task_key: str,
-            max_files: Optional[int] = None,
-            show_full_diff: bool = True,
-            use_smart_patch: Optional[bool] = None,
-            status_callback: Optional[Callable[[str, str], None]] = None,
-            return_reason: Optional[str] = None,
-            output_profile: str = "comment",
-    ) -> TZPRAnalysisResult:
-        """
-        TZ-PR moslik tahlilining asosiy funksiyasi — 7 bosqichli pipeline.
-
-        Bu funksiya JIRA task kaliti bo'yicha to'liq TZ-PR tahlilini amalga oshiradi
-        va natijani TZPRAnalysisResult sifatida qaytaradi. Webhook handler tomonidan
-        check_tz_pr_and_comment() orqali chaqiriladi.
-
-        Ishlash bosqichlari:
-            1. JIRA'dan task tafsilotlarini olish (TZ, priority, assignee, figma_links).
-            2. TZ kontentini formatlash va zid comment'larni aniqlash (TZHelper).
-            3. GitHub'dan PR ma'lumotlarini olish; PR topilmasa — 'pr_not_found' xatosi.
-            3.5 Figma havolalarini ajratib olish va Figma API'dan ma'lumot olish (ixtiyoriy,
-               muvaffaqiyatsizlik bo'lsa ham asosiy jarayon to'xtatilmaydi).
-            4. AI tahlilini amalga oshirish (FULL-only policy).
-            5. Moslik balini ajratib olish (_extract_compliance_score() orqali 4 regex).
-            6. Task meta-ma'lumotlarini DB'ga saqlash (assignee, task_type, feature_name).
-            7. TZPRAnalysisResult natijasini qaytarish.
-
-        Args:
-            task_key (str): JIRA task identifikatori (masalan: 'DEV-1234').
-            max_files (Optional[int]): AI promtiga qo'shiladigan maksimal fayl soni.
-                None bo'lsa — barcha o'zgargan fayllar qo'shiladi.
-            show_full_diff (bool): True bo'lsa — har bir fayl uchun to'liq diff/patch
-                AI promtiga kiritiladi. False bo'lsa — faqat fayl nomi va statistika.
-            use_smart_patch (Optional[bool]): True bo'lsa — standart diff o'rniga smart_context
-                (to'liq kontekst) ishlatiladi. Smart patch endi sozlama emas —
-                None/berilmasa doim False (oddiy GitHub diff). Param feature kodi
-                kelajak uchun saqlangan.
-            status_callback (Optional[Callable[[str, str], None]]): Ixtiyoriy.
-                Progress yangilanishi uchun callback(level, message).
-                UI progress bar yoki logging uchun ishlatiladi.
-
-        Returns:
-            TZPRAnalysisResult:
-                success=True holatida:
-                    - compliance_score: 0-100 oralig'idagi moslik bali.
-                    - ai_analysis: AI tomonidan yozilgan to'liq tahlil matni.
-                    - figma_data: Figma fayl xulosalari (mavjud bo'lsa).
-                    - comment_analysis: Zid comment'lar tahlili.
-                success=False holatida:
-                    - error_message: Xatolik sababi (PR topilmadi, AI xato va h.k.).
-                    - warnings: Qo'shimcha ogohlantirishlar ro'yxati.
-
-        Raises:
-            Exception: Ichki barcha xatoliklar ushlanib, success=False natijaga
-                aylantiriladi — funksiya hech qachon exception ko'tarmaydi.
-
-        Side Effects:
-            - DB'da task meta-ma'lumotlari yangilanadi (update_task_metadata()).
-            - status_callback chaqiriladi (agar berilgan bo'lsa).
-        """
-
-        update_status = self._create_status_updater(status_callback)
-
-        try:
-            effective_settings = self._build_effective_settings(
-                requested_output_profile=output_profile,
-                effective_use_smart_patch=use_smart_patch,
-            )
-
-            # Full-only policy: partial analysis taqiqlanadi
-            if max_files is not None or not show_full_diff:
-                banner = build_full_policy_input_violation(
-                    module_name="TZ-PR Checker",
-                    task_key=task_key,
-                    max_files=max_files,
-                    show_full_diff=show_full_diff,
-                )
-                return self._create_error_result(
-                    task_key=task_key,
-                    error_message=banner["message"],
-                    status_banner=banner,
-                    effective_settings=effective_settings,
-                )
-
-            effective_use_smart_patch = (
-                use_smart_patch
-                if use_smart_patch is not None
-                else bool(getattr(self._get_settings(), "default_use_smart_patch", False))
-            )
-            effective_settings = self._build_effective_settings(
-                requested_output_profile=output_profile,
-                effective_use_smart_patch=effective_use_smart_patch,
-            )
-
-            # Step 1: Get task details
-            figma_lookup_enabled = "figma" in list(effective_settings.get("ai_data_section_order") or [])
-            task_details = self._get_task_details(
-                task_key,
-                update_status,
-                include_figma_links=figma_lookup_enabled,
-            )
-            if not task_details:
-                return self._create_error_result(
-                    task_key,
-                    f"❌ {task_key} topilmadi. JIRA da task mavjudligini va API kalitlarini tekshiring.",
-                    effective_settings=effective_settings,
-                )
-
-            # Step 2: PR bor? merged? (birinchi tekshiruv — keraksiz ishni oldini olish)
-            from utils.pr_cache import set_pr_exists_cache, set_pr_merged_cache
-            try:
-                pr_info = self._get_pr_info(task_key, task_details, update_status, effective_use_smart_patch)
-            except PRNotMergedError as e:
-                set_pr_exists_cache(task_key, True)
-                set_pr_merged_cache(task_key, False)
-                return self._create_error_result(
-                    task_key,
-                    str(e),
-                    task_summary=task_details['summary'],
-                    effective_settings=effective_settings,
-                )
-            if not pr_info:
-                set_pr_exists_cache(task_key, False)
-                return self._create_error_result(
-                    task_key,
-                    "Bu task uchun PR topilmadi (JIRA va GitHub'da)",
-                    task_summary=task_details['summary'],
-                    warnings=["JIRA da PR link yo'q", "GitHub search natija bermadi"],
-                    effective_settings=effective_settings,
-                )
-            set_pr_exists_cache(task_key, True)
-            set_pr_merged_cache(task_key, True)
-
-            # Step 3: TZ uzunlik tekshiruvi
-            min_tz = self._get_settings().min_tz_description_chars
-            if min_tz > 0 and self._is_tz_too_short(task_details, min_tz):
-                actual_chars = self._get_tz_length_chars(task_details)
-                msg = (
-                    f"TZ yetarli emas. "
-                    f"(summary + description: {actual_chars} belgi, min: {min_tz} belgi). "
-                    f"Servis-1 to'xtatildi."
-                )
-                update_status("error", msg)
-                return self._create_error_result(
-                    task_key, msg,
-                    task_summary=task_details['summary'],
-                    effective_settings=effective_settings,
-                )
-
-            # Faqat WARN_LOW_SCORE da dev objections o'qiladi
-            is_recheck = return_reason in RECHECK_REASONS
-
-            # Step 4: Get TZ content + dev/AI comment separation
-            tz_content, comment_analysis = self._get_tz_content(
-                task_details,
-                update_status
-            )
-            comment_separated = CommentSeparator.separate(task_details.get('comments', []))
-
-            # Step 5: Get Figma data (OPTIONAL, FAIL-SAFE)
-            figma_data = self._get_figma_data(task_details, update_status)
-
-            # Step 6: AI analysis (with Figma if available)
-            update_status("progress", "AI tahlil qilinmoqda...")
-            ai_result = self._perform_ai_analysis(
-                task_key,
-                task_details,
-                tz_content,
-                pr_info,
-                figma_data,
-                max_files,
-                show_full_diff,
-                effective_use_smart_patch,
-                update_status,
-                is_recheck=is_recheck,
-                comment_separated=comment_separated,
-            )
-
-            if not ai_result['success']:
-                return self._create_error_result(
-                    task_key,
-                    ai_result['error'],
-                    tz_content=tz_content,
-                    task_summary=task_details['summary'],
-                    pr_info=pr_info,
-                    warnings=ai_result.get('warnings', []),
-                    figma_data=figma_data,
-                    status_banner=ai_result.get("status_banner"),
-                    ai_retry_count=ai_result.get("retry_count", 0),
-                    files_analyzed=ai_result.get("files_analyzed", 0),
-                    total_prompt_size=ai_result.get("prompt_size", 0),
-                    effective_settings=effective_settings,
-                )
-
-            # Step 5: Extract compliance score
-            compliance_score = self._extract_compliance_score(ai_result['analysis'])
-            analysis_sections, analysis_overview = self._build_structured_analysis(
-                ai_result['analysis'],
-                compliance_score=compliance_score,
-                figma_data=figma_data,
-            )
-            task_info = self._build_task_info(task_details)
-            run_info = self._build_run_info(
-                effective_settings=effective_settings,
-                files_analyzed=ai_result.get('files_analyzed', 0),
-                total_files_changed=pr_info.get('files_changed', 0),
-                prompt_size_chars=ai_result.get('prompt_size', 0),
-                ai_retry_count=ai_result.get('retry_count', 0),
-                ai_model=ai_result.get('model_name'),
-                ai_primary_model=ai_result.get('primary_model_name'),
-                ai_fallback_model=ai_result.get('fallback_model_name'),
-                ai_used_fallback=ai_result.get('used_fallback', False),
-            )
-            qa_recommendation = self._build_qa_recommendation(
-                overview=analysis_overview,
-                compliance_score=compliance_score,
-            )
-            comment_intelligence = self._build_comment_intelligence(
-                comment_analysis=comment_analysis,
-                comment_separated=comment_separated,
-                is_recheck=is_recheck,
-            )
-            workflow_info = self._build_workflow_info(
-                task_key=task_key,
-                compliance_score=compliance_score,
-                is_recheck=is_recheck,
-            )
-            requirement_matrix = self._build_requirement_matrix(
-                analysis_sections=analysis_sections,
-                task_details=task_details,
-                pr_details=pr_info.get('pr_details', []),
-                figma_data=figma_data,
-                comment_analysis=comment_analysis,
-            )
-
-            # Step 6: Update metadata (assignee, task_type, features)
-            try:
-                from utils.database.task_db import update_task_metadata
-                update_task_metadata(task_key, task_details, pr_info)
-            except Exception as e:
-                log.warning(f"[{task_key}] Metadata update failed: {e}")
-
-            # Step 7: Return result
-            return TZPRAnalysisResult(
-                task_key=task_key,
-                task_summary=task_details['summary'],
-                tz_content=tz_content,
-                pr_count=pr_info['pr_count'],
-                files_changed=pr_info['files_changed'],
-                total_additions=pr_info['total_additions'],
-                total_deletions=pr_info['total_deletions'],
-                pr_details=pr_info['pr_details'],
-                pr_selection=pr_info.get('pr_selection', {}),
-                ai_analysis=ai_result['analysis'],
-                compliance_score=compliance_score,
-                success=True,
-                warnings=ai_result.get('warnings', []),
-                ai_retry_count=ai_result.get('retry_count', 0),
-                files_analyzed=ai_result.get('files_analyzed', 0),
-                total_prompt_size=ai_result.get('prompt_size', 0),
-                figma_data=figma_data,
-                comment_analysis=comment_analysis,
-                dev_objections=comment_separated.get('dev_after', []) if is_recheck else [],
-                analysis_sections=analysis_sections,
-                analysis_overview=analysis_overview,
-                task_info=task_info,
-                run_info=run_info,
-                qa_recommendation=qa_recommendation,
-                comment_intelligence=comment_intelligence,
-                workflow_info=workflow_info,
-                requirement_matrix=requirement_matrix,
-                effective_settings=effective_settings,
-                execution_mode="multi_agent",
-                run_state="completed",
-            )
-
-        except Exception as e:
-            return self._create_error_result(
-                task_key,
-                f"Kutilmagan xatolik: {str(e)}",
-                effective_settings=self._build_effective_settings(
-                    requested_output_profile=output_profile,
-                    effective_use_smart_patch=use_smart_patch,
-                ),
-            )
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # FIGMA METHODS (NEW, FAIL-SAFE)
@@ -628,48 +337,6 @@ class TZPRService(BaseService):
         from core.module_preflight import fetch_figma_summaries
         return fetch_figma_summaries(self, task_details, update_status)
 
-    def _build_figma_prompt_section(self, figma_data: Optional[Dict]) -> tuple:
-        """
-        Figma uchun prompt section yaratish
-
-        Returns:
-            tuple: (figma_section, figma_analysis_section, figma_response_section)
-        """
-        if not self._has_usable_figma_data(figma_data):
-            # No Figma data - return empty sections
-            return ("", "", "")
-
-        # Build Figma section for prompt
-        figma_lines = [
-            "",
-            "─────────────────────────────────────────────────────────────────────",
-            "🎨 FIGMA DIZAYN MA'LUMOTLARI",
-            "─────────────────────────────────────────────────────────────────────",
-            ""
-        ]
-
-        for summary_data in figma_data['summaries']:
-            figma_lines.append(summary_data['summary'])
-            figma_lines.append("")
-
-        figma_section = "\n".join(figma_lines)
-
-        # Add Figma analysis instruction
-        figma_analysis_section = """
-5. **FIGMA DIZAYN MOSLIGI**
-   - Yuqorida Figma frame, matn va comment ma'lumotlari berilgan — shu asosda tahlil qil.
-   - TZ da ko'rsatilgan UI elementlar hamda matn talablar Figma'dagi real yozuvlarga mos keladimi?
-   - Figma'dagi comment'larda yozilgan aniq talablar (masalan import, ustun, limit) kodda implement qilinganmi?
-   - Qaysi Figma frame/matn/comment talablari bajarilgan, qaysilari yo'q?
-"""
-
-        # Add Figma response section
-        figma_response_section = """
-## 🎨 FIGMA DIZAYN MOSLIGI
-[Figma frame, matn va comment'lardagi aniq talablar asosida moslikni tahlil qil. "Figma'ga kirish imkoni yo'q" iborasini ISHLATMA — Figma ma'lumotlari yuqorida berilgan.]
-"""
-
-        return (figma_section, figma_analysis_section, figma_response_section)
 
     def _has_usable_figma_data(self, figma_data: Optional[Dict]) -> bool:
         """Figma summary'lar ichida real frame/file ma'lumoti bormi."""
@@ -690,35 +357,6 @@ class TZPRService(BaseService):
                 return True
         return False
 
-    def _sanitize_ai_analysis_for_missing_figma(self, analysis: str, figma_data: Optional[Dict]) -> str:
-        """
-        Figma ma'lumoti bo'lmasa, Figma bo'limini halol status xabariga almashtiradi.
-        """
-        if self._has_usable_figma_data(figma_data):
-            return analysis
-
-        replacement = (
-            "## 🎨 FIGMA DIZAYN MOSLIGI\n"
-            "Figma ma'lumotlari olinmadi.\n\n"
-            "- Figma token yoki ruxsat mavjud emas, yoki faylga access bo'lmadi.\n"
-            "- Shu sabab Figma dizayni bilan moslik bo'yicha ishonchli xulosa berib bo'lmaydi.\n"
-            "- Quyidagi bajarilgan/bajarilmagan xulosalar faqat TZ va kod o'zgarishlariga asoslangan.\n"
-        )
-
-        sanitized = re.sub(
-            r'\n*##\s*(?:🎨\s*)?FIGMA\s*DIZAYN\s*MOSLIGI.*?(?=\n##\s*(?:🧭|✅|⚠|❌|🐛|📊|🎨)|\Z)',
-            f'\n{replacement}\n',
-            analysis,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-        sanitized = re.sub(
-            r'(?im)^\s*5\.\s*\*\*FIGMA\s+DIZAYN\s+MOSLIGI\*\*.*$',
-            '',
-            sanitized,
-        )
-        if "## 🎨 FIGMA DIZAYN MOSLIGI" not in sanitized:
-            sanitized = sanitized.strip() + "\n\n" + replacement
-        return sanitized.strip()
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # STEP METHODS (UPDATED)
@@ -733,10 +371,12 @@ class TZPRService(BaseService):
             include_figma_links: bool = True,
     ):
         """JIRA dan task ma'lumotlarini olish"""
+        settings = self._get_settings()
         return self.jira.get_task_details(
             task_key,
             include_pr_urls=include_pr_urls,
             include_figma_links=include_figma_links,
+            max_comments_to_read=int(getattr(settings, "max_comments_to_read", 0) or 0),
         )
 
     def _get_tz_content(self, task_details: Dict, update_status):
@@ -770,130 +410,8 @@ class TZPRService(BaseService):
 
         return tz_content, comment_analysis
 
-    def _build_dev_comments_section(self, task_details: Dict, separated: Optional[Dict] = None) -> str:
-        """
-        AI konteksti uchun developer comment'larini formatlash.
 
-        CommentSeparator.separate() natijasidan foydalanadi:
-        - dev_before: tahlildan oldingi dev comment'lar (kontekst)
-        - dev_after: tahlildan keyingi dev comment'lar (etirozlar) — recheck bo'lmasa ham qo'shiladi
 
-        Returns:
-            str: AI promtiga qo'shishga tayyor formatlangan comment'lar bloki.
-        """
-        if separated is None:
-            separated = CommentSeparator.separate(task_details.get('comments', []))
-
-        max_dev = self._get_settings().dev_comments_max
-
-        dev_before = separated.get('dev_before', [])
-        dev_after = separated.get('dev_after', [])
-
-        # Agar hech qanday dev comment yo'q bo'lsa
-        if not dev_before and not dev_after:
-            return ""
-
-        lines = []
-
-        if dev_before:
-            lines += [
-                "",
-                "─────────────────────────────────────────────────────────────────────",
-                "💬 DEVELOPER IZOHLAR (KONTEKST)",
-                "─────────────────────────────────────────────────────────────────────",
-                "",
-                "Developerlar quyidagi izohlarni qoldirgan. Ularni tahlilda hisobga oling:",
-                ""
-            ]
-            for comment in dev_before[-max_dev:]:
-                lines.append(f"👤 {comment.get('author', 'Unknown')} ({comment.get('created', '')}):")
-                lines.append(f"   {comment.get('body', '').strip()}")
-                lines.append("")
-
-        if dev_after:
-            lines += [
-                "",
-                "─────────────────────────────────────────────────────────────────────",
-                "⚡ DEVELOPER ETIROZLARI (tahlildan KEYIN yozilgan — alohida e'tibor ber!)",
-                "─────────────────────────────────────────────────────────────────────",
-                ""
-            ]
-            for comment in dev_after[-max_dev:]:
-                lines.append(f"👤 {comment.get('author', 'Unknown')} ({comment.get('created', '')}):")
-                lines.append(f"   {comment.get('body', '').strip()}")
-                lines.append("")
-
-        return "\n".join(lines)
-
-    def _build_reanalysis_section(self, separated: Dict) -> str:
-        """
-        Re-tahlil kontekst bo'limini qurish.
-
-        Faqat is_recheck=True va last_ai_s1 bor bo'lganda chaqiriladi.
-        Avvalgi AI tahlilini va developer etirozlarini REANALYSIS_CONTEXT_TEMPLATE_UZ ga joylaydi.
-        """
-        last_ai = separated.get('last_ai_s1')
-        dev_after = separated.get('dev_after', [])
-
-        if not last_ai and not dev_after:
-            return ""
-
-        prev_analysis = ""
-        if last_ai:
-            body = last_ai.get('body', '').strip()
-            # [AI_S1] markerini olib tashlash
-            if body.startswith('[AI_S1]'):
-                body = body[len('[AI_S1]'):].strip()
-            # Juda uzun bo'lsa qisqartirish (2000 belgi yetarli)
-            prev_analysis = body[:2000] + ("..." if len(body) > 2000 else "")
-
-        objections = ""
-        if dev_after:
-            obj_lines = []
-            for c in dev_after:
-                obj_lines.append(f"👤 {c.get('author', 'Unknown')} ({c.get('created', '')}):")
-                obj_lines.append(f"   {c.get('body', '').strip()}")
-                obj_lines.append("")
-            objections = "\n".join(obj_lines)
-
-        if not prev_analysis and not objections:
-            return ""
-
-        return REANALYSIS_CONTEXT_TEMPLATE_UZ.format(
-            previous_analysis=prev_analysis or "(avvalgi tahlil topilmadi)",
-            dev_objections=objections or "(developer etirozlari yo'q)"
-        )
-
-    def _build_ordered_data_sections(
-            self,
-            order: List[str],
-            tz_content: str,
-            dev_comments_section: str,
-            reanalysis_section: str,
-            figma_section: str,
-            code_changes: str
-    ) -> str:
-        """
-        Sozlamadagi ai_data_section_order bo'yicha ma'lumotlar bo'limlarini birlashtirish.
-        reanalysis_section bor bo'lsa TZ dan keyin, code dan oldin qo'shiladi.
-        """
-        blocks = []
-        sep = "\n─────────────────────────────────────────────────────────────────────\n"
-        for key in order:
-            if key == "tz":
-                blocks.append(sep + "📄 TEXNIK TOPSHIRIQ (TZ)\n" + sep + "\n" + (tz_content or "").strip())
-                # Re-tahlil bo'limi TZ dan keyin darhol qo'shiladi (order ga bog'liq emas)
-                if (reanalysis_section or "").strip():
-                    blocks.append((reanalysis_section or "").strip())
-            elif key == "comments":
-                if (dev_comments_section or "").strip():
-                    blocks.append((dev_comments_section or "").strip())
-            elif key == "figma":
-                if (figma_section or "").strip():
-                    blocks.append((figma_section or "").strip())
-            elif key == "code":
-                blocks.append(sep + "💻 GITHUB KOD O'ZGARISHLARI\n" + sep + "\n" + (code_changes or "").strip())
-        return "\n\n".join(blocks)
 
     def _is_tz_too_short(self, task_details: Dict, min_chars: int) -> bool:
         """TZ (summary + description) belgilangan minimal uzunlikdan qisqami aniqlash."""
@@ -916,321 +434,14 @@ class TZPRService(BaseService):
             use_smart_patch=use_smart_patch
         )
 
-        # Service2 qayta qidirmasin deb cache ga saqlaymiz
-        if pr_info:
-            try:
-                from utils.pr_cache import set_pr_cache
-                set_pr_cache(task_key, pr_info)
-            except Exception:
-                pass
-
         return pr_info
 
-    def _perform_ai_analysis(
-            self,
-            task_key: str,
-            task_details: Dict,
-            tz_content: str,
-            pr_info: Dict,
-            figma_data: Optional[Dict],
-            max_files: Optional[int],
-            show_full_diff: bool,
-            use_smart_patch: bool,
-            update_status,
-            is_recheck: bool = False,
-            comment_separated: Optional[Dict] = None,
-    ) -> Dict:
-        """
-        AI tahlil bosqichini boshqaruvchi oraliq funksiya.
-
-        Bu funksiya ikki ish bajaradi:
-            1. Developer comment'larni filtrlaydi (_build_dev_comments_section()).
-            2. Natijani _analyze_with_retry() ga uzatib, 3 strategiyali AI tahlilini ishga tushiradi.
-
-        analyze_task() va _analyze_with_retry() o'rtasidagi ko'prik vazifasini o'taydi:
-        parametrlarni tartibga soladi va dev_comments_section ni dinamik ravishda qurib,
-        retry mexanizmi uchun tayyor holga keltiradi.
-
-        Args:
-            task_key (str): JIRA task identifikatori (masalan: 'DEV-1234').
-            task_details (Dict): JIRA'dan olingan task ma'lumotlari (summary, comments, va h.k.).
-            tz_content (str): Formatlangan TZ kontenti.
-            pr_info (Dict): GitHub PR ma'lumotlari (files, diff, statistika).
-            figma_data (Optional[Dict]): Figma fayl xulosalari yoki None.
-            max_files (Optional[int]): AI promtiga qo'shiladigan maksimal fayl soni.
-            show_full_diff (bool): Har bir fayl uchun to'liq diff qo'shilsinmi.
-            use_smart_patch (bool): Smart patch rejimi yoqilganmi.
-            update_status: Progress yangilanishi uchun callback(level, message).
-
-        Returns:
-            Dict: _analyze_with_retry() formatidagi natija:
-                {
-                    'success': bool,
-                    'analysis': str,       # AI tahlil matni
-                    'retry_count': int,    # Qayta urinishlar soni
-                    'files_analyzed': int,
-                    'prompt_size': int,
-                    'warnings': List[str]
-                }
-        """
-        separated = comment_separated or CommentSeparator.separate(task_details.get('comments', []))
-        dev_comments_section = self._build_dev_comments_section(task_details, separated)
-        reanalysis_section = self._build_reanalysis_section(separated) if is_recheck else ""
-
-        return self._analyze_with_retry(
-            task_key=task_key,
-            task_details=task_details,
-            tz_content=tz_content,
-            pr_info=pr_info,
-            figma_data=figma_data,
-            dev_comments_section=dev_comments_section,
-            reanalysis_section=reanalysis_section,
-            max_files=max_files,
-            show_full_diff=show_full_diff,
-            use_smart_patch=use_smart_patch,
-            status_callback=update_status,
-        )
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # AI ANALYSIS (FULL-ONLY POLICY)
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    def _analyze_with_retry(
-            self,
-            task_key: str,
-            task_details: Dict,
-            tz_content: str,
-            pr_info: Dict,
-            figma_data: Optional[Dict],
-            dev_comments_section: str,
-            reanalysis_section: str,
-            max_files: Optional[int],
-            show_full_diff: bool,
-            use_smart_patch: bool,
-            status_callback,
-    ) -> Dict:
-        """
-        AI tahlili: FULL-only policy.
 
-        Qoidalar:
-            1. Faqat bitta urinish: barcha fayllar va to'liq diff.
-            2. Faylni kamaytirish yoki diffni o'chirish taqiqlanadi.
-            3. AI xatoligida partial natija qaytmaydi; standart block xabari qaytadi.
-
-        Args:
-            task_key (str): JIRA task identifikatori (masalan: 'DEV-1234').
-            task_details (Dict): JIRA'dan olingan task ma'lumotlari (summary, comments, va h.k.).
-            tz_content (str): Formatlangan TZ kontenti (AI promtiga qo'shiladi).
-            pr_info (Dict): GitHub PR ma'lumotlari (files, diff, statistika).
-            figma_data (Optional[Dict]): Figma fayl xulosalari (None bo'lishi mumkin).
-            dev_comments_section (str): Filtered developer comment'lar bloki
-                (_build_dev_comments_section() tomonidan tayyorlanadi).
-            max_files (Optional[int]): 1-strategiyada ishlatiladigan maksimal fayl soni.
-            show_full_diff (bool): 1- va 2-strategiyalarda diff qo'shilsinmi.
-            use_smart_patch (bool): Smart patch rejimi yoqilganmi.
-            status_callback: Progress yangilanishi uchun callback(level, message).
-
-        Returns:
-            Dict: _try_ai_analysis() formatidagi natija:
-                {
-                    'success': bool,
-                    'analysis': str,          # AI tahlil matni (muvaffaqiyatli holatda)
-                    'error': str,             # Xatolik xabari (muvaffaqiyatsiz holatda)
-                    'retry_count': int,       # Nechi strategiya ishlatilgani (0, 1 yoki 2)
-                    'files_analyzed': int,    # Tahlil qilingan fayllar soni
-                    'prompt_size': int,       # Promtning belgilar soni
-                    'warnings': List[str]     # Qo'shimcha ogohlantirishlar
-                }
-        """
-
-        # Build Figma sections
-        figma_section, figma_analysis, figma_response = self._build_figma_prompt_section(figma_data)
-
-        # Canonical analysis: har doim to'liq section set so'raladi.
-        visible_sections = self._get_canonical_analysis_sections()
-
-        # Build dynamic response format (respects visible_sections)
-        response_format_sections = _build_response_format_sections(
-            visible_sections, figma_response
-        )
-
-        # Full attempt: all files + full diff
-        result = self._try_ai_analysis(
-            task_key=task_key,
-            task_details=task_details,
-            tz_content=tz_content,
-            pr_info=pr_info,
-            figma_data=figma_data,
-            figma_section=figma_section,
-            figma_analysis=figma_analysis,
-            dev_comments_section=dev_comments_section,
-            reanalysis_section=reanalysis_section,
-            response_format_sections=response_format_sections,
-            max_files=max_files,
-            show_full_diff=show_full_diff,
-            use_smart_patch=use_smart_patch,
-            retry_attempt=0,
-        )
-
-        files_total = pr_info.get('files_changed', 0)
-        files_included = result.get('files_analyzed')
-        prompt_size = result.get('prompt_size')
-        model_name = result.get('model_name')
-        primary_model_name = result.get('primary_model_name')
-        fallback_model_name = result.get('fallback_model_name')
-        used_fallback = result.get('used_fallback', False)
-
-        if result['success'] and files_included == files_total:
-            return result
-
-        # Any failure/partial -> block (standardized)
-        blocked = build_full_analysis_blocked(
-            module_name="TZ-PR Checker",
-            task_key=task_key,
-            error_message=result.get("error", "AI full analysis failed"),
-            files_total=files_total,
-            files_included=files_included,
-            prompt_size_chars=prompt_size,
-            model=model_name,
-        )
-        return {
-            "success": False,
-            "error": blocked["error_message"],
-            "warnings": [],
-            "retry_count": result.get("retry_count", 0),
-            "files_analyzed": files_included,
-            "prompt_size": prompt_size,
-            "status_banner": blocked["status_banner"],
-            "model_name": model_name,
-            "primary_model_name": primary_model_name,
-            "fallback_model_name": fallback_model_name,
-            "used_fallback": used_fallback,
-        }
-
-    def _try_ai_analysis(
-            self,
-            task_key: str,
-            task_details: Dict,
-            tz_content: str,
-            pr_info: Dict,
-            figma_data: Optional[Dict],
-            figma_section: str,
-            figma_analysis: str,
-            dev_comments_section: str,
-            reanalysis_section: str,
-            response_format_sections: str,
-            max_files: Optional[int],
-            show_full_diff: bool,
-            use_smart_patch: bool,
-            retry_attempt: int,
-    ) -> Dict:
-        """Single AI analysis attempt."""
-
-        try:
-            # Build code changes
-            code_changes = self._build_code_changes_section(
-                pr_info,
-                max_files,
-                show_full_diff,
-                use_smart_patch
-            )
-
-            # Sozlamadagi tartib bo'yicha ma'lumotlar bo'limini yig'ish (AI qat'iy amal qiladi)
-            tz_settings = self._get_settings()
-            order = tz_settings.ai_data_section_order or ["tz", "comments", "figma", "code"]
-            data_sections_body = self._build_ordered_data_sections(
-                order=order,
-                tz_content=tz_content,
-                dev_comments_section=dev_comments_section,
-                reanalysis_section=reanalysis_section,
-                figma_section=figma_section,
-                code_changes=code_changes
-            )
-
-            if not figma_section.strip():
-                response_format_sections += (
-                    "\n\n⛔ FIGMA MA'LUMOTI MAVJUD EMAS:"
-                    "\n- Figma haqida hech qanday xulosa, taxmin, ehtimoliy moslik yoki dizayn bahosi yozma."
-                    "\n- `FIGMA DIZAYN MOSLIGI` bo'limini qoldir, lekin faqat access bo'lmagani va xulosa berib bo'lmasligini yoz."
-                    "\n- `Figma bo'lmasa ham kodga qarab mos deb aytish mumkin` kabi taxminiy gaplarni yozma."
-                    "\n- Aniq yoz: `Figma ma'lumotlari olinmadi, shu sabab Figma dizayni bo'yicha xulosa berib bo'lmaydi.`"
-                )
-
-            # Build final prompt (tartib sozlamadan, scope qoidasi qo'shilgan)
-            prompt = AI_PROMPT_TEMPLATE_UZ.format(
-                task_key=task_key,
-                task_summary=task_details['summary'],
-                scope_instruction=SCOPE_INSTRUCTION_UZ,
-                data_safety_instruction=DATA_SAFETY_INSTRUCTION_UZ,
-                data_sections_body=data_sections_body,
-                figma_analysis_section=figma_analysis,
-                response_format_sections=response_format_sections
-            )
-
-            text_info = self._calculate_text_length(prompt)
-            prompt_size = text_info["chars"]
-            prompt_tokens = int(text_info["tokens"] or 0)
-            limit_label = "✅" if text_info["within_limit"] else "⚠ oshdi, FULL policy bo'yicha bloklanadi"
-            log.info(
-                f"[{task_key}] AI prompt: {prompt_size:,} belgi (~{prompt_tokens:,} token) | limit: {limit_label}"
-            )
-
-            if not text_info["within_limit"]:
-                primary_model_name = getattr(self.gemini, "model_name", None)
-                fallback_model_name = getattr(self.gemini, "last_fallback_model_name", None) or ""
-                return {
-                    'success': False,
-                    'error': "AI token limit: prompt too large for full analysis",
-                    'retry_count': retry_attempt,
-                    'warnings': ["FULL policy: prompt preflight block"],
-                    'files_analyzed': max_files or pr_info.get('files_changed', 0),
-                    'prompt_size': prompt_size,
-                    'model_name': primary_model_name,
-                    'primary_model_name': primary_model_name,
-                    'fallback_model_name': fallback_model_name,
-                    'used_fallback': False,
-                }
-
-            # Call AI — barcha bo'limlar yoqilganda javob katta bo'ladi,
-            # shuning uchun max_output_tokens settings'dan olinadi
-            max_tokens = tz_settings.ai_max_output_tokens
-            analysis = self.gemini.analyze(prompt, max_output_tokens=max_tokens)
-            analysis = self._sanitize_ai_analysis_for_missing_figma(analysis, figma_data)
-            primary_model_name = getattr(self.gemini, "last_primary_model_name", None) or getattr(self.gemini, "model_name", None)
-            fallback_model_name = getattr(self.gemini, "last_fallback_model_name", None) or ""
-            model_name = getattr(self.gemini, "last_model_used", None) or primary_model_name
-            used_fallback = bool(getattr(self.gemini, "last_used_fallback", False))
-
-            return {
-                'success': True,
-                'analysis': analysis,
-                'retry_count': retry_attempt,
-                'files_analyzed': max_files or pr_info['files_changed'],
-                'prompt_size': prompt_size,
-                'warnings': [],
-                'model_name': model_name,
-                'primary_model_name': primary_model_name,
-                'fallback_model_name': fallback_model_name,
-                'used_fallback': used_fallback,
-            }
-
-        except Exception as e:
-            error_msg = str(e)
-            primary_model_name = getattr(self.gemini, "last_primary_model_name", None) or getattr(self.gemini, "model_name", None)
-            fallback_model_name = getattr(self.gemini, "last_fallback_model_name", None) or ""
-            model_name = getattr(self.gemini, "last_model_used", None) or primary_model_name
-            return {
-                'success': False,
-                'error': f"AI xatolik (attempt {retry_attempt}): {error_msg}",
-                'retry_count': retry_attempt,
-                'warnings': [f"Retry {retry_attempt} failed: {error_msg}"],
-                'files_analyzed': max_files or pr_info.get('files_changed', 0),
-                'prompt_size': prompt_size if 'prompt_size' in locals() else 0,
-                'model_name': model_name,
-                'primary_model_name': primary_model_name,
-                'fallback_model_name': fallback_model_name,
-                'used_fallback': bool(getattr(self.gemini, "last_used_fallback", False)),
-            }
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # HELPER METHODS (UNCHANGED)
@@ -1284,7 +495,7 @@ class TZPRService(BaseService):
         if max_files:
             files_to_show = min(files_to_show, max_files)
 
-        lines.append(f"📊 PR Summary:")
+        lines.append("📊 PR Summary:")
         lines.append(f"   PR Count: {pr_info['pr_count']}")
         lines.append(f"   Files Changed: {pr_info['files_changed']}")
         lines.append(f"   Additions: +{pr_info['total_additions']}")
@@ -1365,120 +576,9 @@ class TZPRService(BaseService):
             .strip()
         )
 
-    @staticmethod
-    def _normalize_analysis_placeholder_text(value: str) -> str:
-        text = TZPRService._clean_analysis_line(value).lower()
-        text = re.sub(r"^[-*•]+\s*", "", text)
-        text = re.sub(r"^\d+\.\s*", "", text)
-        text = re.sub(r"\s+", " ", text)
-        return text.strip()
 
-    def _is_explicit_empty_analysis_section(self, key: str, cleaned_lines: List[str]) -> bool:
-        if key not in {"partial", "failed", "issues"}:
-            return False
 
-        first_line = next(
-            (
-                self._normalize_analysis_placeholder_text(line)
-                for line in cleaned_lines
-                if self._normalize_analysis_placeholder_text(line)
-            ),
-            "",
-        )
-        if not first_line:
-            return False
 
-        if re.match(r"^yo['`’]?q(?:[.!:,\\s]|$)", first_line):
-            return True
-        if re.match(r"^(none|нет)(?:[.!:,\\s]|$)", first_line):
-            return True
-
-        if key in {"partial", "failed"}:
-            return any(
-                marker in first_line
-                for marker in (
-                    "barcha talablar to'liq bajarilgan",
-                    "barcha talablar pr doirasida to'liq bajarilgan",
-                    "tz doirasidagi barcha vazifalar amalga oshirilgan",
-                    "bajarilmagan talab yo'q",
-                    "bajarilmagan talablar yo'q",
-                    "bajarilmagan talab topilmadi",
-                    "bajarilmagan talablar topilmadi",
-                    "qisman bajarilgan talab yo'q",
-                    "qisman bajarilgan talablar yo'q",
-                    "qisman bajarilgan talab topilmadi",
-                    "qisman bajarilgan talablar topilmadi",
-                )
-            )
-
-        return any(
-            marker in first_line
-            for marker in (
-                "potensial muammo yo'q",
-                "potensial muammolar yo'q",
-                "potensial muammolar topilmadi",
-                "hech qanday muammo yo'q",
-                "hech qanday muammo aniqlanmadi",
-                "muammo yo'q",
-                "muammo topilmadi",
-                "muammolar yo'q",
-                "muammolar topilmadi",
-                "risk yo'q",
-                "risk topilmadi",
-                "risklar yo'q",
-                "risklar topilmadi",
-            )
-        )
-
-    def _classify_analysis_section_key(self, title: str) -> str:
-        normalized = self._clean_analysis_line(title).lower()
-        for marker, key in _ANALYSIS_TITLE_TO_KEY.items():
-            if marker in normalized:
-                return key
-        return "other"
-
-    def _split_analysis_sections(self, analysis: str) -> List[TZPRAnalysisSection]:
-        sections: List[TZPRAnalysisSection] = []
-        current_title = "Tahlil"
-        current_lines: List[str] = []
-
-        def flush_section() -> None:
-            nonlocal current_title, current_lines
-            cleaned_lines = [self._clean_analysis_line(line) for line in current_lines]
-            cleaned_lines = [line for line in cleaned_lines if line]
-            key = self._classify_analysis_section_key(current_title)
-            if self._is_explicit_empty_analysis_section(key, cleaned_lines):
-                cleaned_lines = []
-            items = self._filter_analysis_items(
-                key,
-                self._group_analysis_items(cleaned_lines),
-            )
-            sections.append(
-                TZPRAnalysisSection(
-                    key=key,
-                    title=self._clean_analysis_line(current_title) or "Tahlil",
-                    lines=cleaned_lines,
-                    items=items,
-                    item_count=len(items),
-                    empty=len(cleaned_lines) == 0,
-                )
-            )
-            current_title = "Tahlil"
-            current_lines = []
-
-        for raw_line in (analysis or "").replace("\r\n", "\n").replace("\r", "\n").split("\n"):
-            heading_match = re.match(r"^#{2,3}\s*(.+)$", raw_line)
-            if heading_match:
-                if current_lines or current_title != "Tahlil":
-                    flush_section()
-                current_title = heading_match.group(1) or "Tahlil"
-                continue
-            current_lines.append(raw_line)
-
-        if current_lines or current_title != "Tahlil":
-            flush_section()
-
-        return [section for section in sections if section.title or section.lines]
 
     @staticmethod
     def _strip_analysis_item_leader(line: str) -> str:
@@ -1488,184 +588,11 @@ class TZPRService(BaseService):
         normalized = re.sub(r"^[✅⚠️❌🐛📌]\s*", "", normalized)
         return normalized.strip()
 
-    def _starts_requirement_detail_line(self, line: str) -> bool:
-        normalized = self._strip_analysis_item_leader(line).lower()
-        return normalized.startswith((
-            "evidence:",
-            "isbot:",
-            "dalil:",
-            "file:",
-            "files:",
-            "fayl:",
-            "fayllar:",
-            "kod:",
-            "code:",
-            "figma:",
-            "note:",
-            "notes:",
-            "izoh:",
-        ))
 
-    def _looks_like_requirement_item(self, item_text: str) -> bool:
-        first_line = next(
-            (line.strip() for line in str(item_text or "").replace("\r", "").split("\n") if line.strip()),
-            "",
-        )
-        if not first_line:
-            return False
 
-        if re.match(r"^[-*•]\s+", first_line) or re.match(r"^\d+\.\s+", first_line):
-            return True
-        if first_line.startswith(("✅", "⚠️", "❌", "🐛", "📌")):
-            return True
 
-        normalized = self._strip_analysis_item_leader(first_line).lower()
-        return normalized.startswith((
-            "talab:",
-            "requirement:",
-            "evidence:",
-            "isbot:",
-            "dalil:",
-            "file:",
-            "files:",
-            "fayl:",
-            "fayllar:",
-            "kod:",
-            "code:",
-            "figma:",
-            "note:",
-            "notes:",
-            "izoh:",
-        ))
 
-    def _is_requirement_summary_item(self, key: str, item_text: str) -> bool:
-        if key not in {"completed", "partial", "failed"}:
-            return False
-        if self._looks_like_requirement_item(item_text):
-            return False
 
-        normalized = self._clean_analysis_line(item_text).lower()
-        return any(
-            phrase in normalized
-            for phrase in (
-                "ushbu pr doirasida qisman bajarilgan talablar yo'q",
-                "ushbu pr doirasida bajarilmagan talablar yo'q",
-                "qisman bajarilgan talablar yo'q",
-                "qisman bajarilgan talab yo'q",
-                "bajarilmagan talablar yo'q",
-                "bajarilmagan talab yo'q",
-                "barcha talablar to'liq bajarilgan",
-                "barcha talablar bajarilgan",
-            )
-        )
-
-    def _filter_analysis_items(self, key: str, items: List[str]) -> List[str]:
-        if key not in {"completed", "partial", "failed"}:
-            return items
-        return [item for item in items if not self._is_requirement_summary_item(key, item)]
-
-    def _group_analysis_items(self, cleaned_lines: List[str]) -> List[str]:
-        items: List[str] = []
-        current: List[str] = []
-
-        def flush_item() -> None:
-            nonlocal current
-            item = "\n".join(part for part in current if part).strip()
-            if item:
-                items.append(item)
-            current = []
-
-        for line in cleaned_lines:
-            if not line:
-                flush_item()
-                continue
-
-            normalized = line.lstrip()
-            starts_requirement_detail = self._starts_requirement_detail_line(normalized)
-            starts_new = bool(
-                re.match(r"^[-*•]\s+", normalized)
-                or re.match(r"^\d+\.\s+", normalized)
-                or normalized.startswith("✅")
-                or normalized.startswith("⚠️")
-                or normalized.startswith("❌")
-                or normalized.startswith("🐛")
-                or normalized.startswith("📌")
-            )
-            if starts_new and current and not starts_requirement_detail:
-                flush_item()
-            current.append(normalized)
-
-        flush_item()
-        return items
-
-    def _build_structured_analysis(
-            self,
-            analysis: str,
-            compliance_score: Optional[int],
-            figma_data: Optional[Dict],
-    ) -> tuple[List[TZPRAnalysisSection], TZPRAnalysisOverview]:
-        parsed_sections = self._split_analysis_sections(analysis)
-        sections_by_key: Dict[str, TZPRAnalysisSection] = {}
-        for section in parsed_sections:
-            if section.key == "score":
-                continue
-            if section.key in sections_by_key:
-                merged = sections_by_key[section.key]
-                merged.lines.extend(section.lines)
-                merged.items.extend(section.items)
-                merged.item_count = len(merged.items)
-                merged.empty = merged.empty and section.empty
-            else:
-                sections_by_key[section.key] = section
-
-        requested_sections = self._get_canonical_analysis_sections()
-        ordered_sections: List[TZPRAnalysisSection] = []
-        for key in requested_sections:
-            if key == "summary":
-                continue
-            existing = sections_by_key.get(key)
-            if existing:
-                ordered_sections.append(existing)
-            else:
-                title = _SECTION_PROMPT_BLOCKS.get(key, "").splitlines()[0].replace("## ", "").strip() if key in _SECTION_PROMPT_BLOCKS else "Tahlil"
-                if key == "figma":
-                    title = "🎨 FIGMA DIZAYN MOSLIGI"
-                ordered_sections.append(
-                    TZPRAnalysisSection(
-                        key=key,
-                        title=title,
-                        lines=[],
-                        items=[],
-                        item_count=0,
-                        empty=True,
-                    )
-                )
-
-        summary_section = sections_by_key.get("summary")
-        summary_lines = list(summary_section.lines) if summary_section and summary_section.lines else []
-        if not summary_lines:
-            summary_lines = self._build_summary_lines(ordered_sections, compliance_score, figma_data)
-        elif compliance_score is not None and not any("%" in line for line in summary_lines):
-            summary_lines = [f"Compliance score: {compliance_score}%", *summary_lines]
-
-        section_counts = {
-            section.key: section.item_count or len(section.lines)
-            for section in ordered_sections
-        }
-        verdict, verdict_label, verdict_reason = self._derive_verdict(
-            ordered_sections,
-            compliance_score,
-        )
-        overview = TZPRAnalysisOverview(
-            verdict=verdict,
-            verdict_label=verdict_label,
-            verdict_reason=verdict_reason,
-            summary_lines=summary_lines,
-            section_counts=section_counts,
-            missing_figma_access=not self._has_usable_figma_data(figma_data),
-            requested_sections=requested_sections,
-        )
-        return ordered_sections, overview
 
     def _build_summary_lines(
             self,
@@ -1902,7 +829,10 @@ class TZPRService(BaseService):
         db_task: Dict[str, Any] = {}
         try:
             from utils.database.task_db import get_task
-            db_task = get_task(task_key) or {}
+            try:
+                db_task = get_task(task_key, company_id=self._company_id) or {}
+            except TypeError:
+                db_task = get_task(task_key) or {}
         except Exception as exc:
             log.warning(f"[{task_key}] Workflow info load failed: {exc}")
 
@@ -1950,19 +880,6 @@ class TZPRService(BaseService):
             return text
         return f"{text[: max(limit - 1, 0)].rstrip()}…"
 
-    def _collect_changed_files(self, pr_details: List[Dict], limit: int = 3) -> List[str]:
-        files: List[str] = []
-        seen = set()
-        for pr in pr_details or []:
-            for file_item in pr.get("files") or []:
-                filename = str(file_item.get("filename") or "").strip()
-                if not filename or filename in seen:
-                    continue
-                seen.add(filename)
-                files.append(filename)
-                if len(files) >= limit:
-                    return files
-        return files
 
     @staticmethod
     def _extract_patch_line_range(file_item: Dict[str, Any]) -> tuple[Optional[int], Optional[int]]:
@@ -2278,72 +1195,7 @@ class TZPRService(BaseService):
 
         return matrix
 
-    def _extract_compliance_score(self, analysis: str) -> Optional[int]:
-        """
-        AI javob matnidan moslik balini ajratib olish — 4 bosqichli regex strategiyasi.
 
-        AI modeli har doim bir xil formatda javob bermaydi. Shuning uchun bu funksiya
-        to'rtta turli regex pattern'ni ketma-ket sinab ko'radi va birinchi mos
-        kelganidan balini qaytaradi.
-
-        Regex strategiyalari (tartib bilan):
-            1. Oddiy format: ``COMPLIANCE_SCORE: 85%``
-            2. Bold format:  ``**COMPLIANCE_SCORE: 85%**``
-            3. Bo'lim sarlavhasi: ``MOSLIK BALI`` dan keyin birinchi foiz raqam.
-            4. Zaxira: ``compliance``, ``bali``, ``score`` yoki ``moslik`` so'zidan
-               30 belgidan so'ng kelgan birinchi foiz raqam.
-
-        Agar to'rtta strategiyadan birontasi ham mos kelmasa, None qaytariladi
-        va log'ga ogohlantirish yoziladi.
-
-        Args:
-            analysis (str): AI tomonidan qaytarilgan to'liq tahlil matni.
-
-        Returns:
-            Optional[int]: 0-100 oralig'idagi moslik bali (masalan: 87).
-                Agar hech qaysi pattern mos kelmasa — None.
-
-        Note:
-            Barcha pattern'lar case-insensitive (re.IGNORECASE) rejimida ishlatiladi.
-            Xatolik bo'lsa (masalan: bo'sh string) — exception ushlanib, None qaytariladi.
-        """
-        try:
-            # Try format: COMPLIANCE_SCORE: XX%
-            match = re.search(r'COMPLIANCE_SCORE:\s*(\d+)%', analysis, re.IGNORECASE)
-            if match:
-                return int(match.group(1))
-
-            # Try format: **COMPLIANCE_SCORE: XX%**
-            match = re.search(r'\*\*COMPLIANCE_SCORE:\s*(\d+)%\*\*', analysis, re.IGNORECASE)
-            if match:
-                return int(match.group(1))
-
-            # Try to find "MOSLIK BALI" section with score
-            match = re.search(r'(?:MOSLIK BALI|MOSLIK BALI)[\s\S]*?(\d+)%', analysis, re.IGNORECASE)
-            if match:
-                return int(match.group(1))
-
-            # Last resort: "MOSLIK BALI" yoki "Statistika" bo'limidan tashqari
-            # COMPLIANCE yoki "bali" so'zi yonida turgan foizni qidirish
-            match = re.search(r'(?:compliance|bali|score|moslik)[\s\S]{0,30}?(\d+)%', analysis, re.IGNORECASE)
-            if match:
-                return int(match.group(1))
-        except Exception as e:
-            log.log_error("UNKNOWN", "Score extraction", str(e))
-
-        # If not found, log warning
-        log.warning("COMPLIANCE_SCORE not found in AI response!")
-        log.debug(f"AI Response preview: {analysis[:500]}...")
-
-        return None
-
-    def _log_smart_patch_status(self, use_smart_patch: bool, update_status):
-        """Log Smart Patch availability"""
-        if use_smart_patch:
-            if SMART_PATCH_AVAILABLE:
-                update_status("info", "Smart Patch: Enabled (full context mode)")
-            else:
-                update_status("warning", "Smart Patch: Not available (using standard diff)")
 
     def _create_error_result(
             self,

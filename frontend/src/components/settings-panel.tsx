@@ -7,7 +7,6 @@ import { Notice } from "@/components/ui/notice";
 import { PageIntro } from "@/components/ui/page-intro";
 import { SectionHeader } from "@/components/ui/section-header";
 import {
-  BaseCheckGroup,
   BaseOrderPills,
   BaseInputField,
   BaseSelectField,
@@ -26,7 +25,8 @@ import type {
   SharedSettingsView,
   UserRole,
 } from "@/lib/types";
-import { CHECKER_SECTION_LABELS } from "@/lib/tzpr-sections";
+
+const CHECKER_COMMENT_SECTIONS = ["completed", "failed", "skipped", "issues", "figma"];
 
 type SettingsPanelProps = {
   companyName: string;
@@ -104,15 +104,6 @@ type WebhookFormState = {
   agent3_fallback_model: string;
 };
 
-type SystemFormState = {
-  queue_enabled: boolean;
-  task_wait_timeout: string;
-  checker_testcase_delay: string;
-  blocked_retry_delay: string;
-  gemini_min_interval: string;
-  blocked_check_interval: string;
-};
-
 type ModuleFormState = {
   checker: {
     visible_sections: string[];
@@ -172,7 +163,7 @@ const EMPTY_WEBHOOK_FORM: WebhookFormState = {
   read_comments_enabled: true,
   max_comments_to_read: "0",
   show_contradictory_comments: true,
-  visible_sections: ["completed", "partial", "failed", "issues", "figma"],
+  visible_sections: CHECKER_COMMENT_SECTIONS,
   ai_data_section_order: ["tz", "comments", "figma", "code"],
   skip_code: "AI_SKIP",
   skip_comment_text: "⏭️ AI tekshirish o'chirilgan. Dev tomanidan skip ko'rsatma berilgan. Manual tekshirish tavsiya etiladi.",
@@ -204,17 +195,8 @@ const EMPTY_WEBHOOK_FORM: WebhookFormState = {
   agent3_fallback_model: "",
 };
 
-const EMPTY_SYSTEM_FORM: SystemFormState = {
-  queue_enabled: true,
-  task_wait_timeout: "60",
-  checker_testcase_delay: "15",
-  blocked_retry_delay: "5",
-  gemini_min_interval: "6",
-  blocked_check_interval: "30",
-};
-
 const DEFAULT_MODULE_ALLOWED: ModuleSettingsAllowed = {
-  checker_visible_sections: ["completed", "partial", "failed", "issues", "figma"],
+  checker_visible_sections: CHECKER_COMMENT_SECTIONS,
   checker_ai_data_order: ["tz", "comments", "figma", "code"],
   testcase_ai_data_order: ["tz", "comments", "custom_context", "code"],
   testcase_types: ["positive", "negative", "boundary", "edge"],
@@ -222,7 +204,7 @@ const DEFAULT_MODULE_ALLOWED: ModuleSettingsAllowed = {
 
 const EMPTY_MODULE_FORM: ModuleFormState = {
   checker: {
-    visible_sections: ["completed", "partial", "failed", "issues", "figma"],
+    visible_sections: CHECKER_COMMENT_SECTIONS,
     ai_data_section_order: ["tz", "comments", "figma", "code"],
     read_comments_enabled: true,
     max_comments_to_read: "0",
@@ -263,27 +245,22 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
   const [savingShared, setSavingShared] = useState(false);
   const [savingWebhook, setSavingWebhook] = useState(false);
   const [savingModules, setSavingModules] = useState(false);
-  const [savingSystem, setSavingSystem] = useState(false);
   const [webhookLoading, setWebhookLoading] = useState(false);
   const [modulesLoading, setModulesLoading] = useState(false);
-  const [systemLoading, setSystemLoading] = useState(false);
   const [checkerDirty, setCheckerDirty] = useState(false);
   const [testcaseDirty, setTestcaseDirty] = useState(false);
   const [whDirty, setWhDirty] = useState(false);
-  const [systemDirty, setSystemDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sharedError, setSharedError] = useState<string | null>(null);
   const [webhookSharedError, setWebhookSharedError] = useState<string | null>(null);
   const [webhookService1Error, setWebhookService1Error] = useState<string | null>(null);
   const [webhookService2Error, setWebhookService2Error] = useState<string | null>(null);
-  const [systemError, setSystemError] = useState<string | null>(null);
   const [modulesCheckerError, setModulesCheckerError] = useState<string | null>(null);
   const [modulesTestcaseError, setModulesTestcaseError] = useState<string | null>(null);
   const [sharedSuccess, setSharedSuccess] = useState<string | null>(null);
   const [webhookSharedSuccess, setWebhookSharedSuccess] = useState<string | null>(null);
   const [webhookService1Success, setWebhookService1Success] = useState<string | null>(null);
   const [webhookService2Success, setWebhookService2Success] = useState<string | null>(null);
-  const [systemSuccess, setSystemSuccess] = useState<string | null>(null);
   const [modulesCheckerSuccess, setModulesCheckerSuccess] = useState<string | null>(null);
   const [modulesTestcaseSuccess, setModulesTestcaseSuccess] = useState<string | null>(null);
   const [view, setView] = useState<SharedSettingsView | null>(null);
@@ -291,7 +268,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
   const [form, setForm] = useState<SettingsFormState>(EMPTY_FORM);
   const [webhookForm, setWebhookForm] = useState<WebhookFormState>(EMPTY_WEBHOOK_FORM);
   const [webhookBaseline, setWebhookBaseline] = useState<WebhookFormState>(EMPTY_WEBHOOK_FORM);
-  const [systemForm, setSystemForm] = useState<SystemFormState>(EMPTY_SYSTEM_FORM);
   const [moduleForm, setModuleForm] = useState<ModuleFormState>(EMPTY_MODULE_FORM);
   const [moduleAllowed, setModuleAllowed] = useState<ModuleSettingsAllowed>(DEFAULT_MODULE_ALLOWED);
   const [jiraTokenMask, setJiraTokenMask] = useState("");
@@ -323,9 +299,13 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
   const whAgent2BatchError = Number(webhookForm.agent2_batch_size || "0") < 1
     || Number(webhookForm.agent2_batch_size || "0") > 20;
   const whMinTzError = Number(webhookForm.min_tz_description_chars || "0") < 0;
-  const whMaxReadCommentsError = webhookForm.read_comments_enabled
+  const whCommentWindowVisible = webhookForm.read_comments_enabled || Boolean(webhookForm.skip_code.trim());
+  const whMaxReadCommentsError = whCommentWindowVisible
     && Number(webhookForm.max_comments_to_read || "0") < 0;
   const whMaxSkipError = Boolean(webhookForm.skip_code.trim()) && Number(webhookForm.max_skip_check_comments || "0") < 1;
+  const whSkipWindowError = Boolean(webhookForm.skip_code.trim())
+    && Number(webhookForm.max_comments_to_read || "0") > 0
+    && Number(webhookForm.max_skip_check_comments || "0") >= Number(webhookForm.max_comments_to_read || "0");
   const whTcMaxCasesError = webhookForm.testcase_auto_comment_enabled
     && (Number(webhookForm.testcase_testcases_per_requirement || "0") < 1
       || Number(webhookForm.testcase_testcases_per_requirement || "0") > 3);
@@ -338,6 +318,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
     || whMinTzError
     || whMaxReadCommentsError
     || whMaxSkipError
+    || whSkipWindowError
     || whTcMaxCasesError
     || whTcMaxCommentsError;
 
@@ -406,17 +387,12 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
   const webhookService1Dirty = isWebhookCardDirty(WEBHOOK_SERVICE1_KEYS);
   const webhookService2Dirty = isWebhookCardDirty(WEBHOOK_SERVICE2_KEYS);
   const webhookAnyDirty = webhookSharedDirty || webhookService1Dirty || webhookService2Dirty;
-
-  const sysWaitTimeoutError = Number(systemForm.task_wait_timeout || "0") < 1;
-  const sysDelayError = Number(systemForm.checker_testcase_delay || "0") < 1;
-  const sysRetryDelayError = Number(systemForm.blocked_retry_delay || "0") < 1;
-  const sysGeminiIntervalError = Number(systemForm.gemini_min_interval || "0") < 1;
-  const sysBlockedCheckError = Number(systemForm.blocked_check_interval || "0") < 1;
-  const systemHasError = (systemForm.queue_enabled && sysWaitTimeoutError)
-    || sysDelayError
-    || sysRetryDelayError
-    || (systemForm.queue_enabled && sysGeminiIntervalError)
-    || sysBlockedCheckError;
+  const showGeminiKey1 = Boolean(
+    view?.fields.gemini_api_key_1_present ||
+    geminiKey1Dirty ||
+    clearedCreds.gemini_api_key_1 ||
+    form.gemini_api_key_1.trim(),
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -424,7 +400,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
       setLoading(true);
       setWebhookLoading(Boolean(hasWebhookModule));
       setModulesLoading(true);
-      setSystemLoading(Boolean(hasWebhookModule));
       setError(null);
       try {
         const sharedResponse = await fetch("/api/settings/shared", { cache: "no-store" });
@@ -441,7 +416,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
         setView(sharedPayload);
         const canUseWebhook = sharedPayload.mode === "company" && hasWebhookModule;
         const canUseModules = sharedPayload.mode === "company";
-        const canUseSystem = sharedPayload.mode === "company" && hasWebhookModule;
         if (sharedPayload.mode === "company") {
           setTab("integrations");
         }
@@ -536,10 +510,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
             const data = webhookPayload.data || {};
             const current = String(data.trigger_status || "READY TO TEST");
             const showContradictory = Boolean(data.show_contradictory_comments ?? true);
-            const rawSections = Array.isArray(data.visible_sections) ? data.visible_sections : EMPTY_WEBHOOK_FORM.visible_sections;
-            const normalizedSections = showContradictory
-              ? Array.from(new Set([...rawSections, "contradictory_comments"]))
-              : rawSections.filter((item) => item !== "contradictory_comments");
+            const normalizedSections = CHECKER_COMMENT_SECTIONS;
 
             setWebhookForm({
               auto_return_enabled: Boolean(data.auto_return_enabled),
@@ -558,7 +529,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
               show_contradictory_comments: showContradictory,
               visible_sections: normalizedSections,
               ai_data_section_order: Array.isArray(data.ai_data_section_order) ? data.ai_data_section_order : EMPTY_WEBHOOK_FORM.ai_data_section_order,
-              skip_code: String(data.skip_code || "AI_SKIP"),
+              skip_code: String(data.skip_code ?? "AI_SKIP"),
               skip_comment_text: String(data.skip_comment_text || "⏭️ AI tekshirish o'chirilgan. Dev tomanidan skip ko'rsatma berilgan. Manual tekshirish tavsiya etiladi."),
               trigger_status: current || "READY TO TEST",
               trigger_status_aliases: String(data.trigger_status_aliases || ""),
@@ -604,7 +575,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
               show_contradictory_comments: showContradictory,
               visible_sections: normalizedSections,
               ai_data_section_order: Array.isArray(data.ai_data_section_order) ? data.ai_data_section_order : EMPTY_WEBHOOK_FORM.ai_data_section_order,
-              skip_code: String(data.skip_code || "AI_SKIP"),
+              skip_code: String(data.skip_code ?? "AI_SKIP"),
               skip_comment_text: String(data.skip_comment_text || "⏭️ AI tekshirish o'chirilgan. Dev tomanidan skip ko'rsatma berilgan. Manual tekshirish tavsiya etiladi."),
               trigger_status: current || "READY TO TEST",
               trigger_status_aliases: String(data.trigger_status_aliases || ""),
@@ -644,43 +615,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
           setWebhookBaseline(EMPTY_WEBHOOK_FORM);
           setWhDirty(false);
           setWebhookLoading(false);
-        }
-
-        if (canUseSystem) {
-          const systemResponse = await fetch("/api/settings/system", { cache: "no-store" });
-          const systemPayload = (await systemResponse.json().catch(() => null)) as
-            | {
-                success?: boolean;
-                data?: {
-                  queue_enabled?: boolean;
-                  task_wait_timeout?: number;
-                  checker_testcase_delay?: number;
-                  blocked_retry_delay?: number;
-                  gemini_min_interval?: number;
-                  blocked_check_interval?: number;
-                };
-              }
-            | null;
-
-          if (systemResponse.ok && systemPayload?.success && systemPayload.data) {
-            const data = systemPayload.data;
-            setSystemForm({
-              queue_enabled: Boolean(data.queue_enabled ?? true),
-              task_wait_timeout: String(data.task_wait_timeout ?? 60),
-              checker_testcase_delay: String(data.checker_testcase_delay ?? 15),
-              blocked_retry_delay: String(data.blocked_retry_delay ?? 5),
-              gemini_min_interval: String(data.gemini_min_interval ?? 6),
-              blocked_check_interval: String(data.blocked_check_interval ?? 30),
-            });
-            setSystemDirty(false);
-          } else {
-            setSystemForm(EMPTY_SYSTEM_FORM);
-            setSystemDirty(false);
-          }
-        } else {
-          setSystemForm(EMPTY_SYSTEM_FORM);
-          setSystemDirty(false);
-          setSystemLoading(false);
         }
 
         if (canUseModules) {
@@ -782,7 +716,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
           setLoading(false);
           setWebhookLoading(false);
           setModulesLoading(false);
-          setSystemLoading(false);
         }
       }
     }
@@ -839,11 +772,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
   function updateWebhookField<K extends keyof WebhookFormState>(field: K, value: WebhookFormState[K]) {
     setWhDirty(true);
     setWebhookForm((current) => ({ ...current, [field]: value }));
-  }
-
-  function updateSystemField(field: keyof SystemFormState, value: string | boolean) {
-    setSystemDirty(true);
-    setSystemForm((current) => ({ ...current, [field]: value }));
   }
 
   function updateCheckerField<K extends keyof ModuleFormState["checker"]>(
@@ -1043,7 +971,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
           read_comments_enabled: webhookForm.read_comments_enabled,
           max_comments_to_read: Number(webhookForm.max_comments_to_read || 0),
           show_contradictory_comments: webhookForm.show_contradictory_comments,
-          visible_sections: webhookForm.visible_sections,
+          visible_sections: CHECKER_COMMENT_SECTIONS,
           ai_data_section_order: webhookForm.ai_data_section_order,
           skip_code: webhookForm.skip_code,
           skip_comment_text: webhookForm.skip_comment_text,
@@ -1094,41 +1022,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
       if (target === "service2") setWebhookService2Error(msg);
     } finally {
       setSavingWebhook(false);
-    }
-  }
-
-  async function saveSystem() {
-    if (systemHasError) return;
-    setSavingSystem(true);
-    setError(null);
-    setSystemError(null);
-    setSystemSuccess(null);
-
-    try {
-      const response = await fetch("/api/settings/system", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          queue_enabled: systemForm.queue_enabled,
-          task_wait_timeout: Number(systemForm.task_wait_timeout || 60),
-          checker_testcase_delay: Number(systemForm.checker_testcase_delay || 15),
-          blocked_retry_delay: Number(systemForm.blocked_retry_delay || 5),
-          gemini_min_interval: Number(systemForm.gemini_min_interval || 6),
-          blocked_check_interval: Number(systemForm.blocked_check_interval || 30),
-        }),
-      });
-
-      const result = (await response.json().catch(() => null)) as { error?: string; success?: boolean } | null;
-      if (!response.ok || !result?.success) {
-        throw new Error(formatSaveError("Tizim sozlamalari", response, result));
-      }
-
-      setSystemSuccess("✓ Muvaffaqiyatli saqlandi.");
-      setSystemDirty(false);
-    } catch (e) {
-      setSystemError(e instanceof Error ? e.message : "Tizim sozlamalarini saqlashda xato.");
-    } finally {
-      setSavingSystem(false);
     }
   }
 
@@ -1251,7 +1144,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
               {tab === "modules" && (checkerDirty || testcaseDirty) ? (
                 <Notice tone="warning">Saqlanmagan o'zgarishlar</Notice>
               ) : null}
-              {tab === "webhook" && (webhookAnyDirty || systemDirty) ? (
+              {tab === "webhook" && webhookAnyDirty ? (
                 <Notice tone="warning">Saqlanmagan o'zgarishlar</Notice>
               ) : null}
             </section>
@@ -1409,75 +1302,127 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                 <SettingsInnerCard>
                   <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Gemini</p>
                   <div className="mt-3 grid gap-4">
-                    <BaseInputField
-                      className={SETTINGS_INPUT_CLASS}
-                      hint={clearedCreds.gemini_api_key_1 ? "Saqlansa kalit o'chiriladi" : view.fields.gemini_api_key_1_present ? "Bo'sh qoldirilsa mavjud kalit saqlanadi" : undefined}
-                      label="Gemini API Key 1"
-                      onBlur={() => {
-                        if (geminiKey1Dirty && !clearedCreds.gemini_api_key_1 && !form.gemini_api_key_1.trim() && geminiKey1Mask) {
-                          setForm((current) => ({ ...current, gemini_api_key_1: geminiKey1Mask }));
-                          setGeminiKey1Dirty(false);
-                        }
-                      }}
-                      onChange={(value) => {
-                        setGeminiKey1Dirty(true);
-                        setClearedCreds((current) => ({ ...current, gemini_api_key_1: false }));
-                        updateField("gemini_api_key_1", value);
-                      }}
-                      onFocus={() => {
-                        if (!geminiKey1Dirty && form.gemini_api_key_1 === geminiKey1Mask) {
-                          setForm((current) => ({ ...current, gemini_api_key_1: "" }));
-                          setGeminiKey1Dirty(true);
-                        }
-                      }}
-                      placeholder="AIza..."
-                      rightSlot={clearCredentialSlot("gemini_api_key_1", setGeminiKey1Dirty, view.fields.gemini_api_key_1_present)}
-                      type="text"
-                      value={form.gemini_api_key_1}
-                    />
-                    {showGeminiKey2 ? (
-                      <BaseInputField
-                        className={SETTINGS_INPUT_CLASS}
-                        hint={clearedCreds.gemini_api_key_2 ? "Saqlansa kalit o'chiriladi" : view.fields.gemini_api_key_2_present ? "Bo'sh qoldirilsa mavjud kalit saqlanadi" : undefined}
-                        label="Gemini API Key 2 (ixtiyoriy)"
-                        onBlur={() => {
-                          if (geminiKey2Dirty && !clearedCreds.gemini_api_key_2 && !form.gemini_api_key_2.trim() && geminiKey2Mask) {
-                            setForm((current) => ({ ...current, gemini_api_key_2: geminiKey2Mask }));
-                            setGeminiKey2Dirty(false);
-                          }
-                        }}
-                        onChange={(value) => {
-                          setGeminiKey2Dirty(true);
-                          setClearedCreds((current) => ({ ...current, gemini_api_key_2: false }));
-                          updateField("gemini_api_key_2", value);
-                        }}
-                        onFocus={() => {
-                          if (!geminiKey2Dirty && form.gemini_api_key_2 === geminiKey2Mask) {
-                            setForm((current) => ({ ...current, gemini_api_key_2: "" }));
-                            setGeminiKey2Dirty(true);
-                          }
-                        }}
-                        placeholder="AIza..."
-                        rightSlot={clearCredentialSlot("gemini_api_key_2", setGeminiKey2Dirty, view.fields.gemini_api_key_2_present)}
-                        type="text"
-                        value={form.gemini_api_key_2}
-                      />
+                    {showGeminiKey1 ? (
+                      <div className="grid gap-3 rounded-lg border border-border p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold text-muted-foreground">Gemini key #1</span>
+                          <button
+                            className="text-xs font-medium text-muted-foreground transition-colors hover:text-red-500"
+                            onClick={() => {
+                              if (view.fields.gemini_api_key_1_present) {
+                                clearCredential("gemini_api_key_1", setGeminiKey1Dirty);
+                                return;
+                              }
+                              setGeminiKey1Dirty(false);
+                              setClearedCreds((current) => ({ ...current, gemini_api_key_1: false }));
+                              setForm((current) => ({ ...current, gemini_api_key_1: "" }));
+                            }}
+                            type="button"
+                          >
+                            ✕ O&apos;chirish
+                          </button>
+                        </div>
+                        <BaseInputField
+                          className={SETTINGS_INPUT_CLASS}
+                          hint={clearedCreds.gemini_api_key_1 ? "Saqlansa kalit o'chiriladi" : view.fields.gemini_api_key_1_present ? "Bo'sh qoldirilsa mavjud kalit saqlanadi" : undefined}
+                          label="Token"
+                          onBlur={() => {
+                            if (geminiKey1Dirty && !clearedCreds.gemini_api_key_1 && !form.gemini_api_key_1.trim() && geminiKey1Mask) {
+                              setForm((current) => ({ ...current, gemini_api_key_1: geminiKey1Mask }));
+                              setGeminiKey1Dirty(false);
+                            }
+                          }}
+                          onChange={(value) => {
+                            setGeminiKey1Dirty(true);
+                            setClearedCreds((current) => ({ ...current, gemini_api_key_1: false }));
+                            updateField("gemini_api_key_1", value);
+                          }}
+                          onFocus={() => {
+                            if (!geminiKey1Dirty && form.gemini_api_key_1 === geminiKey1Mask) {
+                              setForm((current) => ({ ...current, gemini_api_key_1: "" }));
+                              setGeminiKey1Dirty(true);
+                            }
+                          }}
+                          placeholder="AIza..."
+                          type="text"
+                          value={form.gemini_api_key_1}
+                        />
+                      </div>
                     ) : (
                       <button
                         className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:border-primary hover:text-primary"
                         onClick={() => {
-                          setShowGeminiKey2(true);
-                          setGeminiKey2Dirty(true);
-                          setForm((current) => ({ ...current, gemini_api_key_2: "" }));
+                          setGeminiKey1Dirty(true);
+                          setClearedCreds((current) => ({ ...current, gemini_api_key_1: false }));
+                          setForm((current) => ({ ...current, gemini_api_key_1: "" }));
                         }}
                         type="button"
                       >
-                        + Yana qo&apos;shimcha key kerakmi?
+                        + Gemini key qo&apos;shish
                       </button>
                     )}
-                    <Notice className="mt-1" tone="info">
-                      ℹ️ Bu bo&apos;limdagi Gemini key userlar uchun shared default bo&apos;ladi. User o&apos;zinikini kiritsa ustun turadi; hech biri bo&apos;lmasa super admin default ishlatiladi.
-                    </Notice>
+                    {showGeminiKey1 || showGeminiKey2 ? (
+                      showGeminiKey2 ? (
+                        <div className="grid gap-3 rounded-lg border border-border p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-semibold text-muted-foreground">Gemini key #2</span>
+                            <button
+                              className="text-xs font-medium text-muted-foreground transition-colors hover:text-red-500"
+                              onClick={() => {
+                                if (view.fields.gemini_api_key_2_present) {
+                                  clearCredential("gemini_api_key_2", setGeminiKey2Dirty);
+                                  return;
+                                }
+                                setShowGeminiKey2(false);
+                                setGeminiKey2Dirty(false);
+                                setClearedCreds((current) => ({ ...current, gemini_api_key_2: false }));
+                                setForm((current) => ({ ...current, gemini_api_key_2: "" }));
+                              }}
+                              type="button"
+                            >
+                              ✕ O&apos;chirish
+                            </button>
+                          </div>
+                          <BaseInputField
+                            className={SETTINGS_INPUT_CLASS}
+                            hint={clearedCreds.gemini_api_key_2 ? "Saqlansa kalit o'chiriladi" : view.fields.gemini_api_key_2_present ? "Bo'sh qoldirilsa mavjud kalit saqlanadi" : undefined}
+                            label="Token"
+                            onBlur={() => {
+                              if (geminiKey2Dirty && !clearedCreds.gemini_api_key_2 && !form.gemini_api_key_2.trim() && geminiKey2Mask) {
+                                setForm((current) => ({ ...current, gemini_api_key_2: geminiKey2Mask }));
+                                setGeminiKey2Dirty(false);
+                              }
+                            }}
+                            onChange={(value) => {
+                              setGeminiKey2Dirty(true);
+                              setClearedCreds((current) => ({ ...current, gemini_api_key_2: false }));
+                              updateField("gemini_api_key_2", value);
+                            }}
+                            onFocus={() => {
+                              if (!geminiKey2Dirty && form.gemini_api_key_2 === geminiKey2Mask) {
+                                setForm((current) => ({ ...current, gemini_api_key_2: "" }));
+                                setGeminiKey2Dirty(true);
+                              }
+                            }}
+                            placeholder="AIza..."
+                            type="text"
+                            value={form.gemini_api_key_2}
+                          />
+                        </div>
+                      ) : (
+                        <button
+                          className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:border-primary hover:text-primary"
+                          onClick={() => {
+                            setShowGeminiKey2(true);
+                            setGeminiKey2Dirty(true);
+                            setForm((current) => ({ ...current, gemini_api_key_2: "" }));
+                          }}
+                          type="button"
+                        >
+                          + Gemini key qo&apos;shish
+                        </button>
+                      )
+                    ) : null}
                   </div>
                 </SettingsInnerCard>
               </div>
@@ -1490,7 +1435,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
               {webhookLoading ? <p className="mt-3 text-sm text-muted-foreground">Webhook sozlamalari yuklanmoqda...</p> : null}
               {webhookHasError ? (
                 <Notice className="mt-3" tone="warning">
-                  {[whThresholdError ? "Return threshold 0-100 oralig'ida bo'lishi kerak." : null, whCheckerOrderError ? "Checker AI order ichida 'tz' va 'code' bo'lishi shart." : null, whAgent2BatchError ? "Agent2 batch size 1-20 bo'lishi shart." : null, whMinTzError ? "Min TZ belgilari 0 yoki undan katta bo'lishi kerak." : null, whMaxReadCommentsError ? "Max izohlar 0 yoki undan katta bo'lishi kerak." : null, whMaxSkipError ? "Max skip comment soni 1 yoki undan katta bo'lishi kerak." : null]
+                  {[whThresholdError ? "Return threshold 0-100 oralig'ida bo'lishi kerak." : null, whCheckerOrderError ? "Checker AI order ichida 'tz' va 'code' bo'lishi shart." : null, whAgent2BatchError ? "Agent2 batch size 1-20 bo'lishi shart." : null, whMinTzError ? "Min TZ belgilari 0 yoki undan katta bo'lishi kerak." : null, whMaxReadCommentsError ? "Max izohlar 0 yoki undan katta bo'lishi kerak." : null, whMaxSkipError ? "Max skip comment soni 1 yoki undan katta bo'lishi kerak." : null, whSkipWindowError ? "Max commentlar skip tekshirish comment sonidan katta bo'lishi kerak." : null, whTcMaxCasesError ? "Testcase soni 1-3 oralig'ida bo'lishi kerak." : null, whTcMaxCommentsError ? "Testcase izohlari 0 yoki undan katta bo'lishi kerak." : null]
                     .filter(Boolean)
                     .join(" ")}
                 </Notice>
@@ -1551,6 +1496,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                       </SettingsCardItem>
                     </div>
                   </SettingsCardSection>
+
                 </SettingsBaseCard>
 
                 <SettingsBaseCard
@@ -1663,10 +1609,10 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                               value={webhookForm.read_comments_enabled}
                             />
                           </SettingsCardItem>
-                          {webhookForm.read_comments_enabled ? (
+                          {whCommentWindowVisible ? (
                             <SettingsCardItem>
                               <NumberField
-                                hint="0 = barcha commentlar."
+                                hint="0 = barcha commentlar. Skip kodi yoqilganida bu qiymat skip oynasidan katta bo'lishi kerak."
                                 label="Max commentlar"
                                 min={0}
                                 onChange={(value) => updateWebhookField("max_comments_to_read", value)}
@@ -1685,7 +1631,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                           <SettingsCardItem>
                             <BaseInputField
                               className={SETTINGS_INPUT_CLASS}
-                              hint="Task tavsifida yoki izohda bu kod bo'lsa — checker (Servis-1) skip bo'ladi."
+                              hint="JIRA commentda bu kod bo'lsa — checker (Servis-1) skip bo'ladi."
                               label="Skip kodi"
                               onChange={(value) => updateWebhookField("skip_code", value)}
                               placeholder="AI_SKIP"
@@ -1702,6 +1648,11 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                                   onChange={(value) => updateWebhookField("max_skip_check_comments", value)}
                                   value={webhookForm.max_skip_check_comments}
                                 />
+                                {whSkipWindowError ? (
+                                  <span className="err-text">
+                                    Max commentlar 0 yoki bu qiymatdan katta bo'lishi kerak.
+                                  </span>
+                                ) : null}
                               </SettingsCardItem>
                               <SettingsCardItem>
                                 <BaseInputField
@@ -1718,39 +1669,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                         </div>
                       </div>
                     </SettingsInnerCard>
-                    <SettingsInnerCard>
-                      <div className="ssec mt-0 border-none pt-0">
-                        <div className="ssec-label">
-                          <svg fill="none" height="13" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" width="13">
-                            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-                          </svg>
-                          📝 Comment bo'limlari
-                        </div>
-                        <BaseCheckGroup
-                          onChange={(nextValues) => {
-                            const hasContradictory = nextValues.includes("contradictory_comments");
-                            setWhDirty(true);
-                            setWebhookForm((current) => ({
-                              ...current,
-                              visible_sections: nextValues,
-                              show_contradictory_comments: hasContradictory,
-                            }));
-                          }}
-                          options={[
-                            ...moduleAllowed.checker_visible_sections.map((sectionKey) => ({
-                              key: sectionKey,
-                              label: CHECKER_SECTION_LABELS[sectionKey as keyof typeof CHECKER_SECTION_LABELS] || sectionKey,
-                            })),
-                            {
-                              key: "contradictory_comments",
-                              label: CHECKER_SECTION_LABELS.contradictory_comments,
-                            },
-                          ]}
-                          value={webhookForm.visible_sections}
-                        />
-                      </div>
-                    </SettingsInnerCard>
-
                     <SettingsInnerCard>
                       <div className="ssec mt-0 border-none pt-0">
                         <div className="ssec-label">
@@ -2013,86 +1931,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
 
               </div>
             </>
-          ) : null}
-
-          {view.mode === "company" && hasWebhookModule && tab === "webhook" ? (
-            <SettingsBaseCard
-              customizerId="settings-webhook-system"
-              description="Queue va retry policy kabi umumiy ishlash parametrlari."
-              dirty={systemDirty}
-              error={systemError}
-              onSave={saveSystem}
-              saveDisabled={savingSystem || systemHasError}
-              saveLabel="Saqlash"
-              saving={savingSystem}
-              success={systemSuccess}
-              title="Tizim sozlamalari"
-            >
-              {systemLoading ? <p className="mt-3 text-sm text-muted-foreground">Tizim sozlamalari yuklanmoqda...</p> : null}
-              {systemHasError ? (
-                <Notice className="mt-3" tone="warning">
-                  Tizim maydonlarida noto'g'ri qiymat bor. Barcha sonli maydonlar 1 yoki undan katta bo'lishi kerak.
-                </Notice>
-              ) : null}
-
-              <SettingsCardSection className="ssec mt-4 border-none pt-0">
-                <ToggleRow
-                  desc="Yoqilsa tasklar bittalab ketadi. O'chirilsa ko'p task birdan ketadi va xato ko'payishi mumkin."
-                  label="Queue yoqilgan"
-                  onChange={(value) => updateSystemField("queue_enabled", value)}
-                  value={systemForm.queue_enabled}
-                />
-              </SettingsCardSection>
-
-              <SettingsCardSection label="Asosiy ishlash">
-                <div className="g2">
-                  {systemForm.queue_enabled ? (
-                    <NumberField
-                      hint="Task navbatda qancha kutadi. Shu vaqt ichida navbat kelmasa task vaqtincha to'xtaydi (blocked)."
-                      label="Task wait timeout (sec)"
-                      min={1}
-                      onChange={(value) => updateSystemField("task_wait_timeout", value)}
-                      value={systemForm.task_wait_timeout}
-                    />
-                  ) : null}
-                  <NumberField
-                    hint="Checker tugagach testcase boshlanishidan oldin qancha kutish. Kichik bo'lsa tezroq, katta bo'lsa barqarorroq."
-                    label="Checker->Testcase delay (sec)"
-                    min={1}
-                    onChange={(value) => updateSystemField("checker_testcase_delay", value)}
-                    value={systemForm.checker_testcase_delay}
-                  />
-                  {systemForm.queue_enabled ? (
-                    <NumberField
-                      hint="AI chaqiruvlari orasidagi pauza. Juda kichik bo'lsa AI limitga urilishi mumkin."
-                      label="Gemini min interval (sec)"
-                      min={1}
-                      onChange={(value) => updateSystemField("gemini_min_interval", value)}
-                      value={systemForm.gemini_min_interval}
-                    />
-                  ) : null}
-                  <NumberField
-                    hint="Blocked bo'lgan taskni necha daqiqadan keyin yana urinib ko'rish."
-                    label="Blocked retry delay (min)"
-                    min={1}
-                    onChange={(value) => updateSystemField("blocked_retry_delay", value)}
-                    value={systemForm.blocked_retry_delay}
-                  />
-                </div>
-              </SettingsCardSection>
-
-              <SettingsCardSection label="Retry va limitlar">
-                <div className="g2">
-                  <NumberField
-                    hint="Tizim blocked tasklarni har necha sekundda tekshiradi."
-                    label="Blocked check interval (sec)"
-                    min={1}
-                    onChange={(value) => updateSystemField("blocked_check_interval", value)}
-                    value={systemForm.blocked_check_interval}
-                  />
-                </div>
-              </SettingsCardSection>
-            </SettingsBaseCard>
           ) : null}
 
           {view.mode === "company" && tab === "modules" ? (

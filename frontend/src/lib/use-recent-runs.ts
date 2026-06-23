@@ -9,14 +9,67 @@ export type RecentRun = {
   run_state?: string;
 };
 
+export type RecentRunScope = {
+  companyId?: number | null;
+  role?: string | null;
+  userId?: number | null;
+};
+
 const MAX_RECENT = 3;
+const STORAGE_VERSION = "v2";
+
+function normalizeScopePart(prefix: string, value?: number | string | null) {
+  const raw = value === null || value === undefined ? "" : String(value).trim().toLowerCase();
+  return `${prefix}-${raw || "none"}`.replace(/[^a-z0-9_-]/g, "_");
+}
+
+function buildScopeKey(scope?: RecentRunScope) {
+  return [
+    normalizeScopePart("role", scope?.role || "unknown"),
+    normalizeScopePart("company", scope?.companyId),
+    normalizeScopePart("user", scope?.userId),
+  ].join(".");
+}
+
+export function getRecentRunsStorageKey(moduleKey: string, scope?: RecentRunScope) {
+  return `qa.recent-runs.${STORAGE_VERSION}.${moduleKey}.${buildScopeKey(scope)}`;
+}
+
+export function getOpenRunStorageKey(moduleKey: string, scope?: RecentRunScope) {
+  return `qa.open-run.${STORAGE_VERSION}.${moduleKey}.${buildScopeKey(scope)}`;
+}
+
+function clearStorageKeys(storage: Storage, prefixes: string[]) {
+  const keys: string[] = [];
+  for (let index = 0; index < storage.length; index += 1) {
+    const key = storage.key(index);
+    if (key && prefixes.some((prefix) => key.startsWith(prefix))) {
+      keys.push(key);
+    }
+  }
+  keys.forEach((key) => storage.removeItem(key));
+}
+
+export function clearRunHistoryStorage() {
+  try {
+    clearStorageKeys(window.localStorage, ["qa.recent-runs."]);
+  } catch {
+    /* localStorage tozalab bo'lmadi — e'tibor bermaymiz */
+  }
+
+  try {
+    clearStorageKeys(window.sessionStorage, ["qa.open-run."]);
+  } catch {
+    /* sessionStorage tozalab bo'lmadi — e'tibor bermaymiz */
+  }
+}
 
 /**
  * Modul bo'yicha "So'nggi tekshiruvlar"ni localStorage'da saqlaydi (max 3 ta TASK).
  * Bir task uchun faqat oxirgi run qoladi (task_key bo'yicha dedupe).
  */
-export function useRecentRuns(moduleKey: string) {
-  const storageKey = `qa.recent-runs.${moduleKey}`;
+export function useRecentRuns(moduleKey: string, scope?: RecentRunScope) {
+  const storageKey = getRecentRunsStorageKey(moduleKey, scope);
   const [recent, setRecent] = useState<RecentRun[]>([]);
 
   useEffect(() => {

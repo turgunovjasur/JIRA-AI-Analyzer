@@ -27,7 +27,6 @@ function dayDiffFromToday(value: string | null | undefined) {
 export function buildSubscriptionHealth(subscription: CompanySubscription): BillingHealth {
   const status = (subscription.subscription_status || "active").trim().toLowerCase();
   const endDateRaw = (subscription.billing_end_date || "").trim();
-  const nextPaymentRaw = (subscription.next_payment_date || "").trim();
 
   if (status === "suspended" || status === "cancelled") {
     return {
@@ -39,8 +38,8 @@ export function buildSubscriptionHealth(subscription: CompanySubscription): Bill
   if (status === "past_due") {
     return {
       severity: "danger",
-      message: nextPaymentRaw
-        ? `To'lov muddati o'tgan. Keyingi to'lov sanasi: ${nextPaymentRaw}.`
+      message: endDateRaw
+        ? `To'lov muddati o'tgan. Muddat tugashi: ${endDateRaw}.`
         : "To'lov muddati o'tgan. Qo'lda tekshirish kerak.",
     };
   }

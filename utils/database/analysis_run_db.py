@@ -14,7 +14,6 @@ from utils.database.analysis_run_repository import (
     append_analysis_run_event as repo_append_analysis_run_event,
     build_analysis_run_snapshot as repo_build_analysis_run_snapshot,
     create_analysis_run as repo_create_analysis_run,
-    ensure_analysis_run_tables,
     save_analysis_run_final_result as repo_save_analysis_run_final_result,
     seed_analysis_agent_runs as repo_seed_analysis_agent_runs,
     update_analysis_agent_run as repo_update_analysis_agent_run,
@@ -26,10 +25,9 @@ log = get_logger("analysis.run.db")
 
 
 def _connect():
+    # P2: jadvallar startup migratsiyasida ensure qilinadi — bu yerda DDL yo'q.
     settings = _get_db_settings()
-    conn = connect_processing_db(timeout=settings.db_connection_timeout, row_factory=True)
-    ensure_analysis_run_tables(conn)
-    return conn
+    return connect_processing_db(timeout=settings.db_connection_timeout, row_factory=True)
 
 
 def create_analysis_run_record(

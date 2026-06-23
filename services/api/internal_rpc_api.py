@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, Callable
 
 from fastapi import APIRouter, Header, HTTPException
@@ -70,7 +71,8 @@ from utils.auth.auth_db import (
     write_audit_log,
 )
 from services.api.session_scope import get_session_company_id, get_session_role, load_api_session
-from utils.auth.credential_crypto import get_credential_security_status
+from utils.auth.credential_crypto import get_credential_security_status, get_sensitive_credential_fields
+from utils.database.ai_usage_db import fetch_ai_usage_dashboard
 
 router = APIRouter(prefix="/api/internal", tags=["internal-rpc"])
 
@@ -115,7 +117,44 @@ def _serialize(value: Any) -> Any:
         return [_serialize(item) for item in value]
     if isinstance(value, (datetime, date)):
         return value.isoformat()
+    if isinstance(value, Decimal):
+        return float(value)
     return value
+
+
+_REDACTED = "***REDACTED***"
+_SENSITIVE_KEY_FRAGMENTS = ("api_key", "token", "secret", "password", "credential")
+
+
+def _is_sensitive_key(key: Any) -> bool:
+    key_text = str(key or "").strip().lower()
+    if not key_text:
+        return False
+    sensitive_fields = {field.lower() for field in get_sensitive_credential_fields()}
+    return key_text in sensitive_fields or any(fragment in key_text for fragment in _SENSITIVE_KEY_FRAGMENTS)
+
+
+def _redact_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: (_REDACTED if _is_sensitive_key(key) else _redact_value(item))
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple, set)):
+        return [_redact_value(item) for item in value]
+    return _serialize(value)
+
+
+def _redact_rpc_payload(op: str, args: list[Any], kwargs: dict[str, Any]) -> dict[str, Any]:
+    redacted_args = _redact_value(args)
+    redacted_kwargs = _redact_value(kwargs)
+
+    # set_global_setting("gemini_default_api_key_1", value) carries the sensitive
+    # setting value positionally, so dict-key redaction alone cannot see it.
+    if op == "set_global_setting" and len(redacted_args) >= 2 and _is_sensitive_key(args[0]):
+        redacted_args[1] = _REDACTED
+
+    return {"args": redacted_args, "kwargs": redacted_kwargs}
 
 
 def _op_save_app_settings(payload: dict[str, Any]) -> bool:
@@ -171,6 +210,7 @@ _OPERATIONS: dict[str, Callable[..., Any]] = {
     "save_app_settings": _op_save_app_settings,
     "get_app_settings_for_company": get_app_settings_for_company,
     "get_app_settings_for_user": _op_get_app_settings_for_user,
+    "get_ai_usage_dashboard": fetch_ai_usage_dashboard,
 }
 
 _COMPANY_ADMIN_COMPANY_ARG0_OPS = {
@@ -256,6 +296,7 @@ async def call_rpc(
     actor_user_id = auth.get("user_id")
     actor_role = auth.get("role") or get_session_role(session)
     company_id = get_session_company_id(session)
+    audit_payload = _redact_rpc_payload(payload.op, payload.args, payload.kwargs)
 
     try:
         result = fn(*payload.args, **payload.kwargs)
@@ -266,7 +307,7 @@ async def call_rpc(
             company_id=company_id,
             actor_user_id=actor_user_id,
             actor_role=actor_role,
-            event_payload={"args": payload.args, "kwargs": payload.kwargs, "success": True},
+            event_payload={**audit_payload, "success": True},
         )
         return {"result": _serialize(result)}
     except Exception as exc:
@@ -277,6 +318,6 @@ async def call_rpc(
             company_id=company_id,
             actor_user_id=actor_user_id,
             actor_role=actor_role,
-            event_payload={"args": payload.args, "kwargs": payload.kwargs, "error": str(exc)},
+            event_payload={**audit_payload, "error": str(exc)},
         )
         raise HTTPException(status_code=500, detail=f"Internal RPC error in {payload.op}: {exc}") from exc

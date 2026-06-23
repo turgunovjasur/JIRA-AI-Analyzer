@@ -69,6 +69,7 @@ def _token_metrics(usage: dict[str, Any] | None) -> dict[str, int]:
         "cached_content_token_count",
         "prompt_token_count",
         "candidates_token_count",
+        "thoughts_token_count",
         "total_token_count",
     ):
         try:
@@ -109,6 +110,25 @@ def _is_agent2_model_unavailable_result(result: dict[str, Any] | None) -> bool:
 
 
 class AgentRunnerMixin:
+    def _usage_context_for_agent(
+        self,
+        agent_key: str,
+        *,
+        request_kind: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "company_id": getattr(self, "company_id", None),
+            "user_id": getattr(self, "user_id", None),
+            "run_id": getattr(self, "run_id", ""),
+            "task_key": getattr(self, "task_key", ""),
+            "module_key": "tz_pr_checker",
+            "agent_key": agent_key,
+            "source": "multi_agent",
+            "request_kind": request_kind or agent_key,
+            "metadata": metadata or {},
+        }
+
     def _run_agent1(self, context: dict[str, Any]) -> dict[str, Any]:
         agent_key = "agent1_scope_builder"
         self._start_agent(agent_key, "TZ, comment va Figma asosida requirement inventory ajratilmoqda")
@@ -386,7 +406,7 @@ class AgentRunnerMixin:
                     pr_info=context["pr_info"],
                     code_changes=code_changes,
                 )
-                primary_model, fallback_model = self._model_names_for_agent(agent_key)
+                primary_model, fallback_model = self._require_model_names_for_agent(agent_key)
                 cache_helper = self._model_for_agent(agent_key)
                 cache_name = cache_helper.create_cache(
                     cache_content,
@@ -677,6 +697,10 @@ class AgentRunnerMixin:
             "candidates_token_count": (
                 _sum_attempt_int(call_records, "candidates_token_count")
                 + _sum_attempt_int(extra_attempts, "candidates_token_count")
+            ),
+            "thoughts_token_count": (
+                _sum_attempt_int(call_records, "thoughts_token_count")
+                + _sum_attempt_int(extra_attempts, "thoughts_token_count")
             ),
             "total_token_count": (
                 _sum_attempt_int(call_records, "total_token_count")
@@ -1295,12 +1319,16 @@ class AgentRunnerMixin:
         fallback_cached_content: str = "",
         shared_state: dict[str, Any] | None = None,
     ) -> tuple[str, str, dict[str, int]]:
-        primary_model, fallback_model = self._model_names_for_agent("agent2_verifier")
+        primary_model, fallback_model = self._require_model_names_for_agent("agent2_verifier")
         helper = GeminiHelper(
             api_keys=api_keys,
             model_name=primary_model,
             fallback_model_name=fallback_model,
             shared_state=shared_state,
+            usage_context=self._usage_context_for_agent(
+                "agent2_verifier",
+                request_kind="batch",
+            ),
         )
         raw = helper.analyze(
             prompt,
@@ -1323,7 +1351,7 @@ class AgentRunnerMixin:
         shared_state: dict[str, Any] | None = None,
         force_model: str = "",
     ) -> tuple[str, str, dict[str, int]]:
-        primary_model, fallback_model = self._model_names_for_agent("agent2_verifier")
+        primary_model, fallback_model = self._require_model_names_for_agent("agent2_verifier")
         if force_model:
             primary_model = force_model
             fallback_model = ""
@@ -1332,6 +1360,10 @@ class AgentRunnerMixin:
             model_name=primary_model,
             fallback_model_name=fallback_model,
             shared_state=shared_state,
+            usage_context=self._usage_context_for_agent(
+                "agent2_verifier",
+                request_kind="single",
+            ),
         )
         raw = helper.analyze(
             prompt,
@@ -1353,12 +1385,16 @@ class AgentRunnerMixin:
         fallback_cached_content: str = "",
         shared_state: dict[str, Any] | None = None,
     ) -> tuple[str, str, dict[str, int]]:
-        primary_model, fallback_model = self._model_names_for_agent("agent2_verifier")
+        primary_model, fallback_model = self._require_model_names_for_agent("agent2_verifier")
         helper = GeminiHelper(
             api_keys=api_keys,
             model_name=primary_model,
             fallback_model_name=fallback_model,
             shared_state=shared_state,
+            usage_context=self._usage_context_for_agent(
+                "agent2_verifier",
+                request_kind="extra_scan",
+            ),
         )
         raw = helper.analyze(
             prompt,

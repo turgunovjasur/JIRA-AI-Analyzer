@@ -32,7 +32,12 @@ from services.webhook.error_handler import _error_type_to_reason_code
 log = get_logger("webhook.service_runner")
 
 
-async def check_tz_pr_and_comment(task_key: str, new_status: str, company_id: int = None) -> None:
+async def check_tz_pr_and_comment(
+    task_key: str,
+    new_status: str,
+    company_id: int = None,
+    task_details: dict[str, Any] | None = None,
+) -> None:
     """
     Service1: TZ-PR mosligini tekshirish va JIRA'ga natija comment yozish.
 
@@ -41,8 +46,10 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str, company_id: in
 
     Ishlash tartibi:
     1. DB'da service1_status='done' bo'lsa — allaqachon bajarilgan, skip
-    2. _detect_recheck() — task qaytarilibdi, keyin yana trigger statusga tushgan aniqlash
-    3. TZPRService.analyze_task() — JIRA TZ + GitHub PR → Gemini AI tahlil (7 bosqich)
+    2. return_reason DB'dan — recheck/dev_objections multi-agent run ichida aniqlanadi
+    3. create_multi_agent_run() + run_multi_agent_for_webhook() — UI bilan AYNAN bir xil
+       multi-agent run engine (agent1/agent2/agent3). Faqat kirish (webhook) va yetkazib
+       berish (JIRA comment) farq qiladi. Jonli TZPRAnalysisResult qaytaradi.
     4. Muvaffaqiyatsiz → xato turi aniqlash:
        - 'ai_timeout' → service1_status='blocked', retry scheduler kutib turadi
        - 'pr_not_found' → service1_status='error', keep_service2_pending=True
@@ -71,7 +78,7 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str, company_id: in
         log.service_running(task_key, "service_1")
 
         # DB holatini tekshirish — ikki marta ishlamaslik uchun
-        task_db = get_task(task_key)
+        task_db = get_task(task_key, company_id=company_id)
         service1_status = task_db.get('service1_status', 'pending') if task_db else 'pending'
 
         if service1_status == 'done':
@@ -91,11 +98,12 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str, company_id: in
             _classify_error, _write_success_comment,
             _write_error_comment, _write_critical_error
         )
-        from services.checkers.tz_pr_checker import TZPRService
+        from services.checkers.tzpr_multi_agent import (
+            create_multi_agent_run, run_multi_agent_for_webhook,
+        )
         from utils.jira.jira_comment_writer import JiraCommentWriter
         from utils.auth.auth_db import get_company_webhook_credentials
         creds = get_company_webhook_credentials(company_id)  # kalit yo'q bo'lsa RuntimeError
-        tz_pr_service = TZPRService(company_id=company_id)
         comment_writer = JiraCommentWriter(
             server=creds['jira_server'],
             email=creds['jira_email'],
@@ -104,13 +112,32 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str, company_id: in
 
         adf_formatter = get_adf_formatter()
 
-        # return_reason: oldingi qaytarilish sababi (WARN_LOW_SCORE, WARN_MIN_TZ, ...)
+        # return_reason: oldingi qaytarilish sababi (WARN_LOW_SCORE, WARN_MIN_TZ, ...).
+        # recheck/dev_objections aniqlash multi-agent run ichida (orchestrator
+        # _collect_context) task_db'dan o'qiladi — bu yerda faqat log uchun.
         return_reason = (task_db or {}).get('return_reason')
         if return_reason:
             log.info(f"[{task_key}] RE-CHECK -> return_reason={return_reason}")
 
-        # 1. TZ-PR tahlil qilish (AI + GitHub + JIRA)
-        result = tz_pr_service.analyze_task(task_key, return_reason=return_reason)
+        # 1. TZ-PR tahlil — UI bilan AYNAN bir xil multi-agent run engine.
+        #    Faqat kirish nuqtasi (webhook) va yetkazib berish (JIRA comment) farq qiladi.
+        run = create_multi_agent_run(
+            task_key=task_key,
+            company_id=company_id,
+            user_id=None,
+            source="webhook",
+            output_profile="webhook",
+            show_full_diff=True,
+            use_smart_patch=None,
+            max_files=None,
+            task_details=task_details,
+        )
+        result = run_multi_agent_for_webhook((run or {}).get("run_id"))
+        if result is None:
+            log.service_error(task_key, "service_1", "Multi-agent run natija qaytarmadi")
+            set_service1_error(task_key, "Multi-agent run natija qaytarmadi", company_id=company_id)
+            set_return_reason(task_key, ERR_UNKNOWN, company_id=company_id)
+            return
 
         if not result.success:
             error_msg = result.error_message
@@ -122,8 +149,8 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str, company_id: in
             if error_type == 'ai_timeout':
                 # Task bloklanadi — retry scheduler keyinroq qayta urinadi
                 retry_minutes = get_app_settings(force_reload=False).queue.blocked_retry_delay
-                set_service1_blocked(task_key, error_msg, retry_minutes)
-                set_return_reason(task_key, reason_code)
+                set_service1_blocked(task_key, error_msg, retry_minutes, company_id=company_id)
+                set_return_reason(task_key, reason_code, company_id=company_id)
                 log.info(f"[{task_key}] Service1 BLOCKED: {retry_minutes} min [{reason_code}]")
                 await _write_error_comment(
                     task_key, error_msg, comment_writer, adf_formatter,
@@ -138,18 +165,19 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str, company_id: in
                 )
                 returned = await _handle_pr_not_merged_return(task_key, settings, company_id=company_id)
                 if returned:
-                    mark_returned_pr_not_merged(task_key)
+                    mark_returned_pr_not_merged(task_key, company_id=company_id)
                 else:
                     set_service1_error(
                         task_key,
                         error_msg,
                         keep_service2_pending=(error_type == 'pr_not_found'),
+                        company_id=company_id,
                     )
-                set_return_reason(task_key, reason_code)
+                set_return_reason(task_key, reason_code, company_id=company_id)
             else:
                 # Boshqa xatolik — Service2 ham to'xtatiladi
-                set_service1_error(task_key, error_msg)
-                set_return_reason(task_key, reason_code)
+                set_service1_error(task_key, error_msg, company_id=company_id)
+                set_return_reason(task_key, reason_code, company_id=company_id)
                 await _write_error_comment(
                     task_key, error_msg, comment_writer, adf_formatter,
                     reason_code=reason_code
@@ -167,7 +195,7 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str, company_id: in
 
         # 3. Service1 holatini 'done' ga o'zgartirish, score saqlash
         compliance_score = result.compliance_score
-        set_service1_done(task_key, compliance_score)
+        set_service1_done(task_key, compliance_score, company_id=company_id)
         log.service_done(task_key, "service_1", score=f"{compliance_score}%")
 
         # 4. Score threshold tekshiruvi: past bo'lsa avtomatik Return
@@ -176,8 +204,8 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str, company_id: in
             if compliance_score < threshold:
                 returned = await _handle_auto_return(task_key, result, settings, company_id=company_id)
                 if returned:
-                    mark_returned(task_key)
-                    set_return_reason(task_key, WARN_LOW_SCORE)
+                    mark_returned(task_key, company_id=company_id)
+                    set_return_reason(task_key, WARN_LOW_SCORE, company_id=company_id)
                 else:
                     log.warning(f"[{task_key}] Auto-return requested but JIRA transition bajarilmadi")
 
@@ -193,15 +221,15 @@ async def check_tz_pr_and_comment(task_key: str, new_status: str, company_id: in
             from config.app_settings import get_app_settings_for_company
             _s = get_app_settings_for_company(company_id) if company_id else get_app_settings(force_reload=False)
             retry_minutes = _s.queue.blocked_retry_delay if _s else 5
-            set_service1_blocked(task_key, error_msg, retry_minutes)
-            set_return_reason(task_key, exc_reason_code)
+            set_service1_blocked(task_key, error_msg, retry_minutes, company_id=company_id)
+            set_return_reason(task_key, exc_reason_code, company_id=company_id)
             log.info(f"[{task_key}] Service1 BLOCKED: {retry_minutes} min [{exc_reason_code}]")
         elif error_type == 'pr_not_found':
-            set_service1_error(task_key, error_msg, keep_service2_pending=True)
-            set_return_reason(task_key, exc_reason_code)
+            set_service1_error(task_key, error_msg, keep_service2_pending=True, company_id=company_id)
+            set_return_reason(task_key, exc_reason_code, company_id=company_id)
         else:
-            set_service1_error(task_key, error_msg)
-            set_return_reason(task_key, exc_reason_code)
+            set_service1_error(task_key, error_msg, company_id=company_id)
+            set_return_reason(task_key, exc_reason_code, company_id=company_id)
 
         # Kritik xato haqida JIRA'ga xabar berish
         try:
@@ -249,7 +277,7 @@ async def _run_testcase_generation(task_key: str, new_status: str, company_id: i
     try:
         log.info(f"[{task_key}] service_2 running | status={new_status}")
 
-        task_db = get_task(task_key)
+        task_db = get_task(task_key, company_id=company_id)
         if not task_db:
             log.warning(f"[{task_key}] Task DB'da topilmadi, Service2 skip")
             return
@@ -300,15 +328,8 @@ async def _run_testcase_generation(task_key: str, new_status: str, company_id: i
         log.info(f"[{task_key}] Service2 ▶ check_and_generate_testcases() chaqirilmoqda...")
         success, message = await check_and_generate_testcases(task_key, new_status, company_id=company_id)
 
-        # Barcha cache yozuvlarini tozalash (task tugadi)
-        try:
-            from utils.pr_cache import clear_task_cache
-            clear_task_cache(task_key)
-        except Exception:
-            pass
-
         if success:
-            set_service2_done(task_key)
+            set_service2_done(task_key, company_id=company_id)
             log.service_done(task_key, "service_2", result=message)
         else:
             error_msg = message
@@ -319,21 +340,21 @@ async def _run_testcase_generation(task_key: str, new_status: str, company_id: i
             if error_type == 'ai_timeout':
                 # Bloklanadi — retry scheduler keyinroq urinadi
                 retry_minutes = app_settings.queue.blocked_retry_delay
-                set_service2_blocked(task_key, error_msg, retry_minutes)
-                set_return_reason(task_key, reason_code_s2)
+                set_service2_blocked(task_key, error_msg, retry_minutes, company_id=company_id)
+                set_return_reason(task_key, reason_code_s2, company_id=company_id)
                 log.info(f"[{task_key}] Service2 BLOCKED: {retry_minutes} min [{reason_code_s2}]")
             elif error_type in ('pr_not_found', 'pr_not_merged', 'tz_too_short'):
                 # PR yo'q / merged emas / TZ qisqa → return uriniladi (comment testcase_webhook_handler da yoziladi)
                 log.warning(f"[{task_key}] Servis-2 [{error_type}] → task qaytarilmoqda [{reason_code_s2}]")
                 returned = await _handle_pr_not_merged_return(task_key, app_settings.webhook_tz_pr, company_id=company_id)
                 if returned:
-                    mark_returned_pr_not_merged(task_key)
+                    mark_returned_pr_not_merged(task_key, company_id=company_id)
                 else:
-                    set_service2_error(task_key, error_msg)
-                set_return_reason(task_key, reason_code_s2)
+                    set_service2_error(task_key, error_msg, company_id=company_id)
+                set_return_reason(task_key, reason_code_s2, company_id=company_id)
             else:
-                set_service2_error(task_key, error_msg)
-                set_return_reason(task_key, reason_code_s2)
+                set_service2_error(task_key, error_msg, company_id=company_id)
+                set_return_reason(task_key, reason_code_s2, company_id=company_id)
 
     except Exception as e:
         error_msg = f"Testcase generation error: {str(e)}"
@@ -346,11 +367,11 @@ async def _run_testcase_generation(task_key: str, new_status: str, company_id: i
             from config.app_settings import get_app_settings_for_company
             _s = get_app_settings_for_company(company_id) if company_id else get_app_settings(force_reload=False)
             retry_minutes = _s.queue.blocked_retry_delay
-            set_service2_blocked(task_key, error_msg, retry_minutes)
-            set_return_reason(task_key, WARN_AI_TIMEOUT)
+            set_service2_blocked(task_key, error_msg, retry_minutes, company_id=company_id)
+            set_return_reason(task_key, WARN_AI_TIMEOUT, company_id=company_id)
         else:
-            set_service2_error(task_key, error_msg)
-            set_return_reason(task_key, ERR_UNKNOWN)
+            set_service2_error(task_key, error_msg, company_id=company_id)
+            set_return_reason(task_key, ERR_UNKNOWN, company_id=company_id)
 
 
 def _get_status_manager(company_id):
@@ -426,10 +447,13 @@ async def _handle_auto_return(
                     _creds = get_company_webhook_credentials(company_id)
                     comment_writer = JiraCommentWriter(server=_creds['jira_server'], email=_creds['jira_email'], token=_creds['jira_token'])
                     adf_formatter = get_adf_formatter()
+                    notification_text = (
+                        getattr(settings, "return_notification_text", "") or ""
+                    ).strip() or "TZ talablarini tekshiring va qaytadan PR bering."
                     reason = (
                         f"Task qaytarildi. Moslik bali: {score}% (chegarasi: {threshold}%). "
                         f"Status: {settings.return_status}. "
-                        f"TZ talablarini tekshiring va qaytadan PR bering."
+                        f"{notification_text}"
                     )
                     return_doc = _build_warning_adf(adf_formatter, "Servis-1", reason, task_key, "warning", reason_code=WARN_LOW_SCORE)
                     notif_success = comment_writer.add_comment_adf(task_key, return_doc)

@@ -2,9 +2,49 @@ import { NextResponse } from "next/server";
 
 import { callInternalRpc } from "@/lib/backend";
 import { PAID_ADDON_MODULE_KEYS } from "@/lib/product-catalog";
-import type { CompanyModules } from "@/lib/types";
+import type { CompanyModules, CompanySubscription } from "@/lib/types";
 
 import { parseCompanyId, requireSuperAdminSession } from "../../_helpers";
+
+const SUBSCRIPTION_FIELDS = [
+  "billing_end_date",
+  "billing_mode",
+  "billing_start_date",
+  "last_payment_date",
+  "last_payment_note",
+  "next_payment_date",
+  "plan_name",
+  "subscription_status",
+] as const;
+
+type SubscriptionField = (typeof SUBSCRIPTION_FIELDS)[number];
+
+function textValue(value: unknown) {
+  return value == null ? "" : String(value).trim();
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function buildSubscriptionPayload(
+  current: CompanySubscription | null | undefined,
+  patch: Partial<Record<SubscriptionField, unknown>>,
+) {
+  const merged = Object.fromEntries(
+    SUBSCRIPTION_FIELDS.map((field) => [
+      field,
+      textValue(field in patch ? patch[field] : current?.[field]),
+    ]),
+  ) as Record<SubscriptionField, string>;
+
+  if (merged.billing_end_date) merged.next_payment_date = merged.billing_end_date;
+  if (!merged.billing_mode) merged.billing_mode = "manual";
+  if (!merged.plan_name) merged.plan_name = "base";
+  if (!merged.subscription_status) merged.subscription_status = "active";
+
+  return merged;
+}
 
 export async function PATCH(
   request: Request,
@@ -28,7 +68,7 @@ export async function PATCH(
           enabled_modules?: CompanyModules;
           is_active?: boolean;
           seat_limit?: number;
-          subscription?: Record<string, string>;
+          subscription?: Partial<Record<SubscriptionField, unknown>>;
         }
       | null;
 
@@ -93,7 +133,11 @@ export async function PATCH(
       }
 
       case "subscription": {
-        const subscription = payload.subscription || {};
+        const currentSubscription = await callInternalRpc<CompanySubscription>("get_company_subscription", [
+          companyId,
+        ]);
+        const subscriptionPatch = isRecord(payload.subscription) ? payload.subscription : {};
+        const subscription = buildSubscriptionPayload(currentSubscription, subscriptionPatch);
         const validation = await callInternalRpc<[boolean, string, Record<string, string>]>(
           "validate_company_subscription_data",
           [subscription],

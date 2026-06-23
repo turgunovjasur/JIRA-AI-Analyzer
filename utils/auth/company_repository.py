@@ -20,6 +20,13 @@ from utils.auth.credential_crypto import (
 
 log = get_logger("auth.company_repo")
 
+SUBSCRIPTION_DATE_FIELDS = {
+    "billing_start_date",
+    "billing_end_date",
+    "next_payment_date",
+    "last_payment_date",
+}
+
 
 def _ensure_companies_seat_limit_allows_zero(conn) -> None:
     """
@@ -69,6 +76,63 @@ def _column_names(conn, table_name: str) -> set[str]:
         return set()
 
 
+def _ensure_company_settings_runtime_columns(conn) -> None:
+    if not _table_exists(conn, "company_settings"):
+        return
+    columns = _column_names(conn, "company_settings")
+    if "webhook_secret" not in columns:
+        execute(conn, "ALTER TABLE company_settings ADD COLUMN webhook_secret TEXT NOT NULL DEFAULT ''")
+        conn.commit()
+
+
+def _ensure_company_webhook_project_keys_table(conn) -> None:
+    execute(
+        conn,
+        """
+        CREATE TABLE IF NOT EXISTS company_webhook_project_keys (
+            company_id BIGINT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+            project_key VARCHAR(64) NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (company_id, project_key),
+            UNIQUE(project_key)
+        )
+        """,
+    )
+
+
+def _fetch_registry_project_key_conflicts(conn, company_id: int, project_keys: List[str]) -> List[str]:
+    if not project_keys or not _table_exists(conn, "company_webhook_project_keys"):
+        return []
+    rows = execute(
+        conn,
+        """
+        SELECT c.company_code, w.project_key
+        FROM company_webhook_project_keys w
+        JOIN companies c ON c.id = w.company_id
+        WHERE w.company_id != ?
+          AND c.is_active = TRUE
+          AND w.project_key = ANY(?)
+        ORDER BY c.company_code, w.project_key
+        """,
+        [company_id, project_keys],
+    ).fetchall()
+    return [f"{row_to_dict(row)['company_code']}: {row_to_dict(row)['project_key']}" for row in rows]
+
+
+def _sync_company_webhook_project_keys(conn, company_id: int, project_keys: List[str]) -> None:
+    _ensure_company_webhook_project_keys_table(conn)
+    execute(conn, "DELETE FROM company_webhook_project_keys WHERE company_id = ?", [company_id])
+    for project_key in project_keys:
+        execute(
+            conn,
+            """
+            INSERT INTO company_webhook_project_keys (company_id, project_key)
+            VALUES (?, ?)
+            """,
+            [company_id, project_key],
+        )
+
+
 def _default_company_settings_payload() -> Dict[str, Any]:
     return {
         "jira_server": "",
@@ -90,6 +154,7 @@ def _default_company_settings_payload() -> Dict[str, Any]:
         "webhook_figma_tokens": "[]",
         "webhook_gemini_api_key_1": "",
         "webhook_gemini_api_key_2": "",
+        "webhook_secret": "",
         "enabled_modules": "{}",
         "webhook_project_keys": "",
         "webhook_trigger_status": "",
@@ -387,7 +452,10 @@ def fetch_company_subscription(get_conn: Callable, company_id: int) -> Dict:
 
 
 def upsert_company_subscription(get_conn: Callable, company_id: int, normalized: Dict) -> bool:
-    payload = dict(normalized)
+    payload = {
+        key: (None if key in SUBSCRIPTION_DATE_FIELDS and value == "" else value)
+        for key, value in dict(normalized).items()
+    }
     payload['updated_at'] = datetime.now().isoformat()
     try:
         conn = get_conn()
@@ -410,7 +478,11 @@ def upsert_company_subscription(get_conn: Callable, company_id: int, normalized:
         conn.commit()
         conn.close()
         return True
-    except Exception:
+    except Exception as exc:
+        log.error(
+            f"upsert_company_subscription failed | company_id={company_id} | err={exc}",
+            exc_info=True,
+        )
         return False
 
 
@@ -443,6 +515,7 @@ def fetch_company_settings(get_conn: Callable, company_id: int) -> Dict:
     try:
         conn = get_conn()
         if _table_exists(conn, "company_settings"):
+            _ensure_company_settings_runtime_columns(conn)
             row = execute(conn, "SELECT * FROM company_settings WHERE company_id = ?", [company_id]).fetchone()
             conn.close()
             return decrypt_sensitive_fields(row_to_dict(row)) if row else {}
@@ -523,14 +596,28 @@ def upsert_company_settings(
     try:
         conn = get_conn()
         payload = dict(filtered_settings)
+        normalized_project_keys: List[str] | None = None
         if 'webhook_project_keys' in payload:
             normalized_keys = project_key_normalizer(str(payload['webhook_project_keys']))
             payload['webhook_project_keys'] = ', '.join(normalized_keys)
+            normalized_project_keys = normalized_keys
+            _ensure_company_webhook_project_keys_table(conn)
+            conflicts = (
+                project_key_conflict_checker(conn, company_id, normalized_keys)
+                + _fetch_registry_project_key_conflicts(conn, company_id, normalized_keys)
+            )
+            if conflicts:
+                log.warning(
+                    f"webhook project key conflict | company_id={company_id} | conflicts={conflicts}"
+                )
+                conn.close()
+                return False
         if payload_requires_encryption(payload) and not can_encrypt_credentials():
             conn.close()
             return False
 
         if _table_exists(conn, "company_settings"):
+            _ensure_company_settings_runtime_columns(conn)
             payload = encrypt_sensitive_fields(payload)
             payload['updated_at'] = datetime.now().isoformat()
             c = execute(conn, "SELECT company_id FROM company_settings WHERE company_id = ?", [company_id])
@@ -616,6 +703,8 @@ def upsert_company_settings(
                         legacy_updated_at,
                     ],
                 )
+            if normalized_project_keys is not None:
+                _sync_company_webhook_project_keys(conn, company_id, normalized_project_keys)
         else:
             merged = fetch_company_settings(get_conn, company_id)
             merged.update(payload)
@@ -712,6 +801,8 @@ def upsert_company_settings(
                         """,
                         [company_id, provider, json.dumps(config, ensure_ascii=True), bool(is_active), updated_at],
                     )
+            if normalized_project_keys is not None:
+                _sync_company_webhook_project_keys(conn, company_id, normalized_project_keys)
 
         conn.commit()
         conn.close()
@@ -727,6 +818,27 @@ def fetch_company_by_project_key(
 ) -> Optional[Dict]:
     try:
         conn = get_conn()
+        key_upper = project_key.strip().upper()
+        if _table_exists(conn, "company_webhook_project_keys"):
+            registry_rows = execute(
+                conn,
+                """
+                SELECT c.*, w.project_key AS webhook_project_keys
+                FROM companies c
+                JOIN company_webhook_project_keys w ON w.company_id = c.id
+                WHERE c.is_active = TRUE
+                  AND w.project_key = ?
+                """,
+                [key_upper],
+            ).fetchall()
+            if len(registry_rows) == 1:
+                row_dict = row_to_dict(registry_rows[0])
+                conn.close()
+                return row_dict
+            if len(registry_rows) > 1:
+                conn.close()
+                return None
+
         if _table_exists(conn, "company_settings"):
             rows = execute(conn, """
                 SELECT c.*, cs.webhook_project_keys FROM companies c
@@ -743,7 +855,6 @@ def fetch_company_by_project_key(
                   AND ws.project_keys != ''
             """).fetchall()
         conn.close()
-        key_upper = project_key.strip().upper()
         matches = []
         for row in rows:
             row_dict = row_to_dict(row)
@@ -765,6 +876,8 @@ def find_project_key_conflicts(
 ) -> List[str]:
     if not project_keys:
         return []
+
+    conflicts = _fetch_registry_project_key_conflicts(conn, company_id, project_keys)
 
     if _table_exists(conn, "company_settings"):
         rows = execute(
@@ -794,10 +907,9 @@ def find_project_key_conflicts(
         ).fetchall()
 
     wanted = set(project_keys)
-    conflicts = []
     for row in rows:
         row_dict = row_to_dict(row)
         overlap = wanted.intersection(project_key_normalizer(row_dict.get("webhook_project_keys", "")))
         if overlap:
             conflicts.append(f"{row_dict['company_code']}: {', '.join(sorted(overlap))}")
-    return conflicts
+    return sorted(set(conflicts))
