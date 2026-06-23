@@ -107,7 +107,6 @@ Har bir setting uchun roli ko'rsatiladi:
 - `queue.task_wait_timeout` -> `BOLA(SOFT)` (parent: `queue.queue_enabled`)
 - `queue.gemini_min_interval` -> `BOLA(SOFT)` (parent: `queue.queue_enabled`)
 
-- `queue.checker_testcase_delay` -> `MUSTAQIL`
 - `queue.blocked_retry_delay` -> `MUSTAQIL`
 - `queue.blocked_check_interval` -> `MUSTAQIL`
 - `queue.key_freeze_duration` -> `MUSTAQIL`
@@ -156,12 +155,8 @@ Har bir setting uchun roli ko'rsatiladi:
 - `queue.queue_enabled = false` (SOFT) ->
   - hide `queue.task_wait_timeout`
   - hide `queue.gemini_min_interval`
-  - `queue.checker_testcase_delay` ko'rinib turadi (backendda baribir ishlatiladi)
 
 ## Muhim istisnolar (doim ko'rinsin)
 
 - `webhook_tz_pr.return_status` doim ko'rinsin.
   Sabab: `auto_return_enabled=false` bo'lsa ham `pr_not_found/pr_not_merged/tz_too_short` oqimida return status ishlatiladi.
-
-- `queue.checker_testcase_delay` doim ko'rinsin.
-  Sabab: `queue_enabled=false` holatda ham `service1 -> delay -> service2` oqimida qo'llanadi.

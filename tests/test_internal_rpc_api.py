@@ -47,7 +47,7 @@ def test_company_admin_webhook_save_rpc_blocks_foreign_company_scope():
     with pytest.raises(HTTPException) as exc:
         _authorize_internal_rpc(
             _session(company_id=321),
-            RpcRequest(op="save_company_webhook_module_settings", args=[999, "queue", {"checker_testcase_delay": 15}]),
+            RpcRequest(op="save_company_webhook_module_settings", args=[999, "queue", {"gemini_min_interval": 6}]),
         )
 
     assert exc.value.status_code == 403

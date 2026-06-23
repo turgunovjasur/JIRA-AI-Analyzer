@@ -93,6 +93,7 @@ from utils.auth.auth_config_helpers import (
     build_company_webhook_credentials,
     build_user_credentials_for_service,
     build_company_webhook_config,
+    compute_credential_readiness,
     validate_company_webhook_config_shape,
     parse_webhook_module_settings,
 )
@@ -1119,6 +1120,26 @@ def has_api_keys_configured(company_id: int) -> bool:
 def get_company_gemini_keys(company_id: int) -> list:
     """Kompaniyaning Gemini API kalitlari ro'yxati"""
     return build_company_gemini_keys(get_company_settings(company_id))
+
+
+def get_credential_readiness(company_id: int, user_id: Optional[int] = None) -> dict:
+    """Credential mavjudligini RAISE qilmasdan aniqlash (UI banner + preflight gate uchun).
+
+    Qaytaradi: {jira_ok, github_ok, gemini_source}. gemini_source: user|company|global|none.
+    user_id berilsa user kaliti ham hisobga olinadi (UI modul); aks holda company darajasi.
+    """
+    company_settings = get_company_settings(company_id) if company_id else {}
+    user_credentials = {}
+    if user_id is not None:
+        try:
+            user_credentials = get_user_credentials(int(user_id)) or {}
+        except Exception:
+            user_credentials = {}
+    return compute_credential_readiness(
+        company_settings=company_settings,
+        user_credentials=user_credentials,
+        global_defaults=get_global_gemini_defaults() or {},
+    )
 
 
 def get_company_credentials(company_id: int) -> dict:

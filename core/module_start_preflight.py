@@ -47,14 +47,20 @@ class StartPreflightResult:
     company_id: int | None
     user_id: int | None
     checks: list[ModuleCheck]
+    # Global (QA ASSISTANT) Gemini kvota holati — UI banner/qolgan urinish uchun.
+    # {"using_global": bool, "used", "limit", "remaining", "exhausted"} yoki {"using_global": False}.
+    quota: dict[str, Any] | None = None
 
     def to_error_payload(self) -> dict[str, Any]:
-        return build_preflight_error_payload(
+        payload = build_preflight_error_payload(
             module_key=self.module_key,
             module_label=self.module_label,
             task_key=self.task_key,
             checks=self.checks,
         )
+        if self.quota is not None:
+            payload["gemini_quota"] = self.quota
+        return payload
 
 
 def run_start_preflight(
@@ -84,6 +90,7 @@ def run_start_preflight(
             message="Company scope topilmagani uchun modul ruxsati tekshirilmadi.",
         ))
 
+    quota: dict[str, Any] | None = None
     if scope_check.status == "fail":
         checks.append(ModuleCheck(
             id="api_credentials",
@@ -93,12 +100,27 @@ def run_start_preflight(
         ))
         checks.extend(_skipped_agent_model_checks(module_key, "Scope xatosi sabab agent modellari tekshirilmadi."))
     else:
-        checks.append(_check_credentials(user_id=user_id, company_id=company_id, source=source))
+        cred_check, readiness = _resolve_credentials(
+            module_key=module_key, user_id=user_id, company_id=company_id, source=source,
+        )
+        checks.append(cred_check)
         checks.extend(_check_agent_primary_models(
             module_key=module_key,
             user_id=user_id,
             company_id=company_id,
         ))
+        # Global (QA ASSISTANT) kalit kvotasi — faqat credential OK va manba "global" bo'lsa.
+        if (
+            cred_check.status != "fail"
+            and readiness
+            and readiness.get("gemini_source") == "global"
+            and company_id is not None
+        ):
+            quota_check, quota = _check_global_quota(module_key=module_key, company_id=int(company_id))
+            if quota_check is not None:
+                checks.append(quota_check)
+        else:
+            quota = {"using_global": False}
 
     ok = all(check.status != "fail" for check in checks)
     return StartPreflightResult(
@@ -109,6 +131,7 @@ def run_start_preflight(
         company_id=company_id,
         user_id=user_id,
         checks=checks,
+        quota=quota,
     )
 
 
@@ -208,35 +231,165 @@ def _check_module_access(company_id: int, module_key: str, module_label: str) ->
         )
 
 
-def _check_credentials(*, user_id: int | None, company_id: int | None, source: str) -> ModuleCheck:
+def _resolve_credentials(
+    *, module_key: str, user_id: int | None, company_id: int | None, source: str,
+) -> tuple[ModuleCheck, dict | None]:
+    """Modul-bilan-bog'liq credential tekshiruvi (RAISE qilmaydi).
+
+    - testcase_generator: JIRA majburiy (GitHub kerak EMAS).
+    - tz_pr_checker: JIRA + GitHub majburiy.
+    - Ikkalasi ham: Gemini kalit (o'z/company/global) bo'lishi shart.
+
+    Qaytaradi: (ModuleCheck, readiness) — readiness'da gemini_source bor (kvota uchun).
+    """
     try:
-        if user_id is not None:
-            from utils.auth.auth_db import get_user_credentials_for_service
+        from utils.auth.auth_db import get_credential_readiness
 
-            get_user_credentials_for_service(int(user_id))
-        elif company_id is not None:
-            from utils.auth.auth_db import get_company_webhook_credentials
-
-            get_company_webhook_credentials(int(company_id))
-        else:
-            raise RuntimeError("company_id yoki user_id ko'rsatilmagan")
-        return ModuleCheck(
-            id="api_credentials",
-            label="API credentials",
-            status="ok",
-            message="JIRA, GitHub va Gemini API kalitlari topildi.",
+        readiness = get_credential_readiness(
+            int(company_id) if company_id is not None else None,
+            int(user_id) if user_id is not None else None,
         )
     except Exception as exc:
-        scope_label = "manual" if str(source or "").lower() == "manual" else "webhook"
-        return ModuleCheck(
-            id="api_credentials",
-            label="API credentials",
-            status="fail",
-            code="CONFIG_API_CREDENTIALS_MISSING",
-            message=str(exc) or "API credentials tekshiruvi xato berdi.",
-            action=f"{scope_label} API key sozlamalarini to'ldiring.",
-            blocking=True,
+        return (
+            ModuleCheck(
+                id="api_credentials",
+                label="API credentials",
+                status="fail",
+                code="CONFIG_API_CREDENTIALS_MISSING",
+                message=str(exc) or "API credentials tekshiruvi xato berdi.",
+                action="API key sozlamalarini to'ldiring.",
+                blocking=True,
+            ),
+            None,
         )
+
+    jira_ok = bool(readiness.get("jira_ok"))
+    github_ok = bool(readiness.get("github_ok"))
+    gemini_source = readiness.get("gemini_source") or "none"
+
+    if module_key == "testcase_generator":
+        if not jira_ok:
+            return (
+                ModuleCheck(
+                    id="api_credentials", label="API credentials", status="fail",
+                    code="CONFIG_API_CREDENTIALS_MISSING",
+                    message="Testcase moduli ishlashi uchun Jira malumotlarini kiriting!",
+                    action="Sozlamalar → API Kalitlar: JIRA Server, Email va API Token kiriting.",
+                    blocking=True,
+                ),
+                readiness,
+            )
+    else:  # tz_pr_checker
+        if not jira_ok or not github_ok:
+            return (
+                ModuleCheck(
+                    id="api_credentials", label="API credentials", status="fail",
+                    code="CONFIG_API_CREDENTIALS_MISSING",
+                    message="Checker ishlashi uchun jira va github malumotlarini kiriting",
+                    action="Sozlamalar → API Kalitlar: JIRA va GitHub ma'lumotlarini kiriting.",
+                    blocking=True,
+                ),
+                readiness,
+            )
+
+    if gemini_source == "none":
+        return (
+            ModuleCheck(
+                id="api_credentials", label="API credentials", status="fail",
+                code="CONFIG_API_CREDENTIALS_MISSING",
+                message="Gemini API kalit topilmadi. O'zingizning Gemini API kalitingizni kiriting.",
+                action="Sozlamalar → API Kalitlar: Gemini API kalitini kiriting.",
+                blocking=True,
+            ),
+            readiness,
+        )
+
+    return (
+        ModuleCheck(
+            id="api_credentials", label="API credentials", status="ok",
+            message="Kerakli API kalitlari topildi.",
+        ),
+        readiness,
+    )
+
+
+def _check_global_quota(*, module_key: str, company_id: int) -> tuple[ModuleCheck | None, dict]:
+    """Global (QA ASSISTANT) kalit kvotasini tekshirish. Tugagan bo'lsa fail ModuleCheck.
+
+    Qaytaradi: (ModuleCheck yoki None, quota_dict). quota_dict UI'ga uzatiladi.
+    """
+    try:
+        from utils.database.quota_db import get_global_quota_status
+
+        status = get_global_quota_status(int(company_id), module_key)
+    except Exception:
+        # Kvota o'qib bo'lmasa — bloklamaymiz (fail-open), faqat banner ko'rsatilmaydi.
+        return None, {"using_global": True}
+
+    quota = {"using_global": True, **status}
+    if status.get("exhausted"):
+        return (
+            ModuleCheck(
+                id="gemini_quota", label="QA ASSISTANT bepul kvota", status="fail",
+                code="QUOTA_GLOBAL_FREE_EXHAUSTED",
+                message=(
+                    f"Imtiyoz tugadi — QA ASSISTANT bepul kvotasi ({status.get('limit', '')} ta) ishlatildi. "
+                    "O'zingizning Gemini API kalitingizni kiriting."
+                ),
+                action="Sozlamalar → API Kalitlar: o'z Gemini API kalitingizni kiriting.",
+                blocking=True,
+            ),
+            quota,
+        )
+    return None, quota
+
+
+def get_module_start_status(
+    *, module_key: str, company_id: int | None, user_id: int | None = None,
+) -> dict[str, Any]:
+    """Modul ochilganda (run'dan oldin) credential + kvota holatini qaytaradi.
+
+    Run gate (`run_start_preflight`) bilan AYNAN bir xil mantiq, lekin task_key
+    talab qilmaydi. Frontend banner + run tugmasini bloklash uchun.
+
+    Qaytaradi: {module_key, blocked, level, message, gemini_source, gemini_quota}.
+    """
+    cred_check, readiness = _resolve_credentials(
+        module_key=module_key, user_id=user_id, company_id=company_id, source="manual",
+    )
+    quota: dict[str, Any] = {"using_global": False}
+    quota_check: ModuleCheck | None = None
+    if (
+        cred_check.status != "fail"
+        and readiness
+        and readiness.get("gemini_source") == "global"
+        and company_id is not None
+    ):
+        quota_check, quota = _check_global_quota(module_key=module_key, company_id=int(company_id))
+
+    if cred_check.status == "fail":
+        message, level, blocked = cred_check.message, "error", True
+    elif quota_check is not None and quota_check.status == "fail":
+        message, level, blocked = quota_check.message, "error", True
+    elif quota.get("using_global"):
+        remaining = quota.get("remaining", 0)
+        limit = quota.get("limit", 0)
+        message = (
+            "O'zingizning Gemini API kalitingizni kiriting — hozir QA ASSISTANT bergan "
+            f"kalitdan foydalanyapsiz. Bu modul uchun yana {remaining}/{limit} tekin urinish bor."
+        )
+        level, blocked = "warning", False
+    else:
+        message, level, blocked = "", "info", False
+
+    return {
+        "module_key": module_key,
+        "blocked": blocked,
+        "level": level,
+        "message": message,
+        "gemini_source": (readiness.get("gemini_source") if readiness else "none"),
+        "gemini_quota": quota,
+    }
 
 
 def _check_agent_primary_models(

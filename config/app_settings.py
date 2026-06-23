@@ -476,9 +476,9 @@ class QueueSettings:
     # Birinci task ishlanmoqda, ikkinchi keldi → ikkinchi qancha kutadi?
     # Timeout etgan → JIRA'ga error comment yoziladi
     task_wait_timeout: int = 60         # DEFAULT 60 sek
-    # Checker → Testcase delay (sekunda):
-    # Bitta task ichida checker comment yozgandan so'ng testcasegacha kutish
-    checker_testcase_delay: int = 15    # DEFAULT 15 sek
+    # Legacy no-op: checker → testcase delay olib tashlangan.
+    # Eski settings JSON/DB payloadlari buzilmasligi uchun field saqlanadi.
+    checker_testcase_delay: int = 0
     # Blocked task qayta ishlash vaqti (daqiqa):
     # AI timeout/429 sabab blocked bo'lgan task necha daqiqadan keyin qayta run
     blocked_retry_delay: int = 5        # DEFAULT 5 daqiqa
@@ -515,9 +515,8 @@ class QueueSettings:
         "Misol: 60 = 1 daqiqa kutadi."
     )
     checker_testcase_delay_help: str = (
-        "Bitta task ichida checker (Servis-1) izohini yozgandan keyin, testcase (Servis-2) "
-        "boshlanguncha necha SEKUND kutiladi. Bu Gemini'ga ikki so'rovni juda yaqin yubormaslik uchun. "
-        "Misol: 15 = 15 soniya."
+        "Legacy/no-op: checker → testcase delay olib tashlangan. Gemini chaqiriqlari orasidagi "
+        "tanaffusni `gemini_min_interval` boshqaradi."
     )
     blocked_retry_delay_help: str = (
         "Gemini band bo'lib (timeout yoki 429 kvota) bloklangan task necha DAQIQAdan keyin qayta urinadi. "
@@ -749,16 +748,26 @@ class AppSettingsManager:
                             testcase_data.pop(legacy_key, None)
                         data[testcase_key] = testcase_data
 
+                # Saqlangan dict'da olib tashlangan/eski kalitlar bo'lishi mumkin
+                # (masalan eski ai_max_retries/db_busy_timeout). Faqat dataclass tan
+                # oladigan maydonlarni o'tkazamiz — aks holda butun blok default'ga tushadi.
+                def _kw(cls, key):
+                    raw = data.get(key, {})
+                    if not isinstance(raw, dict):
+                        return {}
+                    valid = set(cls.__dataclass_fields__)
+                    return {k: v for k, v in raw.items() if k in valid}
+
                 # Nested dataclass'larni yaratish
                 settings = AppSettings(
-                    modules=ModuleVisibility(**data.get('modules', {})),
-                    bug_analyzer=BugAnalyzerSettings(**data.get('bug_analyzer', {})),
-                    statistics=StatisticsSettings(**data.get('statistics', {})),
-                    tz_pr_checker=TZPRCheckerSettings(**data.get('tz_pr_checker', {})),
-                    webhook_tz_pr=TZPRCheckerSettings(**data.get('webhook_tz_pr', {})),
-                    testcase_generator=TestcaseGeneratorSettings(**data.get('testcase_generator', {})),
-                    webhook_testcase=TestcaseGeneratorSettings(**data.get('webhook_testcase', {})),
-                    queue=QueueSettings(**data.get('queue', {}))
+                    modules=ModuleVisibility(**_kw(ModuleVisibility, 'modules')),
+                    bug_analyzer=BugAnalyzerSettings(**_kw(BugAnalyzerSettings, 'bug_analyzer')),
+                    statistics=StatisticsSettings(**_kw(StatisticsSettings, 'statistics')),
+                    tz_pr_checker=TZPRCheckerSettings(**_kw(TZPRCheckerSettings, 'tz_pr_checker')),
+                    webhook_tz_pr=TZPRCheckerSettings(**_kw(TZPRCheckerSettings, 'webhook_tz_pr')),
+                    testcase_generator=TestcaseGeneratorSettings(**_kw(TestcaseGeneratorSettings, 'testcase_generator')),
+                    webhook_testcase=TestcaseGeneratorSettings(**_kw(TestcaseGeneratorSettings, 'webhook_testcase')),
+                    queue=QueueSettings(**_kw(QueueSettings, 'queue')),
                 )
 
                 return _enforce_token_policy(settings)
@@ -901,10 +910,6 @@ def _apply_global_queue_overrides(settings: AppSettings) -> AppSettings:
         "task_wait_timeout": _parse_positive_int_or_default(
             get_global_setting("queue_task_wait_timeout_sec", str(current.task_wait_timeout)),
             current.task_wait_timeout,
-        ),
-        "checker_testcase_delay": _parse_positive_int_or_default(
-            get_global_setting("queue_checker_testcase_delay_sec", str(current.checker_testcase_delay)),
-            current.checker_testcase_delay,
         ),
         "blocked_retry_delay": _parse_positive_int_or_default(
             get_global_setting("queue_blocked_retry_delay_min", str(current.blocked_retry_delay)),

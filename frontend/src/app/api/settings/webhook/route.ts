@@ -10,7 +10,6 @@ import { getOptionalSession } from "@/lib/session";
 type WebhookSavePayload = {
   auto_return_enabled?: boolean;
   allowed_issue_types?: string;
-  checker_delay_seconds?: number;
   excluded_assignees?: string;
   max_skip_check_comments?: number;
   min_tz_description_chars?: number;
@@ -85,7 +84,6 @@ export async function GET() {
       data: {
         auto_return_enabled: Boolean(data.auto_return_enabled),
         allowed_issue_types: String(data.allowed_issue_types || ""),
-        checker_delay_seconds: ensureNumber(data.checker_delay_seconds, 15),
         excluded_assignees: String(data.excluded_assignees || ""),
         max_skip_check_comments: ensureNumber(data.max_skip_check_comments, 5),
         min_tz_description_chars: ensureNumber(data.min_tz_description_chars, 50),

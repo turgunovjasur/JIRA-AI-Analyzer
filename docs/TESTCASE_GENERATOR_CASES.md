@@ -75,7 +75,7 @@ Manba: `queue_manager.py`
 2. Queue `enabled=true`:
    - tenant-level lock olinadi.
    - timeout bo'lsa task `blocked` + timeout comment.
-   - Service1 dan keyin `checker_testcase_delay` kutish.
+   - Service2 oldidan `gemini_min_interval` bo'yicha AI slot tekshiriladi.
 3. `_can_run_service2()` shartlari:
    - `service1_status in ('done','skip')` va `score is None yoki score>=threshold` va `task_status not in ('returned','blocked')`.
    - YOKI `service1_status='error'` va `service2_status='pending'` (TZ-only imkoniyati uchun).
@@ -280,4 +280,3 @@ C. Moduldagi success holatlar:
 3. `include_pr=true` bo'lsa ham fallbackda TZ-only davom etishi mumkin (cache gate fail case-lardan tashqari).
 4. `generate_test_cases()` ichida 0 testcase holati `success=true` bo'lishi mumkin; ammo webhook layer buni `failure` deb qaytaradi.
 5. Service2 DB status transitionlari `service_runner`da boshqariladi, generatorning o'zi DB status yozmaydi.
-

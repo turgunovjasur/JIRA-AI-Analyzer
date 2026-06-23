@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
 import {
   Activity,
@@ -45,6 +45,7 @@ import { cn } from "@/lib/cn";
 import { getModuleRunErrorMessage, normalizeModuleRunErrorPayload } from "@/lib/module-errors";
 import type {
   ModuleRunErrorPayload,
+  ModuleStartStatus,
   TZPRAgentRunSnapshot,
   TZPRAnalysisResult,
   TZPRExecutionMode,
@@ -776,6 +777,23 @@ export function TZPRChecker({ recentScope }: TZPRCheckerProps) {
   const openRunStorageKey = getOpenRunStorageKey(MODULE_KEY, recentScope);
   const [requirementFilter, setRequirementFilter] = useState<RequirementFilter>("all");
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
+  const [startStatus, setStartStatus] = useState<ModuleStartStatus | null>(null);
+
+  // Modul ochilganda (va har run'dan keyin) credential + Gemini kvota holatini olish.
+  const refreshStartStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/tzpr/start-status", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = (await res.json()) as ModuleStartStatus;
+      if (data && typeof data === "object" && data.module_key) setStartStatus(data);
+    } catch {
+      /* status olinmasa gating ko'rsatilmaydi (backend baribir bloklaydi). */
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshStartStatus();
+  }, [refreshStartStatus]);
 
   const resultHasAgentRunData = Boolean(
     result?.run_id
@@ -1030,6 +1048,8 @@ export function TZPRChecker({ recentScope }: TZPRCheckerProps) {
       );
     } finally {
       setSubmitting(false);
+      // Run urinishidan keyin Gemini kvota / qolgan urinishni yangilash.
+      void refreshStartStatus();
     }
   }
 
@@ -1110,6 +1130,20 @@ export function TZPRChecker({ recentScope }: TZPRCheckerProps) {
       {result?.status_banner ? <AnalysisStatusBannerView banner={result.status_banner} /> : null}
       {error ? <Notice tone="error">{error}</Notice> : null}
 
+      {startStatus?.message ? (
+        <Notice
+          tone={
+            startStatus.level === "error"
+              ? "error"
+              : startStatus.level === "warning"
+                ? "warning"
+                : "info"
+          }
+        >
+          {startStatus.message}
+        </Notice>
+      ) : null}
+
       {showRunCard ? (
         <section className="grid gap-4">
           <Card
@@ -1138,7 +1172,7 @@ export function TZPRChecker({ recentScope }: TZPRCheckerProps) {
                 />
               </Field>
 
-              <Button disabled={submitting || runInProgress} fullWidth type="submit">
+              <Button disabled={submitting || runInProgress || Boolean(startStatus?.blocked)} fullWidth type="submit">
                 {submitting || runInProgress ? (
                   <>
                     <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />

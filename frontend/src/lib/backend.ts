@@ -9,6 +9,7 @@ import type {
   LoginResponse,
   ModuleSettingsSaveRequest,
   ModuleSettingsView,
+  ModuleStartStatus,
   MonitoringSnapshot,
   SessionResponse,
   SharedSettingsSaveRequest,
@@ -210,6 +211,26 @@ export function createTestcaseRunWithBackend(payload: TestcaseCreateRunRequest &
 
 export function getTestcaseRunWithBackend(runId: string) {
   return backendRequest<TestcaseRunSnapshot>(`/api/testcase/runs/${encodeURIComponent(runId)}`, {
+    method: "GET",
+  });
+}
+
+function _startStatusQuery(payload: { company_id?: number | null; user_id?: number | null }) {
+  const params = new URLSearchParams();
+  if (payload.company_id != null) params.set("company_id", String(payload.company_id));
+  if (payload.user_id != null) params.set("user_id", String(payload.user_id));
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
+}
+
+export function getTzprStartStatusWithBackend(payload: { company_id?: number | null; user_id?: number | null }) {
+  return backendRequest<ModuleStartStatus>(`/api/tzpr/start-status${_startStatusQuery(payload)}`, {
+    method: "GET",
+  });
+}
+
+export function getTestcaseStartStatusWithBackend(payload: { company_id?: number | null; user_id?: number | null }) {
+  return backendRequest<ModuleStartStatus>(`/api/testcase/start-status${_startStatusQuery(payload)}`, {
     method: "GET",
   });
 }

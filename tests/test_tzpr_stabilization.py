@@ -2,7 +2,8 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
-from services.checkers.tz_pr_checker import TZPRAnalysisResult, TZPRService
+from services.checkers.tzpr_models import TZPRAnalysisResult
+from services.checkers.tz_pr_checker import TZPRService
 from services.webhook.error_handler import _classify_error
 from services.webhook.jira_webhook_handler import _is_allowed_issue_type
 

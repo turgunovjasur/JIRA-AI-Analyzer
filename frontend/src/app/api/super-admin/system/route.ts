@@ -6,7 +6,6 @@ import { requireSuperAdminSession } from "../_helpers";
 
 type SuperAdminSystemPayload = {
   task_wait_timeout: number;
-  checker_testcase_delay: number;
   blocked_retry_delay: number;
   gemini_min_interval: number;
   blocked_check_interval: number;
@@ -19,7 +18,6 @@ type SuperAdminSystemPayload = {
 
 const SYSTEM_DEFAULTS: SuperAdminSystemPayload = {
   task_wait_timeout: 60,
-  checker_testcase_delay: 15,
   blocked_retry_delay: 5,
   gemini_min_interval: 6,
   blocked_check_interval: 30,
@@ -46,7 +44,6 @@ export async function GET() {
   try {
     const [
       taskWaitTimeout,
-      checkerTestcaseDelay,
       blockedRetryDelay,
       geminiMinInterval,
       blockedCheckInterval,
@@ -57,7 +54,6 @@ export async function GET() {
       executorTimeout,
     ] = await Promise.all([
       callInternalRpc<string>("get_global_setting", ["queue_task_wait_timeout_sec", String(SYSTEM_DEFAULTS.task_wait_timeout)]),
-      callInternalRpc<string>("get_global_setting", ["queue_checker_testcase_delay_sec", String(SYSTEM_DEFAULTS.checker_testcase_delay)]),
       callInternalRpc<string>("get_global_setting", ["queue_blocked_retry_delay_min", String(SYSTEM_DEFAULTS.blocked_retry_delay)]),
       callInternalRpc<string>("get_global_setting", ["queue_gemini_min_interval_sec", String(SYSTEM_DEFAULTS.gemini_min_interval)]),
       callInternalRpc<string>("get_global_setting", ["queue_blocked_check_interval_sec", String(SYSTEM_DEFAULTS.blocked_check_interval)]),
@@ -72,7 +68,6 @@ export async function GET() {
       success: true,
       data: {
         task_wait_timeout: parsePositiveInt(taskWaitTimeout, SYSTEM_DEFAULTS.task_wait_timeout),
-        checker_testcase_delay: parsePositiveInt(checkerTestcaseDelay, SYSTEM_DEFAULTS.checker_testcase_delay),
         blocked_retry_delay: parsePositiveInt(blockedRetryDelay, SYSTEM_DEFAULTS.blocked_retry_delay),
         gemini_min_interval: parsePositiveInt(geminiMinInterval, SYSTEM_DEFAULTS.gemini_min_interval),
         blocked_check_interval: parsePositiveInt(blockedCheckInterval, SYSTEM_DEFAULTS.blocked_check_interval),
@@ -104,7 +99,6 @@ export async function POST(request: Request) {
 
     const data: SuperAdminSystemPayload = {
       task_wait_timeout: parsePositiveInt(payload.task_wait_timeout, SYSTEM_DEFAULTS.task_wait_timeout),
-      checker_testcase_delay: parsePositiveInt(payload.checker_testcase_delay, SYSTEM_DEFAULTS.checker_testcase_delay),
       blocked_retry_delay: parsePositiveInt(payload.blocked_retry_delay, SYSTEM_DEFAULTS.blocked_retry_delay),
       gemini_min_interval: parsePositiveInt(payload.gemini_min_interval, SYSTEM_DEFAULTS.gemini_min_interval),
       blocked_check_interval: parsePositiveInt(payload.blocked_check_interval, SYSTEM_DEFAULTS.blocked_check_interval),
@@ -117,7 +111,6 @@ export async function POST(request: Request) {
 
     const updates: Array<[string, string]> = [
       ["queue_task_wait_timeout_sec", String(data.task_wait_timeout)],
-      ["queue_checker_testcase_delay_sec", String(data.checker_testcase_delay)],
       ["queue_blocked_retry_delay_min", String(data.blocked_retry_delay)],
       ["queue_gemini_min_interval_sec", String(data.gemini_min_interval)],
       ["queue_blocked_check_interval_sec", String(data.blocked_check_interval)],

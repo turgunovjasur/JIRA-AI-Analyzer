@@ -73,7 +73,6 @@ type AiDefaultsForm = {
 
 type SuperAdminSystemForm = {
   task_wait_timeout: number;
-  checker_testcase_delay: number;
   blocked_retry_delay: number;
   gemini_min_interval: number;
   blocked_check_interval: number;
@@ -325,7 +324,6 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
   });
   const [systemForm, setSystemForm] = useState<SuperAdminSystemForm>({
     task_wait_timeout: 60,
-    checker_testcase_delay: 15,
     blocked_retry_delay: 5,
     gemini_min_interval: 6,
     blocked_check_interval: 30,
@@ -440,7 +438,6 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
         }
         setSystemForm({
           task_wait_timeout: Number(payload.data.task_wait_timeout ?? 60),
-          checker_testcase_delay: Number(payload.data.checker_testcase_delay ?? 15),
           blocked_retry_delay: Number(payload.data.blocked_retry_delay ?? 5),
           gemini_min_interval: Number(payload.data.gemini_min_interval ?? 6),
           blocked_check_interval: Number(payload.data.blocked_check_interval ?? 30),
@@ -1553,19 +1550,6 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                     }
                     step={0.1}
                     value={secondsToMinutesInput(systemForm.task_wait_timeout)}
-                  />
-                  <NumberField
-                    inputClassName={SETTINGS_INPUT_CLASS}
-                    label="Checker->Testcase delay (sec)"
-                    hint="Checker (Servis-1) izohidan keyin testcase (Servis-2) boshlanguncha tanaffus — Gemini'ga ikki so'rovni juda yaqin yubormaslik uchun."
-                    min={1}
-                    onChange={(value) =>
-                      setSystemForm((current) => ({
-                        ...current,
-                        checker_testcase_delay: Number(value || 0),
-                      }))
-                    }
-                    value={String(systemForm.checker_testcase_delay)}
                   />
                   <NumberField
                     inputClassName={SETTINGS_INPUT_CLASS}

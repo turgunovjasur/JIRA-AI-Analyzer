@@ -501,6 +501,26 @@ export type ModuleRunErrorPayload = {
   error_message?: string;
   status_banner?: AnalysisStatusBanner | null;
   preflight_checks?: ModulePreflightCheck[];
+  gemini_quota?: ModuleGeminiQuota | null;
+};
+
+// Global (QA ASSISTANT) Gemini kalit bepul-urinish kvotasi (per company+module).
+export type ModuleGeminiQuota = {
+  using_global: boolean;
+  used?: number;
+  limit?: number;
+  remaining?: number;
+  exhausted?: boolean;
+};
+
+// Modul ochilganda (run'dan oldin) credential + kvota holati.
+export type ModuleStartStatus = {
+  module_key: string;
+  blocked: boolean;
+  level: "error" | "warning" | "info" | string;
+  message: string;
+  gemini_source: "user" | "company" | "global" | "none" | string;
+  gemini_quota?: ModuleGeminiQuota | null;
 };
 
 export type TZPRAnalysisResult = {
@@ -771,7 +791,6 @@ export type WebhookSettingsView = {
   success: boolean;
   data: {
     auto_return_enabled: boolean;
-    checker_delay_seconds: number;
     excluded_assignees: string;
     min_tz_description_chars: number;
     return_threshold: number;
@@ -814,7 +833,6 @@ export type WebhookSettingsView = {
 
 export type WebhookSettingsSaveRequest = {
   auto_return_enabled: boolean;
-  checker_delay_seconds?: number;
   excluded_assignees: string;
   min_tz_description_chars: number;
   return_threshold: number;
@@ -859,7 +877,6 @@ export type SystemSettingsView = {
   data: {
     queue_enabled: boolean;
     task_wait_timeout: number;
-    checker_testcase_delay: number;
     blocked_retry_delay: number;
     gemini_min_interval: number;
     blocked_check_interval: number;

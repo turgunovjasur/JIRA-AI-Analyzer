@@ -14,11 +14,11 @@ from contextlib import suppress
 from datetime import datetime
 from typing import Any
 
-from config.app_settings import get_app_settings
+from config.app_settings import get_app_settings, get_app_settings_for_company
 from core.logger import get_logger
 from services.checkers.tzpr_multi_agent import execute_multi_agent_run
 from services.generators.testcase_run import execute_testcase_run
-from services.webhook.queue_manager import _queued_check_tz_pr, _run_task_group
+from services.webhook.queue_manager import _queued_check_tz_pr, _run_task_group, _wait_for_ai_slot
 from services.webhook.retry_scheduler import _retry_blocked_task
 from services.webhook.service_runner import _run_testcase_generation, check_tz_pr_and_comment
 from utils.database.task_db import (
@@ -79,9 +79,12 @@ def _parse_payload(job: dict[str, Any]) -> dict[str, Any]:
 async def _run_manual_check(task_key: str, company_id: int | None, include_testcase: bool) -> None:
     await check_tz_pr_and_comment(task_key=task_key, new_status="Manual Check", company_id=company_id)
     if include_testcase:
-        delay = get_app_settings(force_reload=False).queue.checker_testcase_delay
-        if delay > 0:
-            await asyncio.sleep(delay)
+        queue_settings = (
+            get_app_settings_for_company(company_id).queue
+            if company_id is not None
+            else get_app_settings(force_reload=False).queue
+        )
+        await _wait_for_ai_slot(task_key, company_id=company_id, min_interval=queue_settings.gemini_min_interval)
         tc_settings = get_app_settings(force_reload=False).webhook_testcase
         trigger_status = tc_settings.auto_comment_trigger_status
         await _run_testcase_generation(task_key=task_key, new_status=trigger_status, company_id=company_id)

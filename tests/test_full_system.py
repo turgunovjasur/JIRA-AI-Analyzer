@@ -1302,10 +1302,10 @@ class TestSettingsManagement:
         settings = AppSettings()
         assert settings.queue.queue_enabled is True
 
-    def test_default_checker_testcase_delay(self):
+    def test_default_checker_testcase_delay_is_legacy_noop(self):
         from config.app_settings import AppSettings
         settings = AppSettings()
-        assert settings.queue.checker_testcase_delay == 15
+        assert settings.queue.checker_testcase_delay == 0
 
     def test_tz_pr_trigger_statuses_contain_ready(self):
         from config.app_settings import AppSettings
@@ -1456,7 +1456,7 @@ class TestDebugCapability:
         assert task.get('last_processed_at') is not None
 
     def test_analysis_result_warnings_field(self):
-        from services.checkers.tz_pr_checker import TZPRAnalysisResult
+        from services.checkers.tzpr_models import TZPRAnalysisResult
         error_result = TZPRAnalysisResult(
             task_key="TEST-DEBUG-007",
             success=False,
@@ -1466,7 +1466,7 @@ class TestDebugCapability:
         assert len(error_result.warnings) == 2
 
     def test_analysis_result_ai_retry_count(self):
-        from services.checkers.tz_pr_checker import TZPRAnalysisResult
+        from services.checkers.tzpr_models import TZPRAnalysisResult
         success_result = TZPRAnalysisResult(
             task_key="TEST-DEBUG-008",
             success=True,
@@ -1476,7 +1476,7 @@ class TestDebugCapability:
         assert success_result.ai_retry_count == 2
 
     def test_analysis_result_total_prompt_size(self):
-        from services.checkers.tz_pr_checker import TZPRAnalysisResult
+        from services.checkers.tzpr_models import TZPRAnalysisResult
         success_result = TZPRAnalysisResult(
             task_key="TEST-DEBUG-009",
             success=True,

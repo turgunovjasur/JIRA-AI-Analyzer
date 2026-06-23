@@ -75,12 +75,14 @@ def _ensure_runtime_tables(conn) -> None:
     from utils.database.checker_run_repository import ensure_checker_run_tables
     from utils.database.ai_usage_repository import ensure_ai_usage_tables
     from utils.database.analysis_run_repository import ensure_analysis_run_tables
+    from utils.database.quota_repository import ensure_quota_tables
     from utils.auth.auth_bootstrap import _ensure_postgres_auth_runtime_tables
 
     ensure_job_queue_tables(conn)
     ensure_checker_run_tables(conn)
     ensure_ai_usage_tables(conn)
     ensure_analysis_run_tables(conn)
+    ensure_quota_tables(conn)
     _ensure_postgres_auth_runtime_tables(conn)
     conn.commit()
 

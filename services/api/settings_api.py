@@ -354,7 +354,6 @@ async def read_webhook_config(
     app_settings = get_app_settings_for_company(company_id)
     webhook_settings = app_settings.webhook_tz_pr
     webhook_testcase = app_settings.webhook_testcase
-    queue_settings = app_settings.queue
     visible_sections = [
         item
         for item in list(webhook_settings.visible_sections or [])
@@ -378,7 +377,6 @@ async def read_webhook_config(
             "read_comments_enabled": bool(webhook_settings.read_comments_enabled),
             "max_comments_to_read": int(webhook_settings.max_comments_to_read),
             "min_tz_description_chars": webhook_settings.min_tz_description_chars,
-            "checker_delay_seconds": queue_settings.checker_testcase_delay,
             "excluded_assignees": webhook_settings.excluded_assignees,
             "allowed_issue_types": webhook_settings.allowed_issue_types,
             "skip_code": webhook_settings.skip_code,
@@ -445,12 +443,6 @@ async def save_webhook_config(
         raw_min_tz = int(raw.get("min_tz_description_chars", 50))
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="min_tz_description_chars noto'g'ri")
-    raw_checker_delay: int | None = None
-    if "checker_delay_seconds" in raw:
-        try:
-            raw_checker_delay = int(raw.get("checker_delay_seconds", 15))
-        except (TypeError, ValueError):
-            raise HTTPException(status_code=400, detail="checker_delay_seconds noto'g'ri")
     try:
         raw_max_skip_comments = int(raw.get("max_skip_check_comments", 5))
     except (TypeError, ValueError):
@@ -460,9 +452,6 @@ async def save_webhook_config(
         raise HTTPException(status_code=400, detail="return_threshold 0-100 oralig'ida bo'lishi kerak")
     if raw_min_tz < 0:
         raise HTTPException(status_code=400, detail="min_tz_description_chars 0 yoki undan katta bo'lishi kerak")
-    if raw_checker_delay is not None and raw_checker_delay <= 0:
-        raise HTTPException(status_code=400, detail="checker_delay_seconds 0 dan katta bo'lishi kerak")
-
     # trigger_statuses yuborilgan bo'lsa, trigger_status_aliases ni ulardan yig'ish
     if not raw_aliases:
         raw_statuses = raw.get("trigger_statuses")
@@ -581,8 +570,7 @@ async def save_webhook_config(
     )
 
     updated_queue = dict(current_queue)
-    if raw_checker_delay is not None:
-        updated_queue.update({"checker_testcase_delay": raw_checker_delay})
+    updated_queue.pop("checker_testcase_delay", None)
 
     def _tc_bool(key: str, default: bool) -> bool:
         if key in raw:
@@ -706,7 +694,6 @@ async def read_system_config(
         "data": {
             "queue_enabled": True,
             "task_wait_timeout": int(queue_settings.task_wait_timeout),
-            "checker_testcase_delay": int(queue_settings.checker_testcase_delay),
             "blocked_retry_delay": int(queue_settings.blocked_retry_delay),
             "gemini_min_interval": int(queue_settings.gemini_min_interval),
             "blocked_check_interval": int(queue_settings.blocked_check_interval),

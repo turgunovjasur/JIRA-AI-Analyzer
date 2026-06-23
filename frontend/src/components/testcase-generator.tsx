@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
 import {
   Activity,
@@ -45,6 +45,7 @@ import {
 import type {
   GeneratedTestCase,
   ModuleRunErrorPayload,
+  ModuleStartStatus,
   TestCaseGenerationResult,
   TestcaseScenario,
   TestcaseRunSnapshot,
@@ -689,6 +690,24 @@ export function TestCaseGenerator({ recentScope }: TestCaseGeneratorProps) {
   const [coverageFilter, setCoverageFilter] = useState<CoverageFilter>("all");
   const [activeRun, setActiveRun] = useState<TestcaseRunSnapshot | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
+  const [startStatus, setStartStatus] = useState<ModuleStartStatus | null>(null);
+
+  // Modul ochilganda (va har run'dan keyin) credential + Gemini kvota holatini olish.
+  const refreshStartStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/testcase/start-status", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = (await res.json()) as ModuleStartStatus;
+      if (data && typeof data === "object" && data.module_key) setStartStatus(data);
+    } catch {
+      /* status olinmasa gating ko'rsatilmaydi (backend baribir bloklaydi). */
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshStartStatus();
+  }, [refreshStartStatus]);
+
   const { recent, addRecent, removeRecent } = useRecentRuns(MODULE_KEY, recentScope);
   const openRunStorageKey = getOpenRunStorageKey(MODULE_KEY, recentScope);
 
@@ -837,6 +856,8 @@ export function TestCaseGenerator({ recentScope }: TestCaseGeneratorProps) {
       setError(message);
     } finally {
       setSubmitting(false);
+      // Run urinishidan keyin Gemini kvota / qolgan urinishni yangilash.
+      void refreshStartStatus();
     }
   }
 
@@ -982,6 +1003,20 @@ export function TestCaseGenerator({ recentScope }: TestCaseGeneratorProps) {
       {result?.status_banner ? <AnalysisStatusBannerView banner={result.status_banner} /> : null}
       {error ? <Notice tone="error">{error}</Notice> : null}
 
+      {startStatus?.message ? (
+        <Notice
+          tone={
+            startStatus.level === "error"
+              ? "error"
+              : startStatus.level === "warning"
+                ? "warning"
+                : "info"
+          }
+        >
+          {startStatus.message}
+        </Notice>
+      ) : null}
+
       {showRunCard ? (
         <section className="grid gap-4">
           <Card
@@ -1010,7 +1045,7 @@ export function TestCaseGenerator({ recentScope }: TestCaseGeneratorProps) {
                 />
               </Field>
 
-              <Button disabled={submitting || runInProgress} fullWidth type="submit">
+              <Button disabled={submitting || runInProgress || Boolean(startStatus?.blocked)} fullWidth type="submit">
                 {submitting || runInProgress ? (
                   <>
                     <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />

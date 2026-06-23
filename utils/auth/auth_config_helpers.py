@@ -39,11 +39,14 @@ def build_company_credentials(
     if not figma_tokens and figma_token:
         figma_tokens = [{"name": "", "token": figma_token}]
     gemini_keys = build_company_gemini_keys(company_settings)
+    gemini_source = "company" if gemini_keys else "none"
     if not gemini_keys:
         global_defaults = get_global_gemini_defaults() or {}
         g1 = (global_defaults.get("api_key_1") or "").strip()
         g2 = (global_defaults.get("api_key_2") or "").strip()
         gemini_keys = [key for key in [g1, g2] if key]
+        if gemini_keys:
+            gemini_source = "global"
     # SaaS qoidasi: Gemini faqat company -> super admin default tartibi bilan olinadi.
     # Env fallback ishlatilmaydi.
     if not jira_email:
@@ -74,6 +77,7 @@ def build_company_credentials(
         "figma_token": figma_token,
         "figma_tokens": figma_tokens,
         "gemini_keys": gemini_keys,
+        "gemini_source": gemini_source,
     }
 
 
@@ -99,11 +103,14 @@ def build_company_webhook_credentials(
     gemini_k1 = (company_settings.get("webhook_gemini_api_key_1") or company_settings.get("gemini_api_key_1") or "").strip()
     gemini_k2 = (company_settings.get("webhook_gemini_api_key_2") or company_settings.get("gemini_api_key_2") or "").strip()
     gemini_keys = [k for k in [gemini_k1, gemini_k2] if k]
+    gemini_source = "company" if gemini_keys else "none"
     if not gemini_keys:
         global_defaults = get_global_gemini_defaults() or {}
         g1 = (global_defaults.get("api_key_1") or "").strip()
         g2 = (global_defaults.get("api_key_2") or "").strip()
         gemini_keys = [key for key in [g1, g2] if key]
+        if gemini_keys:
+            gemini_source = "global"
     # SaaS qoidasi: Gemini faqat company/webhook -> super admin default tartibi bilan olinadi.
     # Env fallback ishlatilmaydi.
     if not jira_email:
@@ -134,6 +141,7 @@ def build_company_webhook_credentials(
         "figma_token": figma_token,
         "figma_tokens": figma_tokens,
         "gemini_keys": gemini_keys,
+        "gemini_source": gemini_source,
     }
 
 
@@ -160,15 +168,20 @@ def build_user_credentials_for_service(
         figma_tokens = [{"name": "", "token": figma_token}]
     gemini_k1 = (user_credentials.get("gemini_api_key_1") or "").strip()
     gemini_k2 = (user_credentials.get("gemini_api_key_2") or "").strip()
+    gemini_source = "user" if (gemini_k1 or gemini_k2) else "none"
 
     if not gemini_k1 and not gemini_k2:
         gemini_k1 = (company_settings.get("gemini_api_key_1") or "").strip()
         gemini_k2 = (company_settings.get("gemini_api_key_2") or "").strip()
+        if gemini_k1 or gemini_k2:
+            gemini_source = "company"
 
     if not gemini_k1 and not gemini_k2:
         glb = get_global_gemini_defaults() or {}
         gemini_k1 = (glb.get("api_key_1") or "").strip()
         gemini_k2 = (glb.get("api_key_2") or "").strip()
+        if gemini_k1 or gemini_k2:
+            gemini_source = "global"
 
     missing = []
     if not jira_server:
@@ -202,7 +215,47 @@ def build_user_credentials_for_service(
         "figma_token": figma_token,
         "figma_tokens": figma_tokens,
         "gemini_keys": [k for k in [gemini_k1, gemini_k2] if k],
+        "gemini_source": gemini_source,
     }
+
+
+def compute_credential_readiness(
+    *,
+    company_settings: Dict,
+    user_credentials: Dict | None,
+    global_defaults: Dict,
+) -> Dict:
+    """Credential mavjudligini RAISE qilmasdan aniqlash (UI banner + preflight uchun).
+
+    Qaytaradi: {jira_ok, github_ok, gemini_source}.
+    gemini_source: "user" | "company" | "global" | "none" — kim ishlatyapti.
+    JIRA/GitHub kompaniya sozlamasidan (SaaS qoidasi). Bu funksiya hech qachon
+    exception ko'tarmaydi — credential to'liq bo'lmasa ham UI holatni ko'rsatadi.
+    """
+    cs = company_settings or {}
+    uc = user_credentials or {}
+    gd = global_defaults or {}
+
+    jira_ok = bool(
+        (cs.get("jira_server") or "").strip()
+        and (cs.get("jira_email") or "").strip()
+        and (cs.get("jira_token") or "").strip()
+    )
+    github_ok = bool(
+        (cs.get("github_token") or "").strip()
+        and (cs.get("github_org") or "").strip()
+    )
+
+    if (uc.get("gemini_api_key_1") or "").strip() or (uc.get("gemini_api_key_2") or "").strip():
+        gemini_source = "user"
+    elif (cs.get("gemini_api_key_1") or "").strip() or (cs.get("gemini_api_key_2") or "").strip():
+        gemini_source = "company"
+    elif (gd.get("api_key_1") or "").strip() or (gd.get("api_key_2") or "").strip():
+        gemini_source = "global"
+    else:
+        gemini_source = "none"
+
+    return {"jira_ok": jira_ok, "github_ok": github_ok, "gemini_source": gemini_source}
 
 
 def build_company_webhook_config(company_settings: Dict) -> Dict:

@@ -9,7 +9,7 @@ from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from core.module_start_preflight import run_start_preflight
+from core.module_start_preflight import run_start_preflight, get_module_start_status
 from services.generators.testcase_run import create_testcase_run, execute_testcase_run
 from services.api.session_scope import load_api_session, require_customer_scope
 from utils.database.analysis_run_db import get_analysis_run_snapshot
@@ -86,12 +86,46 @@ async def create_testcase_run_endpoint(
         else:
             background_tasks.add_task(execute_testcase_run, run_id)
 
-        snapshot = get_analysis_run_snapshot(run_id)
-        return snapshot or run
+        # Global (QA ASSISTANT) kalit ishlatilgan bo'lsa — bepul kvotani +1.
+        preflight_quota = getattr(preflight, "quota", None)
+        updated_quota = preflight_quota
+        if preflight_quota and preflight_quota.get("using_global") and company_id is not None:
+            try:
+                from utils.database.quota_db import increment_global_quota
+                updated_quota = increment_global_quota(int(company_id), "testcase_generator")
+                updated_quota["using_global"] = True
+            except Exception:
+                pass
+
+        snapshot = get_analysis_run_snapshot(run_id) or run
+        if isinstance(snapshot, dict) and updated_quota is not None:
+            snapshot["gemini_quota"] = updated_quota
+        return snapshot
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Testcase run create error: {exc}") from exc
+
+
+@router.get("/start-status")
+async def testcase_start_status(
+    user_id: int | None = None,
+    company_id: int | None = None,
+    x_session_id: str | None = Header(default=None, alias="X-Session-ID"),
+):
+    """Modul ochilganda credential + Gemini kvota holati (run'dan oldin banner uchun)."""
+    try:
+        session = load_api_session(x_session_id, allowed_roles={"super_admin", "company_admin", "user"})
+        resolved_user_id, resolved_company_id = require_customer_scope(session, user_id, company_id)
+        return get_module_start_status(
+            module_key="testcase_generator",
+            company_id=resolved_company_id,
+            user_id=resolved_user_id,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Testcase start-status error: {exc}") from exc
 
 
 @router.get("/runs/{run_id}")

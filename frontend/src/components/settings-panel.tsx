@@ -60,7 +60,6 @@ type SettingsFormState = {
 type WebhookFormState = {
   auto_return_enabled: boolean;
   allowed_issue_types: string;
-  checker_delay_seconds: string;
   excluded_assignees: string;
   max_skip_check_comments: string;
   min_tz_description_chars: string;
@@ -151,7 +150,6 @@ const EMPTY_FORM: SettingsFormState = {
 const EMPTY_WEBHOOK_FORM: WebhookFormState = {
   auto_return_enabled: false,
   allowed_issue_types: "",
-  checker_delay_seconds: "15",
   excluded_assignees: "",
   max_skip_check_comments: "5",
   min_tz_description_chars: "50",
@@ -460,7 +458,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                 data?: {
                   auto_return_enabled?: boolean;
                   allowed_issue_types?: string;
-                  checker_delay_seconds?: number;
                   excluded_assignees?: string;
                   max_skip_check_comments?: number;
                   min_tz_description_chars?: number;
@@ -515,7 +512,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
             setWebhookForm({
               auto_return_enabled: Boolean(data.auto_return_enabled),
               allowed_issue_types: String(data.allowed_issue_types || ""),
-              checker_delay_seconds: String(data.checker_delay_seconds ?? 15),
               excluded_assignees: String(data.excluded_assignees || ""),
               max_skip_check_comments: String(data.max_skip_check_comments ?? 5),
               min_tz_description_chars: String(data.min_tz_description_chars ?? 50),
@@ -561,7 +557,6 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
             setWebhookBaseline({
               auto_return_enabled: Boolean(data.auto_return_enabled),
               allowed_issue_types: String(data.allowed_issue_types || ""),
-              checker_delay_seconds: String(data.checker_delay_seconds ?? 15),
               excluded_assignees: String(data.excluded_assignees || ""),
               max_skip_check_comments: String(data.max_skip_check_comments ?? 5),
               min_tz_description_chars: String(data.min_tz_description_chars ?? 50),

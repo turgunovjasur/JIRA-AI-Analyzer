@@ -13,10 +13,10 @@ Muammo:
 Yechim:
   - Global asyncio.Lock — bir vaqtda faqat bitta task AI ishlatadi
   - _wait_for_ai_slot() — so'rovlar orasida minimal interval
-  - Task-level lock: Service1 → delay → Service2 (bitta lock ichida)
+  - Task-level lock: Service1 → Service2 (bitta lock ichida)
 
 Ish tartibi (har doim bir xil):
-  Service1 (TZ-PR) tugaydi → checker_testcase_delay → Service2 (Testcase)
+  Service1 (TZ-PR) tugaydi → Service2 (Testcase)
 """
 import asyncio
 import time
@@ -108,10 +108,9 @@ async def _run_task_group(
     Oqim:
     1. Lock olish (timeout: task_wait_timeout sekund)
     2. _wait_for_ai_slot() → Service1 chaqruvi
-    3. checker_testcase_delay sekund kutish
-    4. DB'dan Service1 natijasini o'qish (score, status)
-    5. Score OK va task returned emas → _wait_for_ai_slot() → Service2 chaqruvi
-    6. Lock release (finally blokida)
+    3. DB'dan Service1 natijasini o'qish (score, status)
+    4. Score OK va task returned emas → _wait_for_ai_slot() → Service2 chaqruvi
+    5. Lock release (finally blokida)
 
     Service2 ishlamaydigan hollar:
     - service1_status 'done' | 'skip' emas (xato yuz bergan)
@@ -134,6 +133,7 @@ async def _run_task_group(
 
     if not queue_settings.queue_enabled:
         # Queue o'chirilgan: lock siz ketma-ket chaqruv
+        await _wait_for_ai_slot(task_key, company_id=company_id, min_interval=queue_settings.gemini_min_interval)
         await check_tz_pr_and_comment(
             task_key=task_key,
             new_status=new_status,
@@ -143,15 +143,12 @@ async def _run_task_group(
 
         task_db = get_task(task_key, company_id=company_id)
         if task_db and _can_run_service2(task_db, app_settings):
-            delay = queue_settings.checker_testcase_delay
-            if delay > 0:
-                await asyncio.sleep(delay)
+            await _wait_for_ai_slot(task_key, company_id=company_id, min_interval=queue_settings.gemini_min_interval)
             await _run_testcase_generation(task_key=task_key, new_status=new_status, company_id=company_id)
         return
 
     lock = _get_ai_queue_lock(company_id)
     timeout = queue_settings.task_wait_timeout
-    delay = queue_settings.checker_testcase_delay
     retry_minutes = queue_settings.blocked_retry_delay
 
     try:
@@ -171,10 +168,6 @@ async def _run_task_group(
             company_id=company_id,
             task_details=task_details,
         )
-
-        # Service1 → Service2 orasidagi kutish
-        if delay > 0:
-            await asyncio.sleep(delay)
 
         # Service2 — faqat shartlar bajarilsa
         task_db = get_task(task_key, company_id=company_id)

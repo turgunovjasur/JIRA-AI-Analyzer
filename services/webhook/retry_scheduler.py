@@ -130,18 +130,12 @@ async def _retry_blocked_task(task_id: str, company_id: Optional[int] = None) ->
                     'block_reason': None
                 }, company_id=company_id)
 
-                # Service1 va Service2 orasida delay
-                if need_service1:
-                    app_settings = get_app_settings(force_reload=False)
-                    delay = app_settings.queue.checker_testcase_delay
-                    if delay > 0:
-                        await asyncio.sleep(delay)
-
                 from services.webhook.queue_manager import _wait_for_ai_slot
                 from services.webhook.service_runner import _run_testcase_generation
 
                 log.service_running(task_id, "service_2")
-                await _wait_for_ai_slot(task_id, company_id=company_id)
+                app_settings = get_app_settings(force_reload=False)
+                await _wait_for_ai_slot(task_id, company_id=company_id, min_interval=app_settings.queue.gemini_min_interval)
                 await _run_testcase_generation(task_key=task_id, new_status=last_jira_status, company_id=company_id)
 
         # Ikkala servis ham done bo'lsa — retry kerak emas
