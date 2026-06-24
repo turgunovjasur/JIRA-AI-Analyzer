@@ -21,6 +21,9 @@ from typing import Any
 from config.app_settings import get_app_settings, TZPRCheckerSettings
 from core.logger import get_logger
 from core.constants import WARN_LOW_SCORE, WARN_AI_TIMEOUT, ERR_UNKNOWN, RECHECK_REASONS
+from core.setup_checks.checks import CHECK_REGISTRY
+from core.setup_checks.engine import SetupContext, run_setup_checks
+from core.setup_checks.profiles import CHECK_PROFILES
 from utils.database.task_db import (
     get_task, mark_returned, mark_returned_pr_not_merged,
     set_service1_done, set_service1_error, set_service1_blocked,
@@ -30,6 +33,30 @@ from utils.database.task_db import (
 from services.webhook.error_handler import _error_type_to_reason_code
 
 log = get_logger("webhook.service_runner")
+
+
+def _log_service2_guard_failure(task_key: str, detail: str, meta: dict[str, Any] | None = None) -> None:
+    meta = meta or {}
+    if detail == "task_not_found":
+        log.warning(f"[{task_key}] Task DB'da topilmadi, Service2 skip")
+    elif detail.startswith("service1_not_ready"):
+        service1_status = meta.get("service1_status") or detail.split(":", 1)[-1]
+        log.info(f"[{task_key}] SKIP -> service_2 kutmoqda, service_1 hali tugamagan (s1={service1_status})")
+    elif detail == "service1_error_not_pending":
+        log.info(f"[{task_key}] SKIP -> service_1 xato bilan tugagan, service_2 ishlamaydi")
+    elif detail == "service2_done":
+        log.info(f"[{task_key}] SKIP -> service_2 allaqachon bajarilgan, qayta ishlanmaydi")
+    elif detail == "company_missing":
+        log.error(f"[{task_key}] company_id yo'q — service_2 ishga tushmaydi")
+    elif detail == "score_below_threshold":
+        log.info(
+            f"[{task_key}] SKIP -> score past "
+            f"({meta.get('compliance_score')}% < {meta.get('threshold')}%), testcase yaratilmaydi"
+        )
+    elif detail == "task_returned":
+        log.info(f"[{task_key}] SKIP -> task qaytarilgan holatda, testcase yaratilmaydi")
+    else:
+        log.info(f"[{task_key}] SKIP -> service_2 guard: {detail}")
 
 
 async def check_tz_pr_and_comment(
@@ -278,47 +305,28 @@ async def _run_testcase_generation(task_key: str, new_status: str, company_id: i
         log.info(f"[{task_key}] service_2 running | status={new_status}")
 
         task_db = get_task(task_key, company_id=company_id)
-        if not task_db:
-            log.warning(f"[{task_key}] Task DB'da topilmadi, Service2 skip")
-            return
-
-        service1_status = task_db.get('service1_status', 'pending')
-        service2_status = task_db.get('service2_status', 'pending')
-        compliance_score = task_db.get('compliance_score')
-        task_status = task_db.get('task_status', 'none')
-
-        # Service1 tayyor bo'lishi kerak
-        if service1_status not in ('done', 'skip', 'error'):
-            log.info(f"[{task_key}] SKIP -> service_2 kutmoqda, service_1 hali tugamagan (s1={service1_status})")
-            return
-
-        # service1=error holatida faqat service2=pending bo'lsa ishlaydi (TZ-only)
-        if service1_status == 'error' and service2_status != 'pending':
-            log.info(f"[{task_key}] SKIP -> service_1 xato bilan tugagan, service_2 ishlamaydi")
-            return
-
-        # Service2 allaqachon bajarilgan
-        if service2_status == 'done':
-            log.info(f"[{task_key}] SKIP -> service_2 allaqachon bajarilgan, qayta ishlanmaydi")
-            return
-
-        if company_id is None:
-            log.error(f"[{task_key}] company_id yo'q — service_2 ishga tushmaydi")
-            return
 
         from config.app_settings import get_app_settings_for_company
-        app_settings = get_app_settings_for_company(company_id)
+        app_settings = get_app_settings_for_company(company_id) if company_id is not None else None
+        if app_settings is None:
+            _log_service2_guard_failure(task_key, "company_missing")
+            return
         settings = app_settings.webhook_tz_pr
-        tc_settings = app_settings.webhook_testcase
         threshold = settings.return_threshold
 
-        if compliance_score is not None and compliance_score < threshold:
-            log.info(f"[{task_key}] SKIP -> score past ({compliance_score}% < {threshold}%), testcase yaratilmaydi")
-            return
-
-        # Task qaytarilgan bo'lsa Service2 ishlamaydi
-        if task_status == 'returned':
-            log.info(f"[{task_key}] SKIP -> task qaytarilgan holatda, testcase yaratilmaydi")
+        guard_ctx = SetupContext(
+            task_key=task_key,
+            source="webhook",
+            module_key="testcase_generator",
+            service_key="service_2",
+            company_id=company_id,
+            task_db=task_db,
+            threshold=threshold,
+        )
+        guard_ctx = run_setup_checks(CHECK_PROFILES["webhook_service2_guard"], guard_ctx, CHECK_REGISTRY)
+        guard_result = guard_ctx.results[-1] if guard_ctx.results else None
+        if guard_result is not None and guard_result.status == "fail":
+            _log_service2_guard_failure(task_key, guard_result.detail, guard_result.meta)
             return
 
         # Testcase generation ishga tushirish

@@ -39,7 +39,7 @@ def test_create_tzpr_run_endpoint_returns_snapshot(monkeypatch):
     monkeypatch.setattr(tzpr_api, "require_customer_scope", lambda *args, **kwargs: (77, 7))
     monkeypatch.setattr(tzpr_api, "create_multi_agent_run", lambda **kwargs: snapshot)
     monkeypatch.setattr(tzpr_api, "get_checker_run_snapshot", lambda run_id: snapshot)
-    monkeypatch.setattr(tzpr_api, "execute_multi_agent_run", lambda run_id: None)
+    monkeypatch.setattr(tzpr_api, "execute_multi_agent_run", lambda run_id, **_kwargs: None)
     monkeypatch.setattr(tzpr_api, "_worker_queue_enabled", lambda: False)
     monkeypatch.setattr(
         tzpr_api,

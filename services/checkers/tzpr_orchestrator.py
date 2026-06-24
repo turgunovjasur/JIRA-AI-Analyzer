@@ -5,6 +5,9 @@ from typing import Any
 
 from core import CommentSeparator, PRNotMergedError, RECHECK_REASONS
 from core.logger import get_logger
+from core.setup_checks.checks import CHECK_REGISTRY
+from core.setup_checks.engine import SetupContext, run_setup_checks
+from core.setup_checks.profiles import CHECK_PROFILES
 from services.checkers.tzpr_constants import (
     PRO_MODEL_NAME,
     execution_mode_display_label as _execution_mode_display_label,
@@ -160,15 +163,28 @@ class _TZPRMultiAgentExecutor(AgentRunnerMixin, ResultBuilderMixin, RunStateMixi
         else:
             task_details = None
 
-        if task_details is not None:
-            status_updater("info", "JIRA task ma'lumotlari webhook snapshotdan olindi")
-        else:
-            task_details = self.service._get_task_details(
-                self.task_key,
-                status_updater,
-                include_pr_urls=True,
-                include_figma_links=figma_lookup_enabled,
-            )
+        min_tz = self.service._get_settings().min_tz_description_chars
+        setup_ctx = SetupContext(
+            task_key=self.task_key,
+            source=str((self.snapshot.get("source") or "") or "manual"),
+            module_key="tz_pr_checker",
+            service_key="service_1" if self.user_id is None else "",
+            service=self.service,
+            company_id=self.company_id,
+            user_id=self.user_id,
+            task_details=task_details,
+            min_tz_chars=int(min_tz or 0),
+            read_comments_enabled=bool(effective_settings.get("read_comments_enabled", True)),
+            max_comments_to_read=int(effective_settings.get("max_comments_to_read") or 0),
+            figma_enabled=figma_lookup_enabled,
+            include_pr_urls=True,
+            include_figma_links=figma_lookup_enabled,
+            use_smart_patch=bool(effective_use_smart_patch),
+            exclude_ai_comments=True,
+            update_status=status_updater,
+        )
+        setup_ctx = run_setup_checks(CHECK_PROFILES["checker_engine"], setup_ctx, CHECK_REGISTRY)
+        task_details = setup_ctx.task_details
         if not task_details:
             result = self.service._create_error_result(
                 self.task_key,
@@ -180,17 +196,11 @@ class _TZPRMultiAgentExecutor(AgentRunnerMixin, ResultBuilderMixin, RunStateMixi
             result.run_state = "blocked"
             return {"error_result": result}
 
-        try:
-            pr_info = self.service._get_pr_info(
-                self.task_key,
-                task_details,
-                status_updater,
-                effective_use_smart_patch,
-            )
-        except PRNotMergedError as exc:
+        pr_error = setup_ctx.errors.get("pr_check")
+        if isinstance(pr_error, PRNotMergedError):
             result = self.service._create_error_result(
                 self.task_key,
-                str(exc),
+                str(pr_error),
                 task_summary=task_details.get("summary") or "",
                 effective_settings=effective_settings,
             )
@@ -199,7 +209,8 @@ class _TZPRMultiAgentExecutor(AgentRunnerMixin, ResultBuilderMixin, RunStateMixi
             result.run_state = "blocked"
             return {"error_result": result}
 
-        if not pr_info:
+        pr_info = setup_ctx.pr_info
+        if setup_ctx.failed("pr_check") or not pr_info:
             result = self.service._create_error_result(
                 self.task_key,
                 "Bu task uchun PR topilmadi (JIRA va GitHub'da)",
@@ -212,15 +223,26 @@ class _TZPRMultiAgentExecutor(AgentRunnerMixin, ResultBuilderMixin, RunStateMixi
             result.run_state = "blocked"
             return {"error_result": result}
 
-        min_tz = self.service._get_settings().min_tz_description_chars
-        if min_tz > 0 and self.service._is_tz_too_short(task_details, min_tz):
-            actual_chars = self.service._get_tz_length_chars(task_details)
+        if setup_ctx.failed("min_tz_check"):
+            actual_chars = setup_ctx.tz_chars
             result = self.service._create_error_result(
                 self.task_key,
                 (
                     f"TZ yetarli emas. (description: {actual_chars} belgi, "
                     f"min: {min_tz} belgi). {_execution_mode_display_label(self.execution_mode)} checker to'xtatildi."
                 ),
+                task_summary=task_details.get("summary") or "",
+                effective_settings=effective_settings,
+            )
+            result.execution_mode = self.execution_mode
+            result.run_id = self.run_id
+            result.run_state = "blocked"
+            return {"error_result": result}
+
+        if setup_ctx.failed("tz_build"):
+            result = self.service._create_error_result(
+                self.task_key,
+                setup_ctx.detail("tz_build") or "TZ content tayyorlanmadi.",
                 task_summary=task_details.get("summary") or "",
                 effective_settings=effective_settings,
             )
@@ -240,9 +262,10 @@ class _TZPRMultiAgentExecutor(AgentRunnerMixin, ResultBuilderMixin, RunStateMixi
         except Exception:
             db_task = {}
 
-        tz_content, comment_analysis = self.service._get_tz_content(task_details, status_updater)
+        tz_content = setup_ctx.tz_content
+        comment_analysis = setup_ctx.comment_analysis
         comment_separated = CommentSeparator.separate(task_details.get("comments", []))
-        figma_data = self.service._get_figma_data(task_details, status_updater)
+        figma_data = setup_ctx.figma_data
         agent1_rules = _agent1_rules_from_effective_settings(effective_settings)
         # Agent1 (scope) endi commentlardan foydalanmaydi — dev commentlar faqat Agent3 ga beriladi.
         agent1_input = _build_agent1_sanitized_input(
