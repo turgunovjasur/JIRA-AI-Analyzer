@@ -218,7 +218,7 @@ class _TZPRMultiAgentExecutor(AgentRunnerMixin, ResultBuilderMixin, RunStateMixi
             result = self.service._create_error_result(
                 self.task_key,
                 (
-                    f"TZ yetarli emas. (summary + description: {actual_chars} belgi, "
+                    f"TZ yetarli emas. (description: {actual_chars} belgi, "
                     f"min: {min_tz} belgi). {_execution_mode_display_label(self.execution_mode)} checker to'xtatildi."
                 ),
                 task_summary=task_details.get("summary") or "",

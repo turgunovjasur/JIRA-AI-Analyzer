@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 
 import { callInternalRpc } from "@/lib/backend";
-import { PAID_ADDON_MODULE_KEYS } from "@/lib/product-catalog";
+import { BASE_PLAN_MODULE_KEYS, SUPER_ADMIN_MANAGED_MODULE_KEYS } from "@/lib/product-catalog";
 import type { CompanyModules } from "@/lib/types";
 
 import { requireSuperAdminSession } from "../_helpers";
@@ -98,12 +98,17 @@ export async function POST(request: Request) {
       );
     }
 
-    const enabledModules = Object.fromEntries(
-      PAID_ADDON_MODULE_KEYS.map((moduleKey) => [
-        moduleKey,
-        Boolean(payload?.enabled_modules?.[moduleKey]),
-      ]),
-    );
+    const baseModuleKeys = BASE_PLAN_MODULE_KEYS as readonly string[];
+    const enabledModules: Record<string, boolean> = {};
+    for (const moduleKey of SUPER_ADMIN_MANAGED_MODULE_KEYS) {
+      const sent = payload?.enabled_modules?.[moduleKey];
+      // Asosiy modullar default yoqiq; webhook va servislar default o'chiq.
+      enabledModules[moduleKey] = sent === undefined ? baseModuleKeys.includes(moduleKey) : Boolean(sent);
+    }
+    if (!enabledModules.webhook) {
+      enabledModules.webhook_service1 = false;
+      enabledModules.webhook_service2 = false;
+    }
 
     const company = await callInternalRpc<CompanyCreateResult | null>("create_company", [
       companyCode,

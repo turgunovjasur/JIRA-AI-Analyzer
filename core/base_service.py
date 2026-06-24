@@ -52,6 +52,8 @@ class BaseService:
     - AI configuration limits
     """
 
+    _require_github: bool = True  # subclass'larda False qilib o'chirish mumkin
+
     def __init__(self, company_id: int = None, user_id: int = None):
         """Initialize service with lazy loading.
 
@@ -78,10 +80,14 @@ class BaseService:
         if self._cached_creds is None:
             if self._user_id is not None:
                 from utils.auth.auth_db import get_user_credentials_for_service
-                self._cached_creds = get_user_credentials_for_service(self._user_id)
+                self._cached_creds = get_user_credentials_for_service(
+                    self._user_id, require_github=self._require_github
+                )
             elif self._company_id is not None:
                 from utils.auth.auth_db import get_company_webhook_credentials
-                self._cached_creds = get_company_webhook_credentials(self._company_id)
+                self._cached_creds = get_company_webhook_credentials(
+                    self._company_id, require_github=self._require_github
+                )
             else:
                 raise RuntimeError(
                     "BaseService: user_id yoki company_id ko'rsatilmagan. "

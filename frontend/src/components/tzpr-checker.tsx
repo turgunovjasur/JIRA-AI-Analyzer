@@ -1167,7 +1167,7 @@ export function TZPRChecker({ recentScope }: TZPRCheckerProps) {
                   autoFocus={showRunCard}
                   className="font-mono text-base"
                   onChange={(event) => setTaskKey(event.target.value.toUpperCase())}
-                  placeholder="DEV-1234"
+                  placeholder="1234 yoki DEV-1234"
                   value={taskKey}
                 />
               </Field>

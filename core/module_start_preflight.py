@@ -104,11 +104,6 @@ def run_start_preflight(
             module_key=module_key, user_id=user_id, company_id=company_id, source=source,
         )
         checks.append(cred_check)
-        checks.extend(_check_agent_primary_models(
-            module_key=module_key,
-            user_id=user_id,
-            company_id=company_id,
-        ))
         # Global (QA ASSISTANT) kalit kvotasi — faqat credential OK va manba "global" bo'lsa.
         if (
             cred_check.status != "fail"
@@ -274,7 +269,7 @@ def _resolve_credentials(
                     id="api_credentials", label="API credentials", status="fail",
                     code="CONFIG_API_CREDENTIALS_MISSING",
                     message="Testcase moduli ishlashi uchun Jira malumotlarini kiriting!",
-                    action="Sozlamalar → API Kalitlar: JIRA Server, Email va API Token kiriting.",
+                    action="Sozlamalar → API Kalitlar: JIRA Server, Email, API Token va Project Key kiriting.",
                     blocking=True,
                 ),
                 readiness,
@@ -286,7 +281,7 @@ def _resolve_credentials(
                     id="api_credentials", label="API credentials", status="fail",
                     code="CONFIG_API_CREDENTIALS_MISSING",
                     message="Checker ishlashi uchun jira va github malumotlarini kiriting",
-                    action="Sozlamalar → API Kalitlar: JIRA va GitHub ma'lumotlarini kiriting.",
+                    action="Sozlamalar → API Kalitlar: JIRA Project Key, JIRA va GitHub ma'lumotlarini kiriting.",
                     blocking=True,
                 ),
                 readiness,

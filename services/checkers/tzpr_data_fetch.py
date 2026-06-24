@@ -98,16 +98,14 @@ class DataFetchMixin:
         return tz_content, comment_analysis
 
     def _is_tz_too_short(self, task_details: Dict, min_chars: int) -> bool:
-        """TZ (summary + description) belgilangan minimal uzunlikdan qisqami aniqlash."""
+        """TZ description belgilangan minimal uzunlikdan qisqami aniqlash."""
         return self._get_tz_length_chars(task_details) < min_chars
 
     @staticmethod
     def _get_tz_length_chars(task_details: Dict[str, Any]) -> int:
-        """TZ mazmunini summary + description asosida hisoblash."""
-        summary = str(task_details.get("summary") or "").strip()
+        """TZ mazmunini description asosida hisoblash."""
         description = str(task_details.get("description") or "").strip()
-        content = "\n".join(part for part in (summary, description) if part).strip()
-        return len(content)
+        return len(description)
 
     def _get_pr_info(self, task_key: str, task_details: Dict, update_status, use_smart_patch):
         """PR ma'lumotlarini olish va cache ga saqlash"""

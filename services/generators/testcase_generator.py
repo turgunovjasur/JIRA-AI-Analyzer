@@ -122,6 +122,8 @@ class TestCaseGeneratorService(BaseService):
     - PR ISHLATILMAYDI (manbalar: TZ + Agent1 requirements + Figma)
     """
 
+    _require_github = False  # testcase GitHub ishlatmaydi
+
     def __init__(self, company_id: int = None, user_id: int = None):
         """Initialize service.
         UI modullar: user_id bilan yarating (user_credentials ishlatadi).

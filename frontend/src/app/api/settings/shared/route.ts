@@ -48,11 +48,12 @@ function maskedFigmaTokens(raw: Record<string, unknown>): Array<{ name: string; 
 }
 
 function buildIntegrationStatus(raw: Record<string, unknown>) {
+  const jiraProjectKeys = textValue(raw.jira_project_keys);
   return {
     jira:
       hasSecret(raw.jira_token) &&
       Boolean(textValue(raw.jira_email)) &&
-      Boolean(textValue(raw.jira_project_keys)),
+      Boolean(jiraProjectKeys),
     github: hasSecret(raw.github_token) && Boolean(textValue(raw.github_org)),
     figma:
       hasSecret(raw.figma_token) ||

@@ -67,12 +67,24 @@ def create_multi_agent_run(
     )
 
 
-def execute_multi_agent_run(run_id: str) -> dict[str, Any] | None:
+def execute_multi_agent_run(run_id: str, *, increment_quota: bool = False) -> dict[str, Any] | None:
     snapshot = get_checker_run_snapshot(run_id)
     if not snapshot:
         raise RuntimeError(f"Checker run topilmadi: {run_id}")
     executor = _TZPRMultiAgentExecutor(snapshot)
-    return executor.run()
+    result = executor.run()
+    if increment_quota and (result or {}).get("run_state") == "completed":
+        company_id = snapshot.get("company_id")
+        if company_id is not None:
+            try:
+                from utils.database.quota_db import increment_global_quota
+                import logging as _log
+                q = increment_global_quota(int(company_id), "tz_pr_checker")
+                _log.getLogger(__name__).info("quota incremented [tz_pr_checker] company=%s remaining=%s", company_id, q.get("remaining"))
+            except Exception:
+                import logging as _log
+                _log.getLogger(__name__).warning("increment_global_quota failed silently [tz_pr_checker]")
+    return result
 
 
 def run_multi_agent_for_webhook(run_id: str):

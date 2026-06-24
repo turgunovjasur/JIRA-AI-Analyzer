@@ -593,10 +593,14 @@ def upsert_company_settings(
     if not filtered_settings:
         return False
 
+    conn = None
     try:
         conn = get_conn()
         payload = dict(filtered_settings)
         normalized_project_keys: List[str] | None = None
+        if 'jira_project_keys' in payload:
+            normalized_keys = project_key_normalizer(str(payload['jira_project_keys']))
+            payload['jira_project_keys'] = ', '.join(normalized_keys)
         if 'webhook_project_keys' in payload:
             normalized_keys = project_key_normalizer(str(payload['webhook_project_keys']))
             payload['webhook_project_keys'] = ', '.join(normalized_keys)
@@ -807,7 +811,24 @@ def upsert_company_settings(
         conn.commit()
         conn.close()
         return True
-    except Exception:
+    except Exception as exc:
+        log.error(
+            "company settings save failed | "
+            f"company_id={company_id} | "
+            f"keys={sorted(str(key) for key in filtered_settings.keys())} | "
+            f"err={exc}",
+            exc_info=True,
+        )
+        try:
+            if conn is not None:
+                conn.rollback()
+        except Exception:
+            pass
+        try:
+            if conn is not None:
+                conn.close()
+        except Exception:
+            pass
         return False
 
 
@@ -819,46 +840,20 @@ def fetch_company_by_project_key(
     try:
         conn = get_conn()
         key_upper = project_key.strip().upper()
-        if _table_exists(conn, "company_webhook_project_keys"):
-            registry_rows = execute(
-                conn,
-                """
-                SELECT c.*, w.project_key AS webhook_project_keys
-                FROM companies c
-                JOIN company_webhook_project_keys w ON w.company_id = c.id
-                WHERE c.is_active = TRUE
-                  AND w.project_key = ?
-                """,
-                [key_upper],
-            ).fetchall()
-            if len(registry_rows) == 1:
-                row_dict = row_to_dict(registry_rows[0])
-                conn.close()
-                return row_dict
-            if len(registry_rows) > 1:
-                conn.close()
-                return None
-
         if _table_exists(conn, "company_settings"):
             rows = execute(conn, """
-                SELECT c.*, cs.webhook_project_keys FROM companies c
+                SELECT c.*, cs.jira_project_keys FROM companies c
                 JOIN company_settings cs ON cs.company_id = c.id
                 WHERE c.is_active = TRUE
-                  AND cs.webhook_project_keys != ''
+                  AND cs.jira_project_keys != ''
             """).fetchall()
         else:
-            rows = execute(conn, """
-                SELECT c.*, ws.project_keys AS webhook_project_keys
-                FROM companies c
-                JOIN company_webhook_settings ws ON ws.company_id = c.id
-                WHERE c.is_active = TRUE
-                  AND ws.project_keys != ''
-            """).fetchall()
+            rows = []
         conn.close()
         matches = []
         for row in rows:
             row_dict = row_to_dict(row)
-            keys = project_key_normalizer(row_dict['webhook_project_keys'])
+            keys = project_key_normalizer(row_dict.get("jira_project_keys") or "")
             if key_upper in keys:
                 matches.append(row_dict)
         if len(matches) == 1:

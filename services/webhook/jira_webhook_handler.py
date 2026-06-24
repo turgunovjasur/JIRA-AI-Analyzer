@@ -491,9 +491,14 @@ async def _jira_webhook_impl(
 
         # Webhook moduli kompaniyaga yoqilganmi? (super-admin boshqaradi)
         from utils.auth.auth_db import get_effective_company_modules
-        if not get_effective_company_modules(company_id).get('webhook', False):
+        _eff_modules = get_effective_company_modules(company_id)
+        if not _eff_modules.get('webhook', False):
             log.info(f"[{task_key}] SKIP -> webhook moduli yoqilmagan (company_id={company_id})")
             return {"status": "ignored", "reason": "webhook_module_disabled"}
+
+        # Webhook servislari super-admin tomonidan alohida yoqib-o'chiriladi.
+        service1_enabled = bool(_eff_modules.get('webhook_service1', False))
+        service2_enabled = bool(_eff_modules.get('webhook_service2', False))
 
         # Yangi status trigger status'lardan birimi?
         settings = app_settings.webhook_tz_pr
@@ -602,13 +607,13 @@ async def _jira_webhook_impl(
                     "task_status": task_status
                 }
 
-        # AI_SKIP kodi tekshiruvi
+        # AI_SKIP kodi tekshiruvi — faqat Servis-1 yoqilgan bo'lsa ma'noga ega.
         skip_code = settings.skip_code.strip() if settings.skip_code else ""
         skip_detected = False
         prefetched_task_details = None
         _creds = None
         _skip_writer = None
-        if skip_code:
+        if skip_code and service1_enabled:
             try:
                 from utils.auth.auth_db import get_company_webhook_credentials
                 from utils.jira.jira_client import JiraClient
@@ -651,8 +656,8 @@ async def _jira_webhook_impl(
             if _skip_writer is not None:
                 await _write_skip_notification(task_key, settings, _skip_writer, adf_formatter)
 
-            # Service2 faqat testcase trigger status bo'lsa ishlaydi
-            testcase_should_run = is_testcase_trigger_status(new_status, app_settings)
+            # Service2 faqat testcase trigger status va servis yoqilgan bo'lsa ishlaydi
+            testcase_should_run = is_testcase_trigger_status(new_status, app_settings) and service2_enabled
             if testcase_should_run:
                 if _worker_queue_enabled():
                     _queue_job(
@@ -677,10 +682,12 @@ async def _jira_webhook_impl(
                 "running_tasks": ["testcase"] if testcase_should_run else []
             }
 
-        # Background task'lar: har doim Service1 → delay → Service2
-        testcase_should_run = is_testcase_trigger_status(new_status, app_settings)
+        # Background task'lar — yoqilgan servislarga qarab tarmoqlanadi.
+        # Servislar super-admin tomonidan alohida yoqib-o'chiriladi (webhook_service1/2).
+        testcase_should_run = is_testcase_trigger_status(new_status, app_settings) and service2_enabled
 
-        if testcase_should_run:
+        if service1_enabled and testcase_should_run:
+            # Ikkalasi: Service1 → delay → Service2 (bitta lock ichida)
             if _worker_queue_enabled():
                 _queue_job(
                     job_type="run_task_group",
@@ -691,12 +698,12 @@ async def _jira_webhook_impl(
                     dedupe_key=f"group:{company_id}:{task_key}",
                 )
             else:
-                # Service1 + Service2 bitta lock ichida (Service1 tugagach Service2)
                 background_tasks.add_task(
                     _run_task_group, task_key=task_key, new_status=new_status, company_id=company_id,
                     task_details=prefetched_task_details
                 )
-        else:
+        elif service1_enabled:
+            # Faqat Service1 (Service2 o'chirilgan yoki trigger status emas)
             if _worker_queue_enabled():
                 _queue_job(
                     job_type="run_checker_only",
@@ -707,11 +714,31 @@ async def _jira_webhook_impl(
                     dedupe_key=f"checker:{company_id}:{task_key}",
                 )
             else:
-                # Faqat Service1
                 background_tasks.add_task(
                     _queued_check_tz_pr, task_key=task_key, new_status=new_status, company_id=company_id,
                     task_details=prefetched_task_details
                 )
+        elif testcase_should_run:
+            # Faqat Service2 (Service1 super-admin tomonidan o'chirilgan).
+            # Service1'ni 'skip' deb belgilaymiz — shunda Service2 guard'idan o'tadi.
+            set_service1_skip(task_key, company_id=company_id)
+            if _worker_queue_enabled():
+                _queue_job(
+                    job_type="run_testcase_generation",
+                    task_key=task_key,
+                    company_id=company_id,
+                    new_status=new_status,
+                    dedupe_key=f"testcase:{company_id}:{task_key}",
+                )
+            else:
+                background_tasks.add_task(
+                    _run_testcase_generation, task_key=task_key, new_status=new_status,
+                    company_id=company_id
+                )
+        else:
+            # Bu status uchun yoqilgan servis yo'q (S1 o'chiq + S2 trigger emas/o'chiq).
+            log.info(f"[{task_key}] SKIP -> bu status uchun yoqilgan webhook servisi yo'q")
+            return {"status": "ignored", "reason": "no_enabled_service_for_status"}
 
         return {
             "status": "queued" if _worker_queue_enabled() else "processing",

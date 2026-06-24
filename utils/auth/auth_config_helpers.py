@@ -55,6 +55,8 @@ def build_company_credentials(
         missing.append("JIRA Server")
     if not jira_token:
         missing.append("JIRA API Token")
+    if not (company_settings.get("jira_project_keys") or "").strip():
+        missing.append("JIRA Project Key(lar)")
     if not github_token:
         missing.append("GitHub Token")
     if not github_org:
@@ -86,6 +88,8 @@ def build_company_webhook_credentials(
     company_settings: Dict,
     parse_figma_tokens: Callable[[object], list],
     get_global_gemini_defaults: Callable[[], dict],
+    *,
+    require_github: bool = True,
 ) -> dict:
     missing = []
 
@@ -119,9 +123,11 @@ def build_company_webhook_credentials(
         missing.append("JIRA Server")
     if not jira_token:
         missing.append("JIRA API Token")
-    if not github_token:
+    if not (company_settings.get("jira_project_keys") or "").strip():
+        missing.append("JIRA Project Key(lar)")
+    if require_github and not github_token:
         missing.append("GitHub Token")
-    if not github_org:
+    if require_github and not github_org:
         missing.append("GitHub Organization")
     if not gemini_keys:
         missing.append("Gemini API Key (company/webhook yoki super admin default)")
@@ -152,6 +158,8 @@ def build_user_credentials_for_service(
     get_global_gemini_defaults: Callable[[], dict],
     get_user_by_id: Callable[[int], Dict | None],
     get_company_settings: Callable[[int], Dict],
+    *,
+    require_github: bool = True,
 ) -> dict:
     user_row = get_user_by_id(user_id)
     company_settings = get_company_settings(user_row["company_id"]) if user_row else {}
@@ -190,9 +198,11 @@ def build_user_credentials_for_service(
         missing.append("JIRA Email")
     if not jira_token:
         missing.append("JIRA API Token")
-    if not github_token:
+    if not (company_settings.get("jira_project_keys") or "").strip():
+        missing.append("JIRA Project Key(lar)")
+    if require_github and not github_token:
         missing.append("GitHub Token")
-    if not github_org:
+    if require_github and not github_org:
         missing.append("GitHub Organization")
 
     if missing:
@@ -240,6 +250,7 @@ def compute_credential_readiness(
         (cs.get("jira_server") or "").strip()
         and (cs.get("jira_email") or "").strip()
         and (cs.get("jira_token") or "").strip()
+        and (cs.get("jira_project_keys") or "").strip()
     )
     github_ok = bool(
         (cs.get("github_token") or "").strip()
@@ -260,7 +271,7 @@ def compute_credential_readiness(
 
 def build_company_webhook_config(company_settings: Dict) -> Dict:
     return {
-        "webhook_project_keys": company_settings.get("webhook_project_keys", ""),
+        "jira_project_keys": company_settings.get("jira_project_keys", ""),
         "webhook_trigger_status": company_settings.get("webhook_trigger_status", ""),
         "webhook_trigger_aliases": company_settings.get("webhook_trigger_aliases", ""),
         "webhook_return_status": company_settings.get("webhook_return_status", ""),
@@ -273,7 +284,7 @@ def build_company_webhook_config(company_settings: Dict) -> Dict:
 
 def validate_company_webhook_config_shape(config: Dict) -> List[str]:
     errors = []
-    if not config.get("webhook_project_keys", "").strip():
+    if not config.get("jira_project_keys", "").strip():
         errors.append("JIRA Project Key(lar) kiritilishi shart (masalan: DEV, QA)")
     if not config.get("webhook_trigger_status", "").strip():
         errors.append("Trigger Status kiritilishi shart (masalan: Ready to Test)")

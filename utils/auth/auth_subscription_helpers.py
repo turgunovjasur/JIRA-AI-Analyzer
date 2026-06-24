@@ -112,20 +112,38 @@ def get_effective_company_modules(
     default_plan_name: str,
     plan_included_modules: Dict[str, set[str]],
 ) -> Dict[str, bool]:
+    """Kompaniyaning amaldagi modul ruxsatlari.
+
+    Manba — `enabled_modules` (super-admin saqlagan). Plan endi modullarni
+    MAJBURAN yoqmaydi: asosiy modullar `DEFAULT_MODULES` orqali default yoqiq,
+    super-admin esa ularni alohida o'chira oladi.
+
+    Qoidalar:
+    - Obuna faol bo'lmasa — hech qanday modul ruxsati yo'q.
+    - Webhook sub-servislari (service1/service2) faqat `webhook` addon
+      yoqilganda amal qiladi.
+    - `webhook` faqat kamida bitta servis yoqilgan bo'lsagina amalda ishlaydi.
+    - `monitoring` har doim webhook holatidan kelib chiqadi.
+
+    `default_plan_name` / `plan_included_modules` parametrlari signatura
+    barqarorligi uchun saqlangan (endi force-yoqish uchun ishlatilmaydi).
+    """
     result = dict(base_modules)
-    # Monitoring must always follow the webhook addon state.
-    result["monitoring"] = bool(result.get("webhook", False))
-    if not subscription:
-        return result
 
-    status = (subscription.get("subscription_status") or "").strip().lower()
-    if status not in access_statuses:
-        result["monitoring"] = bool(result.get("webhook", False))
-        return result
+    # Obuna gate: faol bo'lmasa hech narsa ko'rinmaydi.
+    if subscription:
+        status = (subscription.get("subscription_status") or "").strip().lower()
+        if status not in access_statuses:
+            return {key: False for key in result}
 
-    plan_name = (subscription.get("plan_name") or default_plan_name).strip().lower()
-    for module_key in plan_included_modules.get(plan_name, set()):
-        if module_key in result:
-            result[module_key] = True
-    result["monitoring"] = bool(result.get("webhook", False))
+    webhook_enabled = bool(result.get("webhook", False))
+    service1 = webhook_enabled and bool(result.get("webhook_service1", False))
+    service2 = webhook_enabled and bool(result.get("webhook_service2", False))
+    # Webhook faqat kamida bitta servis yoqiq bo'lsagina amalda ishlaydi.
+    webhook_effective = webhook_enabled and (service1 or service2)
+
+    result["webhook"] = webhook_effective
+    result["webhook_service1"] = service1
+    result["webhook_service2"] = service2
+    result["monitoring"] = webhook_effective
     return result

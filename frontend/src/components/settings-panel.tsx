@@ -30,6 +30,10 @@ const CHECKER_COMMENT_SECTIONS = ["completed", "failed", "skipped", "issues", "f
 
 type SettingsPanelProps = {
   companyName: string;
+  hasCheckerModule: boolean;
+  hasService1: boolean;
+  hasService2: boolean;
+  hasTestcaseModule: boolean;
   hasWebhookModule: boolean;
   role: UserRole | null | undefined;
 };
@@ -238,7 +242,15 @@ function modelOptions() {
   return ["", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"];
 }
 
-export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsPanelProps) {
+export function SettingsPanel({
+  companyName,
+  hasCheckerModule,
+  hasService1,
+  hasService2,
+  hasTestcaseModule,
+  hasWebhookModule,
+  role,
+}: SettingsPanelProps) {
   const [loading, setLoading] = useState(true);
   const [savingShared, setSavingShared] = useState(false);
   const [savingWebhook, setSavingWebhook] = useState(false);
@@ -1175,6 +1187,14 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                     />
                     <BaseInputField
                       className={SETTINGS_INPUT_CLASS}
+                      hint="Webhook routing va manual task prefix uchun ishlatiladi"
+                      label="JIRA Project Key(lar)"
+                      onChange={(value) => updateField("jira_project_keys", value.toUpperCase())}
+                      placeholder="DEV, QA"
+                      value={form.jira_project_keys}
+                    />
+                    <BaseInputField
+                      className={SETTINGS_INPUT_CLASS}
                       hint={clearedCreds.jira_token ? "Saqlansa token o'chiriladi" : view.fields.jira_token_present ? "Bo'sh qoldirilsa mavjud token saqlanadi" : undefined}
                       label="JIRA Token"
                       onBlur={() => {
@@ -1482,7 +1502,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                       </SettingsCardItem>
                       <SettingsCardItem>
                         <NumberField
-                          hint="TZ maydoni shu belgilardan kam bo'lsa checker ham testcase ham to'xtatiladi."
+                          hint="JIRA description shu belgilardan kam bo'lsa checker ham testcase ham to'xtatiladi."
                           label="Min TZ belgilari"
                           min={0}
                           onChange={(value) => updateWebhookField("min_tz_description_chars", value)}
@@ -1494,6 +1514,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
 
                 </SettingsBaseCard>
 
+                {hasService1 ? (
                 <SettingsBaseCard
                   className="webhook-service-card webhook-service-card--main"
                   customizerId="settings-webhook-service1"
@@ -1767,7 +1788,9 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                     </SettingsInnerCard>
                   </div>
                 </SettingsBaseCard>
+                ) : null}
 
+                {hasService2 ? (
                 <SettingsBaseCard
                   className="webhook-service-card webhook-service-card--main"
                   customizerId="settings-webhook-service2"
@@ -1923,6 +1946,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                       ) : null}
                   </div>
                 </SettingsBaseCard>
+                ) : null}
 
               </div>
             </>
@@ -1940,6 +1964,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
               ) : null}
 
               <div className="webhook-cards-grid mt-4">
+                {hasCheckerModule ? (
                 <SettingsBaseCard
                   className="webhook-service-card webhook-service-card--main"
                   collapsible
@@ -2083,7 +2108,9 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                     </SettingsInnerCard>
                   </div>
                 </SettingsBaseCard>
+                ) : null}
 
+                {hasTestcaseModule ? (
                 <SettingsBaseCard
                   className="webhook-service-card webhook-service-card--main"
                   collapsible
@@ -2204,6 +2231,7 @@ export function SettingsPanel({ companyName, hasWebhookModule, role }: SettingsP
                     </SettingsInnerCard>
                   </div>
                 </SettingsBaseCard>
+                ) : null}
               </div>
             </>
           ) : null}

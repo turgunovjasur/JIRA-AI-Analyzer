@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import {
+  BackendRequestError,
   callInternalRpc,
   readWebhookConfigWithBackend,
   saveWebhookConfigWithBackend,
@@ -50,6 +51,21 @@ function ensureNumber(value: unknown, fallback: number) {
 
 function ensureOptionalBool(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
+}
+
+function backendErrorResponse(error: unknown, fallback: string) {
+  const message = error instanceof Error ? error.message : fallback;
+  if (error instanceof BackendRequestError) {
+    const payload =
+      typeof error.payload === "object" && error.payload !== null && !Array.isArray(error.payload)
+        ? (error.payload as Record<string, unknown>)
+        : {};
+    return NextResponse.json(
+      { success: false, ...payload, error: message },
+      { status: error.status },
+    );
+  }
+  return NextResponse.json({ success: false, error: message }, { status: 500 });
 }
 
 export async function GET() {
@@ -116,8 +132,7 @@ export async function GET() {
       },
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Webhook settingsni o'qib bo'lmadi.";
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    return backendErrorResponse(error, "Webhook settingsni o'qib bo'lmadi.");
   }
 }
 
@@ -241,7 +256,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Webhook settings saqlashda xato.";
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    return backendErrorResponse(error, "Webhook settings saqlashda xato.");
   }
 }

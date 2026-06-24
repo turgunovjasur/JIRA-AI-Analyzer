@@ -14,6 +14,7 @@ import { PageIntro } from "@/components/ui/page-intro";
 import { SectionHeader } from "@/components/ui/section-header";
 import {
   BaseCheckGroup,
+  type BaseCheckOption,
   BaseInputField,
   BaseInlineActionField,
   BaseSelectField,
@@ -22,10 +23,9 @@ import {
   SettingsInnerCard,
 } from "@/components/settings/base-card-system";
 import {
-  BASE_PLAN_MODULE_KEYS,
   MODULE_CATALOG,
-  PAID_ADDON_MODULE_KEYS,
   SUBSCRIPTION_STATUS_LABELS,
+  SUPER_ADMIN_MANAGED_MODULE_KEYS,
 } from "@/lib/product-catalog";
 import type {
   AiUsageCompanyRow,
@@ -88,15 +88,20 @@ const SETTINGS_SELECT_CLASS = "settings-form-select";
 const SECONDS_PER_MINUTE = 60;
 
 function buildCreateForm(): CompanyCreateForm {
-  const addonDefaults: CompanyModules = Object.fromEntries(
-    PAID_ADDON_MODULE_KEYS.map((moduleKey) => [moduleKey, false]),
-  );
+  // Yangi kompaniya standarti: 2 ta asosiy modul yoqiq, webhook + servislar o'chiq.
+  const moduleDefaults: CompanyModules = {
+    tz_pr_checker: true,
+    testcase_generator: true,
+    webhook: false,
+    webhook_service1: false,
+    webhook_service2: false,
+  };
   return {
     admin_password: "",
     admin_username: "",
     company_code: "",
     company_name: "",
-    enabled_modules: addonDefaults,
+    enabled_modules: moduleDefaults,
     seat_limit: 0,
   };
 }
@@ -223,60 +228,48 @@ function modelOptions() {
   return ["", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"];
 }
 
-const ADDON_MODULE_OPTIONS = PAID_ADDON_MODULE_KEYS.map((moduleKey) => ({
-  badge: "addon",
-  key: moduleKey,
-  label: MODULE_CATALOG[moduleKey]?.label || moduleKey,
-}));
-
-const DEFAULT_MODULE_OPTIONS = BASE_PLAN_MODULE_KEYS.map((moduleKey) => ({
-  badge: "default",
-  disabled: true,
-  key: moduleKey,
-  label: MODULE_CATALOG[moduleKey]?.label || moduleKey,
-}));
-
-const DERIVED_MODULE_OPTIONS = [
-  {
-    badge: "auto",
-    disabled: true,
-    key: "monitoring",
-    label: MODULE_CATALOG.monitoring.label,
-  },
-];
-
-const SUPER_ADMIN_MODULE_OPTIONS = [
-  ...DEFAULT_MODULE_OPTIONS,
-  ...ADDON_MODULE_OPTIONS,
-  ...DERIVED_MODULE_OPTIONS,
-];
-
-function selectedAddonModules(modules: CompanyModules | undefined): string[] {
-  return PAID_ADDON_MODULE_KEYS.filter((moduleKey) => Boolean(modules?.[moduleKey]));
+// Super-admin checkbox guruhi uchun variantlar. Webhook servislari faqat
+// `webhook` addon tanlangan bo'lsa faollashadi; monitoring derived (read-only).
+function moduleOptions(selected: string[]): BaseCheckOption[] {
+  const webhookOn = selected.includes("webhook");
+  return [
+    { badge: "modul", key: "tz_pr_checker", label: MODULE_CATALOG.tz_pr_checker.label },
+    { badge: "modul", key: "testcase_generator", label: MODULE_CATALOG.testcase_generator.label },
+    { badge: "addon", key: "webhook", label: MODULE_CATALOG.webhook.label },
+    { badge: "servis", disabled: !webhookOn, key: "webhook_service1", label: MODULE_CATALOG.webhook_service1.label },
+    { badge: "servis", disabled: !webhookOn, key: "webhook_service2", label: MODULE_CATALOG.webhook_service2.label },
+    { badge: "auto", disabled: true, key: "monitoring", label: MODULE_CATALOG.monitoring.label },
+  ];
 }
 
-function buildAddonModuleState(selected: string[]): CompanyModules {
-  return Object.fromEntries(
-    PAID_ADDON_MODULE_KEYS.map((moduleKey) => [moduleKey, selected.includes(moduleKey)]),
-  ) as CompanyModules;
-}
-
-function selectedManagedModules(company: SuperAdminCompany, modules: CompanyModules | undefined): string[] {
-  const selected = new Set<string>();
-  const includedModules = company.included_modules?.length ? company.included_modules : BASE_PLAN_MODULE_KEYS;
-  includedModules.forEach((moduleKey) => selected.add(moduleKey));
-  selectedAddonModules(modules).forEach((moduleKey) => selected.add(moduleKey));
-  if (modules?.webhook || company.derived_modules.includes("monitoring") || company.modules?.monitoring) {
-    selected.add("monitoring");
+// Tanlovni amaldagi modul holatiga aylantiradi. Webhook yoqilganda kamida bitta
+// servis bo'lishi shart — hech biri tanlanmagan bo'lsa, ikkalasini default yoqamiz.
+function buildManagedModuleState(selected: string[]): CompanyModules {
+  const sel = new Set(selected);
+  const webhookOn = sel.has("webhook");
+  let service1 = webhookOn && sel.has("webhook_service1");
+  let service2 = webhookOn && sel.has("webhook_service2");
+  if (webhookOn && !service1 && !service2) {
+    service1 = true;
+    service2 = true;
   }
-  return [...selected];
+  return {
+    tz_pr_checker: sel.has("tz_pr_checker"),
+    testcase_generator: sel.has("testcase_generator"),
+    webhook: webhookOn,
+    webhook_service1: service1,
+    webhook_service2: service2,
+  } as CompanyModules;
 }
 
-function selectedCreateModules(modules: CompanyModules | undefined): string[] {
-  const selected = new Set<string>(BASE_PLAN_MODULE_KEYS);
-  selectedAddonModules(modules).forEach((moduleKey) => selected.add(moduleKey));
-  if (modules?.webhook) selected.add("monitoring");
-  return [...selected];
+// Modul holatidan tanlangan checkbox kalitlarini hosil qiladi (monitoring derived).
+function selectedManagedModules(modules: CompanyModules | undefined): string[] {
+  const selected: string[] = [];
+  for (const moduleKey of SUPER_ADMIN_MANAGED_MODULE_KEYS) {
+    if (modules?.[moduleKey]) selected.push(moduleKey);
+  }
+  if (modules?.webhook || modules?.monitoring) selected.push("monitoring");
+  return selected;
 }
 
 async function parseJson<T>(response: Response) {
@@ -377,9 +370,7 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
         Object.fromEntries(
           payload.companies.map((company) => [
             company.id,
-            Object.fromEntries(
-              PAID_ADDON_MODULE_KEYS.map((moduleKey) => [moduleKey, Boolean(company.modules?.[moduleKey])]),
-            ),
+            buildManagedModuleState(selectedManagedModules(company.modules)),
           ]),
         ),
       );
@@ -868,17 +859,18 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                                 <div className="sbox">
                                   <h4>📦 Modullar</h4>
                                   <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
-                                    Default modullar read-only ko'rinadi, webhook addon sifatida boshqariladi.
+                                    Har modulni alohida yoqib-o'chiring. Webhook servislari (Servis-1/Servis-2)
+                                    faqat webhook yoqilganda faollashadi; monitoring webhookdan kelib chiqadi.
                                   </p>
                                   <BaseCheckGroup
                                     onChange={(nextValues) =>
                                       setModuleDrafts((current) => ({
                                         ...current,
-                                        [company.id]: buildAddonModuleState(nextValues),
+                                        [company.id]: buildManagedModuleState(nextValues),
                                       }))
                                     }
-                                    options={SUPER_ADMIN_MODULE_OPTIONS}
-                                    value={selectedManagedModules(company, moduleDraft)}
+                                    options={moduleOptions(selectedManagedModules(moduleDraft))}
+                                    value={selectedManagedModules(moduleDraft)}
                                   />
                                   <Button
                                     className="mt-3 tenant-action-btn tenant-action-btn--save"
@@ -1744,18 +1736,18 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                 </div>
                 <div className="grid gap-2">
                   <p className="text-xs text-muted-foreground">
-                    Base modullar (`tz_pr_checker`, `testcase_generator`) avtomatik yoqiladi.
-                    `monitoring` esa `webhook` addonidan kelib chiqadi.
+                    Asosiy modullar (`tz_pr_checker`, `testcase_generator`) default yoqiq.
+                    Webhook servislari faqat webhook yoqilganda faollashadi; `monitoring` webhookdan kelib chiqadi.
                   </p>
                   <BaseCheckGroup
                     onChange={(nextValues) =>
                       setCreateForm((current) => ({
                         ...current,
-                        enabled_modules: buildAddonModuleState(nextValues),
+                        enabled_modules: buildManagedModuleState(nextValues),
                       }))
                     }
-                    options={SUPER_ADMIN_MODULE_OPTIONS}
-                    value={selectedCreateModules(createForm.enabled_modules)}
+                    options={moduleOptions(selectedManagedModules(createForm.enabled_modules))}
+                    value={selectedManagedModules(createForm.enabled_modules)}
                   />
                 </div>
                 <div className="flex gap-3">

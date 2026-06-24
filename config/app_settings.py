@@ -211,13 +211,13 @@ class TZPRCheckerSettings:
     )
 
     # ━━━ TZ Minimal Uzunlik ━━━
-    # Ikkala servis (Servis-1 va Servis-2) uchun: summary + description shu belgidan qisqa bo'lsa
+    # Ikkala servis (Servis-1 va Servis-2) uchun: description shu belgidan qisqa bo'lsa
     # task qaytariladi va error comment yoziladi.
     min_tz_description_chars: int = 50
     min_tz_description_chars_help: str = (
-        "Task summary + description shu belgidan qisqa bo'lsa ikkala servis ham to'xtatiladi: "
+        "Task description shu belgidan qisqa bo'lsa ikkala servis ham to'xtatiladi: "
         "JIRA'ga error comment yoziladi va task qaytariladi. "
-        "50 = bo'sh yoki faqat sarlavha bo'lsa servislar ishlamaydi."
+        "50 = description bo'sh yoki juda qisqa bo'lsa servislar ishlamaydi."
     )
 
     # ━━━ Skip Code ━━━

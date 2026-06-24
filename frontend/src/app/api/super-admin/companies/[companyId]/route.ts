@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { callInternalRpc } from "@/lib/backend";
-import { PAID_ADDON_MODULE_KEYS } from "@/lib/product-catalog";
+import { SUPER_ADMIN_MANAGED_MODULE_KEYS } from "@/lib/product-catalog";
 import type { CompanyModules, CompanySubscription } from "@/lib/types";
 
 import { parseCompanyId, requireSuperAdminSession } from "../../_helpers";
@@ -117,10 +117,15 @@ export async function PATCH(
       case "modules": {
         const currentModules = await callInternalRpc<CompanyModules>("get_company_modules", [companyId]);
         const nextModules = { ...(currentModules || {}) };
-        for (const moduleKey of PAID_ADDON_MODULE_KEYS) {
+        for (const moduleKey of SUPER_ADMIN_MANAGED_MODULE_KEYS) {
           if (payload.enabled_modules && moduleKey in payload.enabled_modules) {
             nextModules[moduleKey] = Boolean(payload.enabled_modules[moduleKey]);
           }
+        }
+        // Webhook o'chiq bo'lsa sub-servislar ham o'chiq bo'lsin (stored holatni toza saqlash).
+        if (!nextModules.webhook) {
+          nextModules.webhook_service1 = false;
+          nextModules.webhook_service2 = false;
         }
         const success = await callInternalRpc<boolean>("save_company_modules", [companyId, nextModules]);
         if (!success) {

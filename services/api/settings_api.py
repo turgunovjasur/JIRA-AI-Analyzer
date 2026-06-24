@@ -659,22 +659,27 @@ async def save_webhook_config(
     merged_all_modules["webhook_testcase"] = updated_tc
     merged_all_modules["queue"] = updated_queue
 
-    ok_company = save_company_settings(
-        company_id,
-        {
-            "webhook_module_settings": json.dumps(merged_all_modules, ensure_ascii=True),
-            "webhook_trigger_status": updated_wh.get("trigger_status", ""),
-            "webhook_trigger_aliases": updated_wh.get("trigger_status_aliases", ""),
-            "webhook_return_threshold": int(updated_wh.get("return_threshold", raw_threshold)),
-            "webhook_return_status": updated_wh.get("return_status", ""),
-            "webhook_allowed_issue_types": updated_wh.get("allowed_issue_types", ""),
-            "webhook_excluded_assignees": updated_wh.get("excluded_assignees", ""),
-            "webhook_auto_return_enabled": 1 if updated_wh.get("auto_return_enabled") else 0,
-        },
-    )
+    company_payload = {
+        "webhook_module_settings": json.dumps(merged_all_modules, ensure_ascii=True),
+        "webhook_trigger_status": updated_wh.get("trigger_status", ""),
+        "webhook_trigger_aliases": updated_wh.get("trigger_status_aliases", ""),
+        "webhook_return_threshold": int(updated_wh.get("return_threshold", raw_threshold)),
+        "webhook_return_status": updated_wh.get("return_status", ""),
+        "webhook_allowed_issue_types": updated_wh.get("allowed_issue_types", ""),
+        "webhook_excluded_assignees": updated_wh.get("excluded_assignees", ""),
+        "webhook_auto_return_enabled": bool(updated_wh.get("auto_return_enabled")),
+    }
+    ok_company = save_company_settings(company_id, company_payload)
 
     if not ok_company:
-        raise HTTPException(status_code=400, detail="Webhook konfiguratsiyasi saqlanmadi")
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "success": False,
+                "error": "Webhook konfiguratsiyasi saqlanmadi",
+                "reasons": debug_company_settings_save(company_id, company_payload),
+            },
+        )
 
     return {"success": True}
 

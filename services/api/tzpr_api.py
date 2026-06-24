@@ -3,7 +3,10 @@ Internal TZ-PR API endpoints.
 """
 from __future__ import annotations
 
+import logging
 import os
+
+log = logging.getLogger(__name__)
 
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
 from fastapi.responses import JSONResponse
@@ -17,6 +20,7 @@ from services.checkers.tzpr_multi_agent import (
     recover_stalled_multi_agent_run,
 )
 from services.api.session_scope import load_api_session, require_customer_scope
+from services.api.task_key_normalizer import MissingProjectKeySetting, normalize_manual_task_key
 from utils.database.checker_run_db import get_checker_run_snapshot
 from utils.database.task_db import enqueue_background_job
 
@@ -51,7 +55,10 @@ async def create_tzpr_run(
             payload.user_id,
             payload.company_id,
         )
-        task_key = payload.task_key.strip().upper()
+        try:
+            task_key = normalize_manual_task_key(payload.task_key, company_id)
+        except MissingProjectKeySetting as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         preflight = run_start_preflight(
             module_key="tz_pr_checker",
             task_key=task_key,
@@ -78,6 +85,9 @@ async def create_tzpr_run(
         if not run_id:
             raise RuntimeError("Run yaratilmadi")
 
+        preflight_quota = getattr(preflight, "quota", None)
+        using_global = bool(preflight_quota and preflight_quota.get("using_global") and company_id is not None)
+
         if _worker_queue_enabled():
             enqueue_background_job(
                 "tzpr_multi_agent_run",
@@ -88,22 +98,11 @@ async def create_tzpr_run(
                 max_attempts=3,
             )
         else:
-            background_tasks.add_task(execute_multi_agent_run, run_id)
-
-        # Global (QA ASSISTANT) kalit ishlatilgan bo'lsa — bepul kvotani +1.
-        preflight_quota = getattr(preflight, "quota", None)
-        updated_quota = preflight_quota
-        if preflight_quota and preflight_quota.get("using_global") and company_id is not None:
-            try:
-                from utils.database.quota_db import increment_global_quota
-                updated_quota = increment_global_quota(int(company_id), "tz_pr_checker")
-                updated_quota["using_global"] = True
-            except Exception:
-                pass
+            background_tasks.add_task(execute_multi_agent_run, run_id, increment_quota=using_global)
 
         snapshot = get_checker_run_snapshot(run_id) or run
-        if isinstance(snapshot, dict) and updated_quota is not None:
-            snapshot["gemini_quota"] = updated_quota
+        if isinstance(snapshot, dict) and preflight_quota is not None:
+            snapshot["gemini_quota"] = preflight_quota
         return snapshot
     except HTTPException:
         raise

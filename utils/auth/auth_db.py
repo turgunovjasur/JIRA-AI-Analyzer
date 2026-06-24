@@ -115,6 +115,9 @@ ALL_MODULES = {
     'monitoring':         'Monitoring Dashboard',
     'sprint_report':      'Sprint Report',
     'webhook':            'JIRA Webhook',
+    # Webhook sub-servislari — faqat `webhook` addon yoqilganda amal qiladi.
+    'webhook_service1':   'Webhook Servis-1 (Checker)',
+    'webhook_service2':   'Webhook Servis-2 (Testcase)',
 }
 
 SALES_READY_MODULES = {
@@ -127,9 +130,23 @@ SALES_READY_MODULES = {
 DEFERRED_MODULES = set(ALL_MODULES) - SALES_READY_MODULES
 
 # Webhook sozlamalari uchun majburiy maydonlar
-WEBHOOK_REQUIRED_FIELDS = ['webhook_project_keys', 'webhook_trigger_status']
+WEBHOOK_REQUIRED_FIELDS = ['jira_project_keys', 'webhook_trigger_status']
 
-DEFAULT_MODULES = {k: False for k in ALL_MODULES}
+# Yangi kompaniya standarti: 2 ta asosiy modul (checker + testcase) yoqiq.
+# Webhook va monitoring super-admin tomonidan alohida yoqiladi. Webhook
+# servislari (service1/service2) default yoqiq, lekin effective layer ularni
+# faqat `webhook` addon yoqilganda amalga oshiradi.
+DEFAULT_MODULES = {
+    'bug_analyzer':       False,
+    'statistics':         False,
+    'tz_pr_checker':      True,
+    'testcase_generator': True,
+    'monitoring':         False,
+    'sprint_report':      False,
+    'webhook':            False,
+    'webhook_service1':   True,
+    'webhook_service2':   True,
+}
 
 # Default seat limit — legacy helperlar uchun 1, UI create flow esa explicit 0 yuboradi
 DEFAULT_SEAT_LIMIT = 1
@@ -1111,6 +1128,7 @@ def has_api_keys_configured(company_id: int) -> bool:
         cs.get('jira_server') and
         cs.get('jira_email') and
         cs.get('jira_token') and
+        cs.get('jira_project_keys') and
         cs.get('github_token') and
         cs.get('github_org') and
         has_company_or_global_gemini
@@ -1157,18 +1175,20 @@ def get_company_credentials(company_id: int) -> dict:
     )
 
 
-def get_company_webhook_credentials(company_id: int) -> dict:
+def get_company_webhook_credentials(company_id: int, *, require_github: bool = True) -> dict:
     """
     Webhook servislari uchun kompaniyaning alohida API kredensiallari.
 
     Yangi `webhook_*` maydonlari birinchi o'rinda ishlatiladi, kerak bo'lsa
     eski shared company credentiallarga fallback qilinadi.
+    require_github=False bo'lsa GitHub kalitlari tekshirilmaydi (testcase uchun).
     """
     return build_company_webhook_credentials(
         company_id,
         get_company_settings(company_id),
         _parse_figma_tokens,
         get_global_gemini_defaults,
+        require_github=require_github,
     )
 
 
@@ -1194,10 +1214,11 @@ def save_user_credentials(user_id: int, data: Dict) -> bool:
     return upsert_user_credentials(_get_conn, user_id, filtered)
 
 
-def get_user_credentials_for_service(user_id: int) -> dict:
+def get_user_credentials_for_service(user_id: int, *, require_github: bool = True) -> dict:
     """
     User API kalitlarini service uchun validatsiya bilan qaytarish.
-    Majburiy (company/admin): jira_server, jira_email, jira_token, github_token, github_org.
+    Majburiy (company/admin): jira_server, jira_email, jira_token.
+    require_github=True bo'lsa: github_token, github_org ham majburiy.
     Gemini: user kaliti bo'lmasa → company admin shared kaliti → super admin global default.
     Yetishmasa → RuntimeError.
     """
@@ -1208,6 +1229,7 @@ def get_user_credentials_for_service(user_id: int) -> dict:
         get_global_gemini_defaults,
         get_user_by_id,
         get_company_settings,
+        require_github=require_github,
     )
 
 
@@ -1231,6 +1253,7 @@ def has_user_credentials_configured(user_id: int) -> bool:
         cs.get('jira_server') and
         cs.get('jira_email') and
         cs.get('jira_token') and
+        cs.get('jira_project_keys') and
         cs.get('github_token') and
         cs.get('github_org') and
         has_gemini
