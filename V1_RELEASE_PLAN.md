@@ -1,4 +1,4 @@
-# V1 Release Plan — JIRA-AI-Analyzer
+# V1 Release Plan — QA-Assistant
 
 > Bu hujjat 2026-06-11 dagi to'liq audit (kod, schema, testlar, xavfsizlik, biznes qatlami) asosida tuzilgan.
 > **Maqsad:** loyihani userlarga chiqarishga tayyorlash. Har bir ish shu hujjat bo'yicha boriladi.

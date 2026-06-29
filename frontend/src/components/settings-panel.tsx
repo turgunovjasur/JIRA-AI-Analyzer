@@ -107,6 +107,11 @@ type WebhookFormState = {
   agent3_fallback_model: string;
 };
 
+type WebhookTriggerConfiguredState = {
+  service1: boolean;
+  service2: boolean;
+};
+
 type ModuleFormState = {
   checker: {
     visible_sections: string[];
@@ -197,6 +202,11 @@ const EMPTY_WEBHOOK_FORM: WebhookFormState = {
   agent3_fallback_model: "",
 };
 
+const EMPTY_WEBHOOK_TRIGGER_CONFIGURED: WebhookTriggerConfiguredState = {
+  service1: false,
+  service2: false,
+};
+
 const DEFAULT_MODULE_ALLOWED: ModuleSettingsAllowed = {
   checker_visible_sections: CHECKER_COMMENT_SECTIONS,
   checker_ai_data_order: ["tz", "comments", "figma", "code"],
@@ -239,7 +249,7 @@ const EMPTY_MODULE_FORM: ModuleFormState = {
 const SETTINGS_INPUT_CLASS = "settings-form-input";
 
 function modelOptions() {
-  return ["", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"];
+  return ["", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-flash-latest"];
 }
 
 export function SettingsPanel({
@@ -278,6 +288,9 @@ export function SettingsPanel({
   const [form, setForm] = useState<SettingsFormState>(EMPTY_FORM);
   const [webhookForm, setWebhookForm] = useState<WebhookFormState>(EMPTY_WEBHOOK_FORM);
   const [webhookBaseline, setWebhookBaseline] = useState<WebhookFormState>(EMPTY_WEBHOOK_FORM);
+  const [webhookTriggerConfigured, setWebhookTriggerConfigured] = useState<WebhookTriggerConfiguredState>(
+    EMPTY_WEBHOOK_TRIGGER_CONFIGURED,
+  );
   const [moduleForm, setModuleForm] = useState<ModuleFormState>(EMPTY_MODULE_FORM);
   const [moduleAllowed, setModuleAllowed] = useState<ModuleSettingsAllowed>(DEFAULT_MODULE_ALLOWED);
   const [jiraTokenMask, setJiraTokenMask] = useState("");
@@ -397,6 +410,13 @@ export function SettingsPanel({
   const webhookService1Dirty = isWebhookCardDirty(WEBHOOK_SERVICE1_KEYS);
   const webhookService2Dirty = isWebhookCardDirty(WEBHOOK_SERVICE2_KEYS);
   const webhookAnyDirty = webhookSharedDirty || webhookService1Dirty || webhookService2Dirty;
+  const webhookWizardTriggerConfigured = Boolean(
+    hasWebhookModule
+      && (
+        (hasService1 && webhookTriggerConfigured.service1)
+        || (hasService2 && webhookForm.testcase_auto_comment_enabled && webhookTriggerConfigured.service2)
+      ),
+  );
   const showGeminiKey1 = Boolean(
     view?.fields.gemini_api_key_1_present ||
     geminiKey1Dirty ||
@@ -485,9 +505,11 @@ export function SettingsPanel({
                   ai_data_section_order?: string[];
                   skip_code?: string;
                   skip_comment_text?: string;
+                  trigger_configured?: boolean;
                   trigger_status?: string;
                   trigger_status_aliases?: string;
                   testcase_auto_comment_enabled?: boolean;
+                  testcase_trigger_configured?: boolean;
                   testcase_auto_comment_trigger_status?: string;
                   testcase_auto_comment_trigger_aliases?: string;
                   testcase_default_test_types?: string[];
@@ -520,6 +542,10 @@ export function SettingsPanel({
             const current = String(data.trigger_status || "READY TO TEST");
             const showContradictory = Boolean(data.show_contradictory_comments ?? true);
             const normalizedSections = CHECKER_COMMENT_SECTIONS;
+            setWebhookTriggerConfigured({
+              service1: Boolean(data.trigger_configured),
+              service2: Boolean(data.testcase_trigger_configured),
+            });
 
             setWebhookForm({
               auto_return_enabled: Boolean(data.auto_return_enabled),
@@ -615,11 +641,13 @@ export function SettingsPanel({
           } else {
             setWebhookForm(EMPTY_WEBHOOK_FORM);
             setWebhookBaseline(EMPTY_WEBHOOK_FORM);
+            setWebhookTriggerConfigured(EMPTY_WEBHOOK_TRIGGER_CONFIGURED);
             setWhDirty(false);
           }
         } else {
           setWebhookForm(EMPTY_WEBHOOK_FORM);
           setWebhookBaseline(EMPTY_WEBHOOK_FORM);
+          setWebhookTriggerConfigured(EMPTY_WEBHOOK_TRIGGER_CONFIGURED);
           setWhDirty(false);
           setWebhookLoading(false);
         }
@@ -1021,6 +1049,13 @@ export function SettingsPanel({
       if (target === "service1") setWebhookService1Success("✓ Muvaffaqiyatli saqlandi.");
       if (target === "service2") setWebhookService2Success("✓ Muvaffaqiyatli saqlandi.");
       setWebhookBaseline(webhookForm);
+      setWebhookTriggerConfigured((current) => ({
+        service1: target === "service1" ? Boolean(webhookForm.trigger_status.trim()) : current.service1,
+        service2:
+          target === "service2"
+            ? Boolean(webhookForm.testcase_auto_comment_enabled && webhookForm.testcase_auto_comment_trigger_status.trim())
+            : current.service2,
+      }));
       setWhDirty(false);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Webhook sozlamalarini saqlashda xato.";
@@ -1112,7 +1147,11 @@ export function SettingsPanel({
       />
 
       {!loading && view && view.mode === "company" ? (
-        <SetupWizard hasWebhookModule={hasWebhookModule} settings={view} />
+        <SetupWizard
+          hasWebhookModule={hasWebhookModule}
+          settings={view}
+          webhookTriggerConfigured={webhookWizardTriggerConfigured}
+        />
       ) : null}
 
       {loading ? <PageIntro eyebrow="Loading" title="Settings yuklanmoqda..." /> : null}

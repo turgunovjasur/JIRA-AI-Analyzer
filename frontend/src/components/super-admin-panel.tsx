@@ -87,6 +87,12 @@ const SETTINGS_INPUT_CLASS = "settings-form-input";
 const SETTINGS_SELECT_CLASS = "settings-form-select";
 const SECONDS_PER_MINUTE = 60;
 
+type UsageFilters = {
+  module: string;
+  task: string;
+  tenant: string;
+};
+
 function buildCreateForm(): CompanyCreateForm {
   // Yangi kompaniya standarti: 2 ta asosiy modul yoqiq, webhook + servislar o'chiq.
   const moduleDefaults: CompanyModules = {
@@ -197,6 +203,18 @@ function companyLabel(row: AiUsageCompanyRow) {
   return row.company_code || row.company_name || (row.company_id ? `Company #${row.company_id}` : "No company");
 }
 
+function usageTenantValue(row: AiUsageEventRow) {
+  if (row.company_id !== null && row.company_id !== undefined) return `id:${row.company_id}`;
+  const code = String(row.company_code || "").trim();
+  return code ? `code:${code}` : "none";
+}
+
+function usageTenantLabel(row: AiUsageEventRow) {
+  const code = String(row.company_code || "").trim();
+  if (code) return code;
+  return row.company_id ? `#${row.company_id}` : "No tenant";
+}
+
 function usageTone(warnings: number | string | null | undefined): "success" | "warning" {
   return numberValue(warnings) > 0 ? "warning" : "success";
 }
@@ -225,7 +243,7 @@ function billingAlertLabel(company: SuperAdminCompany) {
 }
 
 function modelOptions() {
-  return ["", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"];
+  return ["", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-flash-latest"];
 }
 
 // Super-admin checkbox guruhi uchun variantlar. Webhook servislari faqat
@@ -332,6 +350,11 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
   const [subscriptionDrafts, setSubscriptionDrafts] = useState<Record<number, CompanySubscription>>({});
   const [deleteDrafts, setDeleteDrafts] = useState<Record<number, string>>({});
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [usageFilters, setUsageFilters] = useState<UsageFilters>({
+    module: "",
+    task: "",
+    tenant: "",
+  });
 
   const companyMetrics = useMemo(() => {
     if (!overview) return { activeRate: 0, totalUsers: 0 };
@@ -350,6 +373,43 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
       return left.company_code.localeCompare(right.company_code);
     });
   }, [overview]);
+
+  const recentUsageEvents = useMemo(
+    () => overview?.ai_usage?.recent_events || [],
+    [overview?.ai_usage?.recent_events],
+  );
+
+  const usageFilterOptions = useMemo(() => {
+    const tenants = new Map<string, string>();
+    const modules = new Map<string, string>();
+    for (const row of recentUsageEvents) {
+      tenants.set(usageTenantValue(row), usageTenantLabel(row));
+      const moduleKey = String(row.module_key || "").trim();
+      if (moduleKey) modules.set(moduleKey, moduleLabel(moduleKey));
+    }
+    return {
+      modules: Array.from(modules, ([value, label]) => ({ label, value })).sort((left, right) =>
+        left.label.localeCompare(right.label),
+      ),
+      tenants: Array.from(tenants, ([value, label]) => ({ label, value })).sort((left, right) =>
+        left.label.localeCompare(right.label),
+      ),
+    };
+  }, [recentUsageEvents]);
+
+  const filteredUsageEvents = useMemo(() => {
+    const taskQuery = usageFilters.task.trim().toLowerCase();
+    return recentUsageEvents.filter((row) => {
+      const matchesTenant = !usageFilters.tenant || usageTenantValue(row) === usageFilters.tenant;
+      const matchesModule = !usageFilters.module || String(row.module_key || "") === usageFilters.module;
+      const matchesTask = !taskQuery || String(row.task_key || "").toLowerCase().includes(taskQuery);
+      return matchesTenant && matchesModule && matchesTask;
+    });
+  }, [recentUsageEvents, usageFilters]);
+
+  const usageFiltersActive = Boolean(
+    usageFilters.tenant || usageFilters.module || usageFilters.task.trim(),
+  );
 
   async function loadOverview() {
     setLoading(true);
@@ -1095,7 +1155,7 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
               )}
             >
               <form className="mt-4 grid gap-4" onSubmit={saveAiDefaults}>
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_220px] lg:items-start">
+                <div className="grid gap-4 md:grid-cols-2">
                   <BaseInputField
                     className={SETTINGS_INPUT_CLASS}
                     hint={overview.global_ai_defaults.api_key_1_present ? "Bo'sh qoldirilsa mavjud kalit saqlanadi" : undefined}
@@ -1199,18 +1259,6 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                       </small>
                     </div>
                   )}
-                  <NumberField
-                    inputClassName={SETTINGS_INPUT_CLASS}
-                    label="Key freeze (daqiqa)"
-                    min={1}
-                    onChange={(value) =>
-                      setAiForm((current) => ({
-                        ...current,
-                        key_freeze_minutes: Number(value || 0),
-                      }))
-                    }
-                    value={String(aiForm.key_freeze_minutes)}
-                  />
                 </div>
 
                 <div className="grid gap-4 lg:grid-cols-2">
@@ -1331,80 +1379,86 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                   />
                 )}
               >
-                <div className="mt-4 grid gap-4 lg:grid-cols-2">
-                  <div className="table-wrap">
-                    <table className="data-table">
-                      <thead>
-                        <tr>
-                          <th>Tenant</th>
-                          <th>Calls</th>
-                          <th>Input</th>
-                          <th>Thinking</th>
-                          <th>Cost</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(overview.ai_usage?.by_company || []).length ? (
-                          (overview.ai_usage?.by_company || []).map((row: AiUsageCompanyRow) => (
-                            <tr key={`${row.company_id || "none"}-${row.company_code || ""}`}>
-                              <td>
-                                <div className="font-semibold text-foreground">{companyLabel(row)}</div>
-                                <div className="text-xs text-muted-foreground">{row.company_name || "-"}</div>
-                              </td>
-                              <td>{formatPlainNumber(row.event_count)}</td>
-                              <td>{formatCompactNumber(row.prompt_token_count)}</td>
-                              <td>{formatCompactNumber(row.thoughts_token_count)}</td>
-                              <td>
-                                <div>{formatUsd(row.estimated_total_cost_usd)}</div>
-                                {numberValue(row.cost_warning_count) > 0 ? (
-                                  <Badge tone="warning">{formatPlainNumber(row.cost_warning_count)} expensive</Badge>
-                                ) : null}
-                              </td>
-                            </tr>
-                          ))
-                        ) : (
+                <div className="mt-4 grid gap-4">
+                  <div>
+                    <div className="mb-2 text-sm font-semibold text-foreground">Tenantlar bo'yicha</div>
+                    <div className="table-wrap">
+                      <table className="data-table">
+                        <thead>
                           <tr>
-                            <td colSpan={5}>AI usage hali yozilmagan.</td>
+                            <th>Tenant</th>
+                            <th>Calls</th>
+                            <th>Input</th>
+                            <th>Thinking</th>
+                            <th>Cost</th>
                           </tr>
-                        )}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {(overview.ai_usage?.by_company || []).length ? (
+                            (overview.ai_usage?.by_company || []).map((row: AiUsageCompanyRow) => (
+                              <tr key={`${row.company_id || "none"}-${row.company_code || ""}`}>
+                                <td>
+                                  <div className="font-semibold text-foreground">{companyLabel(row)}</div>
+                                  <div className="text-xs text-muted-foreground">{row.company_name || "-"}</div>
+                                </td>
+                                <td>{formatPlainNumber(row.event_count)}</td>
+                                <td>{formatCompactNumber(row.prompt_token_count)}</td>
+                                <td>{formatCompactNumber(row.thoughts_token_count)}</td>
+                                <td>
+                                  <div>{formatUsd(row.estimated_total_cost_usd)}</div>
+                                  {numberValue(row.cost_warning_count) > 0 ? (
+                                    <Badge tone="warning">{formatPlainNumber(row.cost_warning_count)} expensive</Badge>
+                                  ) : null}
+                                </td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td colSpan={5}>AI usage hali yozilmagan.</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
 
-                  <div className="table-wrap">
-                    <table className="data-table">
-                      <thead>
-                        <tr>
-                          <th>Module</th>
-                          <th>Calls</th>
-                          <th>Input</th>
-                          <th>Thinking</th>
-                          <th>Cost</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(overview.ai_usage?.by_module || []).length ? (
-                          (overview.ai_usage?.by_module || []).map((row: AiUsageModuleRow) => (
-                            <tr key={row.module_key || "unknown"}>
-                              <td className="font-semibold text-foreground">{moduleLabel(row.module_key)}</td>
-                              <td>{formatPlainNumber(row.event_count)}</td>
-                              <td>{formatCompactNumber(row.prompt_token_count)}</td>
-                              <td>{formatCompactNumber(row.thoughts_token_count)}</td>
-                              <td>
-                                <div>{formatUsd(row.estimated_total_cost_usd)}</div>
-                                {numberValue(row.cost_warning_count) > 0 ? (
-                                  <Badge tone="warning">{formatPlainNumber(row.cost_warning_count)} expensive</Badge>
-                                ) : null}
-                              </td>
-                            </tr>
-                          ))
-                        ) : (
+                  <div>
+                    <div className="mb-2 text-sm font-semibold text-foreground">Modullar bo'yicha</div>
+                    <div className="table-wrap">
+                      <table className="data-table">
+                        <thead>
                           <tr>
-                            <td colSpan={5}>Module bo'yicha usage hali yo'q.</td>
+                            <th>Module</th>
+                            <th>Calls</th>
+                            <th>Input</th>
+                            <th>Thinking</th>
+                            <th>Cost</th>
                           </tr>
-                        )}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {(overview.ai_usage?.by_module || []).length ? (
+                            (overview.ai_usage?.by_module || []).map((row: AiUsageModuleRow) => (
+                              <tr key={row.module_key || "unknown"}>
+                                <td className="font-semibold text-foreground">{moduleLabel(row.module_key)}</td>
+                                <td>{formatPlainNumber(row.event_count)}</td>
+                                <td>{formatCompactNumber(row.prompt_token_count)}</td>
+                                <td>{formatCompactNumber(row.thoughts_token_count)}</td>
+                                <td>
+                                  <div>{formatUsd(row.estimated_total_cost_usd)}</div>
+                                  {numberValue(row.cost_warning_count) > 0 ? (
+                                    <Badge tone="warning">{formatPlainNumber(row.cost_warning_count)} expensive</Badge>
+                                  ) : null}
+                                </td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td colSpan={5}>Module bo'yicha usage hali yo'q.</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </div>
               </SettingsBaseCard>
@@ -1412,6 +1466,65 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
               <SettingsBaseCard
                 header={<SectionHeader eyebrow="Recent Calls" title="Oxirgi AI chaqiruvlar" />}
               >
+                <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_140px] lg:items-end">
+                  <BaseSelectField
+                    className={SETTINGS_SELECT_CLASS}
+                    label="Tenant filter"
+                    onChange={(value) =>
+                      setUsageFilters((current) => ({
+                        ...current,
+                        tenant: value,
+                      }))
+                    }
+                    value={usageFilters.tenant}
+                  >
+                    <option value="">Barcha tenantlar</option>
+                    {usageFilterOptions.tenants.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </BaseSelectField>
+                  <BaseInputField
+                    className={SETTINGS_INPUT_CLASS}
+                    label="Task filter"
+                    onChange={(value) =>
+                      setUsageFilters((current) => ({
+                        ...current,
+                        task: value,
+                      }))
+                    }
+                    placeholder="DEV-1234"
+                    value={usageFilters.task}
+                  />
+                  <BaseSelectField
+                    className={SETTINGS_SELECT_CLASS}
+                    label="Module filter"
+                    onChange={(value) =>
+                      setUsageFilters((current) => ({
+                        ...current,
+                        module: value,
+                      }))
+                    }
+                    value={usageFilters.module}
+                  >
+                    <option value="">Barcha modullar</option>
+                    {usageFilterOptions.modules.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </BaseSelectField>
+                  <Button
+                    disabled={!usageFiltersActive}
+                    fullWidth
+                    onClick={() => setUsageFilters({ module: "", task: "", tenant: "" })}
+                    type="button"
+                    variant="soft"
+                  >
+                    Tozalash
+                  </Button>
+                </div>
                 <div className="mt-4 table-wrap">
                   <table className="data-table">
                     <thead>
@@ -1426,36 +1539,42 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                       </tr>
                     </thead>
                     <tbody>
-                      {(overview.ai_usage?.recent_events || []).length ? (
-                        (overview.ai_usage?.recent_events || []).map((row: AiUsageEventRow) => (
-                          <tr key={row.id || `${row.created_at}-${row.task_key}-${row.agent_key}`}>
-                            <td>{formatDateTime(row.created_at)}</td>
-                            <td>{row.company_code || (row.company_id ? `#${row.company_id}` : "-")}</td>
-                            <td>
-                              <div className="font-semibold text-foreground">{row.task_key || "-"}</div>
-                              <div className="text-xs text-muted-foreground">{row.source || "-"}</div>
-                            </td>
-                            <td>
-                              <div>{moduleLabel(row.module_key)}</div>
-                              <div className="text-xs text-muted-foreground">{row.agent_key || "-"}</div>
-                            </td>
-                            <td>
-                              <div>{row.model || "-"}</div>
-                              <div className="text-xs text-muted-foreground">{row.pricing_tier || "-"}</div>
-                            </td>
-                            <td>
-                              <div>{formatCompactNumber(row.total_token_count)} total</div>
-                              <div className="text-xs text-muted-foreground">
-                                {formatCompactNumber(row.prompt_token_count)} in ·{" "}
-                                {formatCompactNumber(row.thoughts_token_count)} think
-                              </div>
-                            </td>
-                            <td>
-                              <div>{formatUsd(row.estimated_total_cost_usd)}</div>
-                              {row.cost_warning ? <Badge tone="warning">expensive</Badge> : null}
-                            </td>
+                      {recentUsageEvents.length ? (
+                        filteredUsageEvents.length ? (
+                          filteredUsageEvents.map((row: AiUsageEventRow) => (
+                            <tr key={row.id || `${row.created_at}-${row.task_key}-${row.agent_key}`}>
+                              <td>{formatDateTime(row.created_at)}</td>
+                              <td>{row.company_code || (row.company_id ? `#${row.company_id}` : "-")}</td>
+                              <td>
+                                <div className="font-semibold text-foreground">{row.task_key || "-"}</div>
+                                <div className="text-xs text-muted-foreground">{row.source || "-"}</div>
+                              </td>
+                              <td>
+                                <div>{moduleLabel(row.module_key)}</div>
+                                <div className="text-xs text-muted-foreground">{row.agent_key || "-"}</div>
+                              </td>
+                              <td>
+                                <div>{row.model || "-"}</div>
+                                <div className="text-xs text-muted-foreground">{row.pricing_tier || "-"}</div>
+                              </td>
+                              <td>
+                                <div>{formatCompactNumber(row.total_token_count)} total</div>
+                                <div className="text-xs text-muted-foreground">
+                                  {formatCompactNumber(row.prompt_token_count)} in ·{" "}
+                                  {formatCompactNumber(row.thoughts_token_count)} think
+                                </div>
+                              </td>
+                              <td>
+                                <div>{formatUsd(row.estimated_total_cost_usd)}</div>
+                                {row.cost_warning ? <Badge tone="warning">expensive</Badge> : null}
+                              </td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan={7}>Tanlangan filterlar bo'yicha AI chaqiruv topilmadi.</td>
                           </tr>
-                        ))
+                        )
                       ) : (
                         <tr>
                           <td colSpan={7}>Real Gemini chaqiruvi bo'lgandan keyin yozuvlar chiqadi.</td>
@@ -1559,7 +1678,7 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                   <NumberField
                     inputClassName={SETTINGS_INPUT_CLASS}
                     label="Blocked retry delay (min)"
-                    hint="Gemini band bo'lib (timeout/429) bloklangan task shuncha DAQIQAdan keyin qayta urinadi."
+                    hint="Bu taskning kutish muddati: Gemini timeout/429 sabab blocked bo'lgan task shu daqiqadan oldin retry qilinmaydi."
                     min={1}
                     onChange={(value) =>
                       setSystemForm((current) => ({
@@ -1572,7 +1691,7 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                   <NumberField
                     inputClassName={SETTINGS_INPUT_CLASS}
                     label="Blocked check interval (min)"
-                    hint="Bloklangan tasklarni tizim har shuncha daqiqada tekshiradi. Kichik = tezroq qayta urinadi (DB'ga ko'proq yuk). 0.5 = 30 sekund."
+                    hint="Bu scheduler scan davri: tizim retry vaqti kelgan blocked tasklarni qanchada bir qidiradi. 0.5 = har 30 sekund tekshiradi."
                     min={0.1}
                     onChange={(value) =>
                       setSystemForm((current) => ({
@@ -1586,7 +1705,7 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                   <NumberField
                     inputClassName={SETTINGS_INPUT_CLASS}
                     label="Gemini max retries (503/overload)"
-                    hint="Gemini vaqtincha band bo'lsa (503/overload) so'rov shuncha MARTA qayta urinadi (tanaffus 5s→10s→20s)."
+                    hint="Bitta Gemini so'rov 503/overload qaytarsa, final xatoga o'tishdan oldin shuncha marta qayta urinadi. Tanaffus: 5s -> 10s -> 20s."
                     min={1}
                     onChange={(value) =>
                       setSystemForm((current) => ({
@@ -1598,16 +1717,16 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                   />
                   <NumberField
                     inputClassName={SETTINGS_INPUT_CLASS}
-                    label="Key freeze duration (sec)"
-                    hint="Bir kalit '429 kvota' bersa shuncha sekundga 'dam oladi' (muzlatiladi), shu vaqt boshqa kalit ishlatiladi. 600 = 10 daqiqa."
+                    label="Key freeze (daqiqa)"
+                    hint="Gemini API key 429/quota limit bersa, shu key shuncha daqiqaga muzlatiladi. Shu vaqt ichida boshqa key bo'lsa, tizim o'shanga o'tadi."
                     min={1}
                     onChange={(value) =>
                       setSystemForm((current) => ({
                         ...current,
-                        key_freeze_duration: Number(value || 0),
+                        key_freeze_duration: minutesInputToSeconds(value),
                       }))
                     }
-                    value={String(systemForm.key_freeze_duration)}
+                    value={secondsToMinutesInput(systemForm.key_freeze_duration)}
                   />
                   <NumberField
                     inputClassName={SETTINGS_INPUT_CLASS}

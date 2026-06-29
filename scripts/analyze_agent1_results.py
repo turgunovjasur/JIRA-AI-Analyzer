@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 from utils.jira.jira_client import JiraClient
 
-MD_PATH = "/Users/mac/Documents/projects/JIRA-AI-Analyzer/AGENT1_TEST_RESULTS.md"
+MD_PATH = "/Users/mac/Documents/projects/QA-Assistant/AGENT1_TEST_RESULTS.md"
 
 def extract_jsons(content):
     """Markdown'dan 3 ta JSON ni ajratish."""

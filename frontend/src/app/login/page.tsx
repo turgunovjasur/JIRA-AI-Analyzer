@@ -63,7 +63,7 @@ export default async function LoginPage() {
           </div>
         </div>
 
-        <p className="qa-login-hero-footer">© 2026 QA Assistant Platform</p>
+        <p className="qa-login-hero-footer">© 2026 QA-Assistant Platform</p>
       </section>
 
       {/* ── Login form panel ── */}

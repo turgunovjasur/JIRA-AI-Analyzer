@@ -6,6 +6,7 @@ import { MetricCard } from "@/components/ui/metric-card";
 import { Notice } from "@/components/ui/notice";
 import { SectionHeader } from "@/components/ui/section-header";
 import { StatusPill } from "@/components/ui/status-pill";
+import { MonitoringDeleteCard } from "@/components/monitoring-delete-card";
 import { getBackendHealth, getMonitoringSnapshot } from "@/lib/backend";
 import { requireSession } from "@/lib/session";
 import type {
@@ -416,6 +417,8 @@ export default async function MonitoringPage({
           <SectionHeader eyebrow="Blocked Queue" title="Retry kutayotgan tasklar" />
           <div className="mt-4"><BlockedList rows={snapshot.blocked_tasks || []} /></div>
         </Card>
+
+        <MonitoringDeleteCard />
       </>
     );
   } catch (error) {

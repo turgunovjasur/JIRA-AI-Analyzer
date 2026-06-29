@@ -20,7 +20,7 @@ export default async function HomePage() {
         <Badge tone="soft">Web Platform</Badge>
         <div className="mt-6 max-w-4xl space-y-5">
           <h1 className="text-4xl font-semibold tracking-tight text-foreground md:text-6xl md:leading-[1]">
-            QA Assistant endi jamoalar uchun qulay, yagona ish portaliga aylandi.
+            QA-Assistant endi jamoalar uchun qulay, yagona ish portaliga aylandi.
           </h1>
           <p className="max-w-3xl text-base leading-8 text-muted-foreground">
             Checkerlar, monitoring, settings va admin boshqaruvi bir joyda ishlaydi.

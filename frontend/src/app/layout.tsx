@@ -18,7 +18,7 @@ const dmMono = DM_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "QA Assistant Portal",
+  title: "QA-Assistant Portal",
   description: "Unified QA workspace for customers, admins and operations teams",
 };
 

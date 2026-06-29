@@ -3,7 +3,7 @@
 Bu hujjat `TZ-PR Checker` modulining hozirgi ishlashini qisqacha tahlil qiladi va keyingi product-ready UI uchun aniq TZ beradi.
 
 Asosiy requirement hujjati:
-- [docs/CHECKER_QA_REQUIREMENTS.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/docs/CHECKER_QA_REQUIREMENTS.md)
+- [docs/CHECKER_QA_REQUIREMENTS.md](/Users/mac/Documents/projects/QA-Assistant/docs/CHECKER_QA_REQUIREMENTS.md)
 - Checker bo'yicha keyingi product qarorlar avvalo shu QA requirement baseline'ga mos bo'lishi kerak.
 
 Muhim chegaralar:
@@ -24,7 +24,8 @@ Design natijasi oddiy `score screen` emas, balki `task intelligence cockpit` bo'
 ## 2. Hozirgi checker qanday ishlaydi (`as-is`)
 
 Asosiy manbalar:
-- `services/checkers/tz_pr_checker.py`
+- `services/checkers/tzpr_orchestrator.py`
+- `core/setup_checks/`
 - `services/api/tzpr_api.py`
 - `services/webhook/service_runner.py`
 - `frontend/src/components/tzpr-checker.tsx`
@@ -52,8 +53,8 @@ Checker ichki oqimi quyidagicha:
 
 1. Session va module access tekshiriladi
 2. JIRA dan task details olinadi
-3. PR topiladi va `merged` ekanligi tekshiriladi
-4. TZ minimal uzunligi tekshiriladi
+3. TZ minimal uzunligi faqat JIRA `description` bo'yicha tekshiriladi
+4. PR topiladi va `merged` ekanligi tekshiriladi
 5. TZ + human comments formatlanadi
 6. Developer objection/recheck konteksti ajratiladi
 7. Figma linklar topiladi va summary olinadi

@@ -183,6 +183,21 @@ export function getMonitoringSnapshot(params: {
   );
 }
 
+export function deleteMonitoringTaskWithBackend(params: {
+  taskKey: string;
+  companyId?: number | null;
+}) {
+  const search = new URLSearchParams();
+  if (params.companyId) {
+    search.set("company_id", String(params.companyId));
+  }
+  const query = search.toString();
+  return backendRequest<{ success: boolean; task_id: string }>(
+    `/api/monitoring/tasks/${encodeURIComponent(params.taskKey)}${query ? `?${query}` : ""}`,
+    { method: "DELETE" },
+  );
+}
+
 export function createTzprRunWithBackend(payload: TZPRCreateRunRequest & {
   company_id?: number | null;
   user_id?: number | null;

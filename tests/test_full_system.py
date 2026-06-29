@@ -1,5 +1,5 @@
 """
-JIRA-AI-Analyzer - To'liq Tizim Testlari (Consolidated)
+QA-Assistant - To'liq Tizim Testlari (Consolidated)
 =========================================================
 
 Barcha test fayllardan birlashtirilib yaratilgan pytest test fayli.

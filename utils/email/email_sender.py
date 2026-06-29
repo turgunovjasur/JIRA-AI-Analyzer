@@ -7,7 +7,7 @@ Env vars:
   SMTP_USER        — majburiy
   SMTP_PASS        — majburiy
   SMTP_FROM_EMAIL  — default SMTP_USER
-  SMTP_FROM_NAME   — default "QA Assistant"
+  SMTP_FROM_NAME   — default "QA-Assistant"
   APP_BASE_URL     — reset link uchun, default http://localhost:3000
 """
 from __future__ import annotations
@@ -37,7 +37,7 @@ def send_email(to_email: str, subject: str, html_body: str, text_body: str = "")
     user = _cfg("SMTP_USER")
     password = _cfg("SMTP_PASS")
     from_email = _cfg("SMTP_FROM_EMAIL") or user
-    from_name = _cfg("SMTP_FROM_NAME", "QA Assistant")
+    from_name = _cfg("SMTP_FROM_NAME", "QA-Assistant")
 
     if not (host and user and password):
         log.warning(f"Email yuborilmadi ({to_email}): SMTP sozlanmagan")
@@ -68,7 +68,7 @@ def send_email(to_email: str, subject: str, html_body: str, text_body: str = "")
 def send_password_reset_email(to_email: str, username: str, reset_token: str) -> bool:
     base_url = _cfg("APP_BASE_URL", "http://localhost:3000").rstrip("/")
     reset_url = f"{base_url}/reset-password?token={reset_token}"
-    subject = "Parolni tiklash — QA Assistant"
+    subject = "Parolni tiklash — QA-Assistant"
 
     html_body = f"""
 <!DOCTYPE html>
@@ -80,7 +80,7 @@ def send_password_reset_email(to_email: str, username: str, reset_token: str) ->
       <table width="520" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)">
         <tr>
           <td style="background:#1a1a2e;padding:28px 40px">
-            <div style="color:#fff;font-size:20px;font-weight:700">QA Assistant</div>
+            <div style="color:#fff;font-size:20px;font-weight:700">QA-Assistant</div>
             <div style="color:#a0a0b8;font-size:13px;margin-top:4px">Parolni tiklash</div>
           </td>
         </tr>
@@ -106,7 +106,7 @@ def send_password_reset_email(to_email: str, username: str, reset_token: str) ->
         <tr>
           <td style="background:#f8f8f8;padding:20px 40px;border-top:1px solid #eee">
             <p style="margin:0;font-size:12px;color:#aaa">
-              © 2026 QA Assistant Platform — avtomatik xabar, javob qilmang.
+              © 2026 QA-Assistant Platform — avtomatik xabar, javob qilmang.
             </p>
           </td>
         </tr>

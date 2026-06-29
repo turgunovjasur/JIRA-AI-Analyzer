@@ -95,6 +95,7 @@ export async function GET() {
     const webhookPayload = await readWebhookConfigWithBackend({ company_id: companyId });
     const data = webhookPayload?.data || {};
     const trigger = String(data.trigger_status || "");
+    const testcaseTrigger = String(data.testcase_auto_comment_trigger_status || "");
     return NextResponse.json({
       success: true,
       data: {
@@ -116,10 +117,12 @@ export async function GET() {
         ai_data_section_order: Array.isArray(data.ai_data_section_order) ? data.ai_data_section_order : ["tz", "comments", "figma", "code"],
         skip_code: String(data.skip_code ?? "AI_SKIP"),
         skip_comment_text: String(data.skip_comment_text || "⏭️ AI tekshirish o'chirilgan. Dev tomanidan skip ko'rsatma berilgan. Manual tekshirish tavsiya etiladi."),
+        trigger_configured: Boolean(trigger.trim()),
         trigger_status: trigger || "READY TO TEST",
         trigger_status_aliases: String(data.trigger_status_aliases || ""),
         testcase_auto_comment_enabled: Boolean(data.testcase_auto_comment_enabled),
-        testcase_auto_comment_trigger_status: String(data.testcase_auto_comment_trigger_status || "READY TO TEST"),
+        testcase_trigger_configured: Boolean(testcaseTrigger.trim()),
+        testcase_auto_comment_trigger_status: testcaseTrigger || "READY TO TEST",
         testcase_auto_comment_trigger_aliases: String(data.testcase_auto_comment_trigger_aliases || "Ready To Test,READY TO TEST"),
         testcase_default_test_types: Array.isArray(data.testcase_default_test_types) ? data.testcase_default_test_types : ["positive", "negative"],
         testcase_testcases_per_requirement: ensureNumber(data.testcase_testcases_per_requirement, 3),

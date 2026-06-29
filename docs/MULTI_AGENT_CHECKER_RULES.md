@@ -5,10 +5,10 @@ Status: `Superseded by docs/MULTI_AGENT_JSON_CONTRACT.md for agent JSON formats`
 Last updated: `2026-05-18`
 
 Source of truth:
-- Agent JSON contract: [docs/MULTI_AGENT_JSON_CONTRACT.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/docs/MULTI_AGENT_JSON_CONTRACT.md)
-- SaaS roadmap: [ROADMAP_SAAS.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/ROADMAP_SAAS.md)
-- Rebuild background: [docs/MULTI_AGENT_CHECKER_REBUILD_SPEC.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/docs/MULTI_AGENT_CHECKER_REBUILD_SPEC.md)
-- Progress log: [PROGRESS_LOG.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/PROGRESS_LOG.md)
+- Agent JSON contract: [docs/MULTI_AGENT_JSON_CONTRACT.md](/Users/mac/Documents/projects/QA-Assistant/docs/MULTI_AGENT_JSON_CONTRACT.md)
+- SaaS roadmap: [ROADMAP_SAAS.md](/Users/mac/Documents/projects/QA-Assistant/ROADMAP_SAAS.md)
+- Rebuild background: [docs/MULTI_AGENT_CHECKER_REBUILD_SPEC.md](/Users/mac/Documents/projects/QA-Assistant/docs/MULTI_AGENT_CHECKER_REBUILD_SPEC.md)
+- Progress log: [PROGRESS_LOG.md](/Users/mac/Documents/projects/QA-Assistant/PROGRESS_LOG.md)
 
 Roadmap connection:
 - Stage 2 - Target Architecture: checker, agents, run lifecycle and contracts must have clear boundaries.

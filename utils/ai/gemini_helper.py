@@ -355,7 +355,7 @@ class GeminiHelper:
             config={
                 "contents": str(content or ""),
                 "ttl": f"{max(60, int(ttl_seconds or 600))}s",
-                "display_name": display_name or "jira-ai-analyzer-cache",
+                "display_name": display_name or "qa-assistant-cache",
             },
         )
         return str(getattr(response, "name", "") or "")

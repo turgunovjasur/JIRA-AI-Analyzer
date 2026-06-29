@@ -1,10 +1,10 @@
 @echo off
 setlocal enabledelayedexpansion
-title JIRA AI Analyzer
+title QA-Assistant
 
 echo.
 echo ============================================================
-echo   JIRA AI Analyzer - Ishga tushirish
+echo   QA-Assistant - Ishga tushirish
 echo ============================================================
 echo.
 

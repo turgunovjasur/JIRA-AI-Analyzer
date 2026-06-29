@@ -1,5 +1,5 @@
 """
-JIRA-AI-Analyzer: Unified Logging System
+QA-Assistant: Unified Logging System
 Windows CMD-friendly, strukturali, o'qish oson
 """
 

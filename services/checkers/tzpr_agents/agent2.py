@@ -404,22 +404,29 @@ def validate_agent2_json(
             "retryable": True,
         }
 
+    # AI ba'zan single rejimda ham batch shaklini ({"items":[...]}) qaytaradi —
+    # ichidagi bitta verification elementini ochib olamiz.
+    if not str(parsed.get("status") or "").strip() and isinstance(parsed.get("items"), list):
+        first_item = next((it for it in parsed["items"] if isinstance(it, dict)), None)
+        if first_item is not None:
+            parsed = first_item
+
+    # Single rejimda qaysi requirement so'ralganini bilamiz (expected). Shuning uchun
+    # id yo'q yoki noto'g'ri bo'lsa rad etmaymiz — expected'ni o'zimiz qo'yamiz.
+    # Faqat status va evidence haqiqiy signal bo'lgani uchun ular tekshiriladi.
     actual_id = str(parsed.get("id") or "").strip()
-    if not actual_id:
+    if expected:
+        if not actual_id:
+            warnings.append("agent2_id_backfilled_missing")
+        elif actual_id != expected:
+            warnings.append(f"agent2_id_backfilled expected={expected} actual={actual_id}")
+        actual_id = expected
+    elif not actual_id:
         return {
             "ok": False,
             "data": None,
             "verification": None,
             "error": "agent2_missing_id",
-            "warnings": warnings,
-            "retryable": True,
-        }
-    if expected and actual_id != expected:
-        return {
-            "ok": False,
-            "data": None,
-            "verification": None,
-            "error": f"agent2_id_mismatch expected={expected} actual={actual_id}",
             "warnings": warnings,
             "retryable": True,
         }
@@ -505,13 +512,52 @@ def validate_agent2_batch_json(
             "retryable": True,
         }
 
-    normalized = normalize_verifications([item for item in items if isinstance(item, dict)])
-    by_id = {str(item.get("id") or "").strip(): item for item in normalized}
+    raw_items = [item for item in items if isinstance(item, dict)]
     expected_set = set(expected)
+
+    # 1-bosqich: id'si TO'G'RI bo'lgan javoblarni ishonchli ulaymiz; id'siz yoki
+    # noto'g'ri id'li javoblarni keyingi bosqich uchun chetga saqlaymiz.
+    # (normalize_verifications id'siz itemlarni tashlab yuboradi — shuning uchun
+    #  id'ni AVVAL, raw item ustida to'ldiramiz.)
+    matched_raw: dict[str, dict[str, Any]] = {}
+    leftover_raw: list[dict[str, Any]] = []
+    for item in raw_items:
+        item_id = str(item.get("id") or "").strip()
+        if item_id and item_id in expected_set and item_id not in matched_raw:
+            matched_raw[item_id] = item
+        else:
+            leftover_raw.append(item)
+
+    # 2-bosqich: qolgan (id'siz/noto'g'ri) javoblarni qolgan talablar bilan
+    # TARTIB (navbat) bo'yicha moslaymiz — AI odatda javoblarni so'ralgan tartibда qaytaradi.
+    unmatched_expected = [eid for eid in expected if eid not in matched_raw]
+    backfilled_ids: list[str] = []
+    for eid, item in zip(unmatched_expected, leftover_raw):
+        patched = dict(item)
+        patched["id"] = eid
+        matched_raw[eid] = patched
+        backfilled_ids.append(eid)
+
+    normalized = normalize_verifications(
+        [matched_raw[eid] for eid in expected if eid in matched_raw]
+    )
+    by_id = {str(item.get("id") or "").strip(): item for item in normalized}
     missing_ids = [item_id for item_id in expected if item_id not in by_id]
-    extra_ids = [item_id for item_id in by_id if item_id not in expected_set]
-    if extra_ids:
-        warnings.append(f"Agent2 batch ortiqcha id qaytardi: {', '.join(extra_ids[:10])}.")
+    unused_count = max(0, len(leftover_raw) - len(unmatched_expected))
+
+    if backfilled_ids:
+        if len(backfilled_ids) == 1:
+            warnings.append(
+                f"Agent2 batch: {backfilled_ids[0]} id'siz/noto'g'ri qaytdi — "
+                "tartib bo'yicha tiklandi."
+            )
+        else:
+            warnings.append(
+                f"Agent2 batch: {len(backfilled_ids)} ta verification id tartib bo'yicha "
+                f"taxmin qilindi ({', '.join(backfilled_ids[:10])}) — tekshirib ko'ring."
+            )
+    if unused_count:
+        warnings.append(f"Agent2 batch ortiqcha {unused_count} ta javob qaytardi.")
     if missing_ids:
         warnings.append(f"Agent2 batch ayrim idlarni qaytarmadi: {', '.join(missing_ids[:10])}.")
 

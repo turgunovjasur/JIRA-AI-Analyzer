@@ -1,4 +1,4 @@
-# JIRA AI Analyzer SaaS Roadmap
+# QA-Assistant SaaS Roadmap
 
 Bu hujjat loyihani ichki `Streamlit` vositasidan to'liq sotuvga tayyor SaaS mahsulotga aylantirish uchun asosiy roadmap hisoblanadi.
 

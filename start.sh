@@ -318,7 +318,7 @@ PY
 print_banner() {
   log
   log "============================================================"
-  log "  JIRA AI Analyzer - Local Startup"
+  log "  QA-Assistant - Local Startup"
   log "============================================================"
   log
 }

@@ -808,10 +808,12 @@ export type WebhookSettingsView = {
     skip_code: string;
     skip_comment_text: string;
     max_skip_check_comments: number;
+    trigger_configured?: boolean;
     trigger_status: string;
     trigger_status_aliases: string;
     trigger_statuses: string[];
     testcase_auto_comment_enabled: boolean;
+    testcase_trigger_configured?: boolean;
     testcase_auto_comment_trigger_status: string;
     testcase_auto_comment_trigger_aliases: string;
     testcase_default_test_types: string[];

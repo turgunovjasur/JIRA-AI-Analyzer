@@ -1,57 +1,87 @@
-# Testcase Generator Case Documentation (As-Is)
+# Testcase Generator Case Documentation (Run-Based Multi-Agent As-Is)
 
-Bu hujjatning maqsadi: mavjud `Testcase Generator` logikasini 1:1 hujjatlashtirish.
+Bu hujjatning maqsadi: hozirgi `Test Case Generator` logikasini koddagi real branchlar bilan hujjatlashtirish.
 
 Muhim chegaralar:
 - Bu hujjat `as-is` holatni yozadi.
-- Yangi dizayn yoki refactor taklif qilmaydi.
-- Mavjud branchlar, xato case'lar va natija holatlari qayd etiladi.
+- Testcase generator PR ishlatmaydi.
+- UI, webhook va worker runlari bir xil multi-agent testcase enginega boradi.
 
 ## 1) Kirish nuqtalari
 
-### 1.1 Frontend API route (UI)
-Manba: `/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/src/app/api/testcase/generate/route.ts`
+### 1.1 Frontend API routes (UI)
+Manbalar:
+- `/Users/mac/Documents/projects/QA-Assistant/frontend/src/app/api/testcase/runs/route.ts`
+- `/Users/mac/Documents/projects/QA-Assistant/frontend/src/app/api/testcase/runs/[runId]/route.ts`
 
 Case-lar:
-1. Sessiya yo'q/yaroqsiz -> `401`, `{ success:false, error:"Sessiya topilmadi..." }`.
-2. Role/module ruxsati yo'q -> `403`, `{ success:false, error:"Test Case Generator uchun ruxsat yo'q." }`.
-3. `task_key` bo'sh -> `400`, `{ success:false, error:"Task key majburiy." }`.
-4. Valid payload -> backend `/api/testcase/generate` ga yuboradi.
+1. Sessiya yo'q/yaroqsiz -> `401`.
+2. Role/module ruxsati yo'q -> `403`.
+3. `task_key` bo'sh -> `400`.
+4. Valid payload -> backend `/api/testcase/runs` ga yuboriladi.
+5. UI run holatini `/api/testcase/runs/{runId}` orqali kuzatadi.
 
 Payload normalize:
 - `task_key` -> `trim().toUpperCase()`
-- `include_pr` default `true`
-- `use_smart_patch` default `true`
-- `test_types` default `['positive', 'negative']`
+- `test_types` default `[]` (backend defaultga tushadi)
 - `custom_context` default `""`
+- `output_profile` default `ui`
 
-### 1.2 Backend API route (direct service call)
-Manba: `/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/api/testcase_api.py`
+### 1.2 Backend API route
+Manba: `/Users/mac/Documents/projects/QA-Assistant/services/api/testcase_api.py`
 
 Case-lar:
-1. Session/scope auth xato -> HTTPException (auth layer).
-2. Valid scope -> `TestCaseGeneratorService(user_id, company_id).generate_test_cases(...)`.
-3. Kutilmagan exception -> `500`, `Testcase generation error: ...`.
+1. `load_api_session` session va role tekshiradi.
+2. `require_customer_scope` company/user scope aniqlaydi.
+3. `normalize_manual_task_key`:
+   - `DEV-1234` kabi to'liq key bo'lsa o'zidek qoladi.
+   - `1234` kabi raqam bo'lsa faqat `jira_project_keys` settingdan project key olib `DEV-1234` qiladi.
+   - `jira_project_keys` bo'lmasa `400` qaytadi.
+4. `run_start_preflight` run yaratishdan oldingi local setup gate'ni bajaradi.
+5. Valid scope va preflight OK -> `create_testcase_run`.
+6. Queue yoqilgan bo'lsa job enqueue qilinadi, aks holda background task `execute_testcase_run`.
+7. Kutilmagan backend exception -> `500`, `Testcase run create error: ...`.
 
 ### 1.3 Webhook path (Service2)
 Manbalar:
-- `/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/webhook/jira_webhook_handler.py`
-- `/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/webhook/service_runner.py`
-- `/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/webhook/testcase_webhook_handler.py`
-- `/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/webhook/queue_manager.py`
+- `/Users/mac/Documents/projects/QA-Assistant/services/webhook/jira_webhook_handler.py`
+- `/Users/mac/Documents/projects/QA-Assistant/services/webhook/service_runner.py`
+- `/Users/mac/Documents/projects/QA-Assistant/services/webhook/testcase_webhook_handler.py`
 
 Service2 ishga tushish yo'llari:
-1. JIRA webhook trigger -> queue orqali `Service1 -> delay -> Service2` (`_run_task_group`).
-2. `AI_SKIP` holatida Service1 skip bo'lsa ham Service2 alohida ishga tushishi mumkin.
-3. Manual endpoint:
+1. JIRA webhook trigger -> `Service1 -> delay -> Service2`.
+2. `AI_SKIP` holatida Service1 `skip` bo'lsa ham Service2 ishlashi mumkin.
+3. Service1 super-admin tomonidan o'chirilgan bo'lsa, Service2 trigger statusda alohida ishlashi mumkin.
+4. Manual endpointlar:
    - `/manual/testcase/{task_key}` -> faqat Service2.
    - `/manual/check/{task_key}` -> Service1 + ixtiyoriy Service2.
 
-## 2) Service2 orchestration (`_run_testcase_generation`)
+## 2) Run-start preflight
 
-Manba: `/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/webhook/service_runner.py:215`
+Manba: `/Users/mac/Documents/projects/QA-Assistant/core/module_start_preflight.py`
 
-### 2.1 Service2 startdan oldingi skip case-lar
+UI testcase runi yaratilishidan oldin:
+1. `task_key_format` - `DEV-1234` format.
+2. `customer_scope` - company/user scope mavjud.
+3. `module_access` - company uchun `testcase_generator` yoqilgan.
+4. `api_credentials` - testcase uchun `JIRA + Gemini` kerak; GitHub talab qilinmaydi.
+5. `gemini_quota` - faqat global `QA ASSISTANT` Gemini key ishlatilsa, bepul kvota tugamaganini tekshiradi.
+
+Webhook bu start-preflightdan o'tmaydi; uning gate'lari webhook endpoint va Service2 guardda bajariladi.
+
+## 3) Service2 orchestration
+
+Manba: `/Users/mac/Documents/projects/QA-Assistant/services/webhook/service_runner.py`
+
+`webhook_service2_guard` profili:
+
+```python
+[
+    "service2_db_guard",
+]
+```
+
+`service2_db_guard` ichidagi skip/block case-lar:
 1. Task DB'da yo'q -> skip.
 2. `service1_status` `done|skip|error` emas -> skip.
 3. `service1_status='error'` va `service2_status!='pending'` -> skip.
@@ -60,166 +90,111 @@ Manba: `/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/webhook/service_
 6. `compliance_score < threshold` -> skip.
 7. `task_status='returned'` -> skip.
 
-### 2.2 Service2 run natijasi case-lari
 `check_and_generate_testcases()` natijasiga qarab:
 1. `success=True` -> `set_service2_done(task_key)`.
 2. `success=False`:
-   - `error_type='ai_timeout'` -> `service2_status='blocked'`, retry delay bilan.
-   - `error_type in ('pr_not_found','pr_not_merged','tz_too_short')` -> task return oqimi.
-   - boshqasi -> `service2_status='error'`.
+   - `ai_timeout` -> `service2_status=blocked`, retry delay bilan.
+   - `pr_not_found`, `pr_not_merged`, `tz_too_short` -> return oqimi uriniladi.
+   - boshqasi -> `service2_status=error`.
 
-### 2.3 Queue-related case-lar
-Manba: `queue_manager.py`
+## 4) Testcase webhook handler
 
-1. Queue `enabled=false` -> lock'siz ketma-ket chaqriq.
-2. Queue `enabled=true`:
-   - tenant-level lock olinadi.
-   - timeout bo'lsa task `blocked` + timeout comment.
-   - Service2 oldidan `gemini_min_interval` bo'yicha AI slot tekshiriladi.
-3. `_can_run_service2()` shartlari:
-   - `service1_status in ('done','skip')` va `score is None yoki score>=threshold` va `task_status not in ('returned','blocked')`.
-   - YOKI `service1_status='error'` va `service2_status='pending'` (TZ-only imkoniyati uchun).
+Manba: `/Users/mac/Documents/projects/QA-Assistant/services/webhook/testcase_webhook_handler.py`
 
-## 3) Testcase webhook handler (`check_and_generate_testcases`)
-
-Manba: `/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/webhook/testcase_webhook_handler.py:17`
-
-### 3.1 Pre-check case-lar
+Pre-check case-lar:
 1. `auto_comment_enabled=false` -> `(False, "Auto-comment disabled")`.
 2. `new_status` trigger emas -> `(False, "Status ... is not a trigger")`.
-3. `include_pr is None` -> `default_include_pr` setting ishlatiladi.
+3. `company_id` berilgan bo'lsa webhook credential tekshiriladi.
+4. Credential xato -> `(False, <xatolik matni>)`.
+5. `create_testcase_run + run_testcase_for_webhook` ishlaydi.
 
-### 3.2 Service init case-lari
-1. `company_id` berilgan:
-   - webhook credential tekshiriladi (`get_company_webhook_credentials`).
-   - credential xato -> `(False, <xatolik matni>)`.
-2. Service yaratiladi -> `TestCaseGeneratorService(company_id=...)`.
+JIRA comment yozish case-lari:
+1. `use_adf=true` -> ADF document yoziladi.
+2. ADF fail bo'lsa simple comment fallback.
+3. `use_adf=false` -> simple comment.
+4. Yozish fail yoki exception -> `(False, message)`.
 
-### 3.3 Generation natijasi case-lari
-1. `result.success=false`:
-   - `error_type` klassifikatsiya qilinadi.
-   - ayrim holatlarda (`pr_not_merged/pr_not_found/tz_too_short` yoki matn conditionlari) JIRA warning/error comment yozishga urinadi.
-   - `(False, error_msg)` qaytaradi.
-2. `result.success=true`, lekin `result.test_cases` bo'sh:
-   - `(False, "No test cases generated")`.
-3. `result.success=true` va test caselar bor:
-   - `_write_testcases_comment(...)` orqali JIRA'ga yoziladi.
-   - `(True, message)` yoki yozish xatosida `(False, message)`.
+## 5) Testcase setup profile
 
-### 3.4 JIRA comment yozish case-lari (`_write_testcases_comment`)
-1. `use_adf=true`:
-   - ADF document yoziladi.
-   - ADF fail bo'lsa simple comment fallback.
-2. `use_adf=false`:
-   - faqat simple comment yoziladi.
-3. Yozish success -> `True`.
-4. Yozish fail yoki exception -> `False`.
+Manbalar:
+- `/Users/mac/Documents/projects/QA-Assistant/core/module_preflight.py`
+- `/Users/mac/Documents/projects/QA-Assistant/core/setup_checks/profiles.py`
+- `/Users/mac/Documents/projects/QA-Assistant/services/generators/testcase_generator.py`
 
-## 4) Asosiy servis oqimi (`generate_test_cases`)
+Testcase modul policy:
 
-Manba: `/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/generators/testcase_generator.py:111`
+```python
+ModulePreflightPolicy(
+    jira_fetch=True,
+    min_tz_check=True,
+    pr_check=False,
+    figma_check=True,
+    comment_fetch=True,
+    tz_build=True,
+)
+```
 
-Natija turi:
-- `TestCaseGenerationResult` (`success`, `error_message`, `status_banner`, `test_cases`, `warnings`, `ai_prompt_size`, `ai_model`, `files_analyzed`, ...).
+Amaldagi tartib:
 
-### 4.1 Input/default case-lar
-1. `test_types` bo'sh bo'lsa -> `['positive','negative']`.
-2. `status_callback` bo'lsa progress callback ishlaydi.
+```python
+[
+    "jira_fetch",
+    "min_tz_check",
+    "figma_check",
+    "tz_build",
+]
+```
 
-### 4.2 JIRA olish case-lari
-1. `self.jira.get_task_details(task_key)` `None` -> `success=false`, `"task topilmadi"`.
-2. Credential/scope xatolari (`BaseService/JiraClient`) -> outer `except` orqali `success=false`, `error_message=str(e)`.
+Case-lar:
+1. `jira_fetch`
+   - JIRA API orqali task olinadi.
+   - Task topilmasa `success=false`, `"task topilmadi"`.
 
-### 4.3 Skip/PR cache case-lari
-Manba: `utils/pr_cache.py`
+2. `min_tz_check`
+   - Faqat JIRA `description` uzunligi hisoblanadi.
+   - `summary`, comment yoki boshqa maydonlar minimal uzunlikka qo'shilmaydi.
+   - `description < min_tz_description_chars` bo'lsa `"Servis-2 to'xtatildi"`.
 
-Oqim:
-1. `skip_detected=True` -> PR check butunlay o'tkazib yuboriladi.
-2. `skip_detected=False` va `include_pr=True`:
-   - `pr_exists_cache=False` -> darhol `success=false`, `PR topilmadi`.
-   - `pr_merged_cache=False` -> darhol `success=false`, `PR merged emas`.
-   - `pr_cache` bo'lsa -> shu ishlatiladi (Servis-1 topgan ma'lumot).
-   - `pr_cache` yo'q bo'lsa -> `PRHelper.get_pr_full_info()` bilan mustaqil fetch.
-3. `include_pr=False` -> PR fetch qilinmaydi (TZ-only mode).
+3. `figma_check`
+   - Figma faqat `ai_data_section_order` ichida `figma` bo'lsa ishlaydi.
+   - Token/ruxsat/link xatosi generatorni yiqitmaydi; warning/fail-safe data qaytadi.
 
-### 4.4 PR fallback case-lari
-`include_pr=True` bo'lsa ham:
-1. PR fetch exception (`PRNotMergedError`dan tashqari) -> `pr_info=None`, warning bilan davom etadi.
-2. `pr_info=None` bo'lsa generation to'xtamaydi, TZ-only tarzda davom etadi.
+4. `tz_build`
+   - `read_comments_enabled=false` bo'lsa comments promptga kirmaydi.
+   - `read_comments_enabled=true` bo'lsa `max_comments_to_read` bo'yicha commentlar olinadi.
 
-### 4.5 TZ minimal uzunlik case-lari
-1. `min_tz_chars` kompaniya rejimida `webhook_tz_pr.min_tz_description_chars`dan olinadi.
-2. Global/UI rejimida `tz_pr_checker.min_tz_description_chars`dan olinadi.
-3. `description` minimaldan qisqa -> `success=false`, `"Servis-2 to'xtatildi"` xabari.
+## 6) Asosiy multi-agent generation oqimi
 
-### 4.6 Comment/TZ yig'ish case-lari
-1. `read_comments_enabled=false` -> `comments=[]` qilib formatlanadi.
-2. `read_comments_enabled=true` va `max_comments_to_read=0` -> barcha comment.
-3. `max_comments_to_read>0` -> oxirgi N comment.
-4. `TZHelper.analyze_comments` natijasi `comment_analysis`ga tushadi.
+Manba: `/Users/mac/Documents/projects/QA-Assistant/services/generators/testcase_generator.py`
 
-### 4.7 AI bosqichi (`_generate_with_ai`) case-lari
-1. Prompt `_create_test_case_prompt()` bilan quriladi.
-2. Prompt hajmi `_calculate_text_length()` bilan tekshiriladi.
-3. FULL-only qoida:
-   - agar prompt token limitdan oshsa -> `success=false`, `"prompt too large for full analysis"`.
-   - truncate qilinmaydi.
-4. AI call exception -> `success=false`, `error="AI xatosi: ..."`.
-5. AI success -> `raw_response` qaytariladi.
+Case-lar:
+1. `test_types` bo'sh bo'lsa -> `['positive', 'negative']`.
+2. `testcases_per_requirement` setting 1..3 oralig'iga normalize qilinadi.
+3. Figma checker kabi `ai_data_section_order` orqali boshqariladi.
+4. Setup profile muvaffaqiyatli o'tsa:
+   - Agent1 checker contract reuse qilib requirement ajratadi.
+   - Agent2 requirementlar asosida testcase yozadi.
+   - Backend validation coverage/count/schema tekshiradi.
+   - Missing requirementlar bo'lsa Agent2 repair ishlaydi.
+   - Agent3 audit va scenario grouping qiladi.
+   - Finalizer dedup, per-requirement limit, `TC-NNN` renumber bajaradi.
+5. Agent1 requirement ajrata olmasa -> `success=false`.
+6. Agent2/Agent3 exception bo'lsa -> `success=false`, agent error result.
 
-### 4.8 FULL blocked banner case
-`ai_result.success=false` bo'lsa:
-1. `build_full_analysis_blocked(...)` ishlatiladi.
-2. Natija `TestCaseGenerationResult.success=false`, `status_banner` bilan qaytadi.
-3. `ai_prompt_size`, `ai_model`, `files_analyzed` to'ldiriladi.
+## 7) Parse va validation case-lari
 
-### 4.9 Parse case-lari (`_parse_test_cases`)
-1. JSON topilmasa (`{...}` topilmadi) -> `[]`.
-2. JSON parse OK:
-   - list key aliaslari: `test_cases | testCases | tests | test_case_list`.
-   - bo'sh list bo'lsa warning, lekin exception emas.
-3. JSON decode xato:
-   - `_try_repair_json()` urinishlari:
-     - sanitize escape
-     - `rfind('},')` asosida tiklash
-     - oxirgi `}` asosida tiklash
-   - tiklansa parse davom etadi, bo'lmasa `[]`.
-4. Har test case item qisman bo'lsa default maydonlar bilan `TestCase` obyekt qilinadi.
+1. JSON topilmasa -> parse bo'sh natija qaytarishi mumkin.
+2. JSON aliaslar qo'llab-quvvatlanadi: `test_cases`, `testCases`, `tests`, `test_case_list`.
+3. JSON decode xatoda local repair uriniladi.
+4. Har testcase item qisman bo'lsa default maydonlar bilan `TestCase` obyekt qilinadi.
+5. Validation:
+   - har requirement kamida 1 testcase bilan qoplanishi kerak.
+   - har requirement ko'pi bilan `testcases_per_requirement` testcase oladi.
+   - ortiqcha testcase deterministik trim qilinadi.
 
-### 4.10 `generate_test_cases` yakuniy return case-lari
-1. Parse'dan keyin `test_cases` bo'sh bo'lsa ham servis `success=true` qaytarishi mumkin (0 ta natija bilan).
-2. Statistika hisoblanadi: `by_type`, `by_priority`, `total_test_cases`.
-3. `warnings` saqlanadi (PR fallback holatlar).
-4. Outer exception bo'lsa `success=false`, `error_message=str(e)`.
+## 8) Error classification va reason code mapping
 
-## 5) Prompt qurilish logikasi (`_create_test_case_prompt`)
-
-### 5.1 Dinamik bo'limlar
-Doimiy bo'limlar:
-1. TASK ma'lumotlari
-2. TZ bo'limi
-3. Test talablar
-4. JSON format talabi
-
-Shartli bo'limlar:
-1. `comments_block` -> `comment_analysis.has_changes=true` bo'lsa.
-2. `custom_context_block` -> `custom_context` bo'sh bo'lmasa.
-3. `dev_objections_block` -> `dev_objections` bo'lsa.
-4. `code_block` -> `pr_info` bo'lsa.
-
-### 5.2 Bo'lim tartibi
-- `ai_data_section_order` setting bo'yicha yig'iladi (`testcase_generator` yoki `webhook_testcase` contextiga qarab).
-- Mavjud settings validatsiyasi ruxsat beradigan kalitlar: `tz, comments, custom_context, code`.
-- Kodda `dev_objections` block ham bor, lekin default setting order odatda bu kalitni kiritmaydi.
-
-### 5.3 PR code block logikasi
-1. Har fayl uchun `smart_context` bo'lsa shu qo'shiladi.
-2. Aks holda `patch` qo'shiladi.
-3. `files_to_show = pr_info['files_changed']` (kesish yo'q, FULL modega mos).
-
-## 6) Error classification va reason code mapping
-
-Manba: `/Users/mac/Documents/projects/JIRA-AI-Analyzer/services/webhook/error_handler.py`
+Manba: `/Users/mac/Documents/projects/QA-Assistant/services/webhook/error_handler.py`
 
 Mapping:
 1. `pr_not_found` -> `WARN_NO_PR`
@@ -228,55 +203,54 @@ Mapping:
 4. `ai_timeout` -> `WARN_AI_TIMEOUT`
 5. boshqa -> `ERR_UNKNOWN`
 
-Service2da bu mapping DB status va return reason yozishda ishlatiladi.
+Service2 PR ishlatmasa ham mapping umumiy webhook error-handler bilan bir xil qoladi.
 
-## 7) Sozlamalar behaviorga ta'siri
+## 9) Sozlamalar behaviorga ta'siri
 
 Asosiy `testcase` settinglar:
-1. `default_include_pr`
-2. `default_use_smart_patch`
-3. `default_test_types`
-4. `max_test_cases`
-5. `ai_max_output_tokens`
-6. `ai_data_section_order`
-7. `read_comments_enabled`
-8. `max_comments_to_read`
-9. `auto_comment_enabled` (webhook trigger uchun)
-10. `auto_comment_trigger_status` va aliaslari
-11. `use_adf_format`
+1. `default_test_types`
+2. `testcases_per_requirement`
+3. `ai_max_output_tokens`
+4. `ai_data_section_order`
+5. `read_comments_enabled`
+6. `max_comments_to_read`
+7. `auto_comment_enabled` (webhook trigger uchun)
+8. `auto_comment_trigger_status` va aliaslari
+9. `use_adf_format`
+10. agent model/fallback settinglari
 
-Validatsiya (`TestcaseGeneratorSettings.__post_init__`):
-1. `max_test_cases` 1..50 oralig'ida bo'lishi shart.
-2. `ai_data_section_order` faqat ruxsat etilgan kalitlardan bo'lishi shart.
+Validation:
+1. `testcases_per_requirement` 1..3 oralig'iga clamp qilinadi.
+2. `ai_data_section_order` faqat ruxsat etilgan kalitlardan bo'lishi kerak.
 3. `ai_data_section_order`da `tz` bo'lishi shart.
 
-## 8) "Testcase moduliga task berilganda" to'liq case indeks
+## 10) "Testcase moduliga task berilganda" qisqa indeks
 
 A. Modulga kirmaslik/skip holatlari:
 1. UI/API auth yoki module access yo'q.
 2. Webhookda `auto_comment_enabled=false`.
 3. Trigger status emas.
-4. Service2 orchestration pre-checklar (`service1 hali tayyor emas`, `service2 done`, `score past`, `task returned`).
+4. Service2 guard: service1 tayyor emas, service2 done, score past, task returned.
 
 B. Moduldagi xato holatlar:
 1. JIRA task topilmadi.
-2. PR cache bo'yicha `pr_exists=false`.
-3. PR cache bo'yicha `pr_merged=false`.
-4. TZ minimaldan qisqa.
-5. Prompt token limiti oshgan (FULL blocked).
-6. Gemini xatosi/timeout.
-7. JSON parse bo'lmadi (empty case list).
-8. JIRA comment yozish muvaffaqiyatsiz.
+2. TZ description minimaldan qisqa.
+3. Figma token/ruxsat xatosi warning sifatida qoladi, blocker emas.
+4. Gemini xatosi/timeout.
+5. Agent1 requirement topolmadi.
+6. JSON parse yoki validation natijasida yetarli testcase chiqmasa.
+7. JIRA comment yozish muvaffaqiyatsiz.
 
 C. Moduldagi success holatlar:
-1. PR bilan to'liq testcase generation.
-2. PR yo'q yoki fetch xato bo'lsa TZ-only fallback generation.
-3. Comment change/custom context inobatga olingan generation.
+1. JIRA description asosida testcase generation.
+2. Figma bor bo'lsa Figma signal bilan generation.
+3. Custom context bor bo'lsa promptga qo'shilgan generation.
+4. Commentlar yoqilgan bo'lsa comment context bilan generation.
 
-## 9) O'zgarmas invariants (hozirgi kodga ko'ra)
+## 11) O'zgarmas invariants
 
-1. `generate_test_cases()` exception tashlamasdan `TestCaseGenerationResult` qaytarishga urinadi.
-2. Prompt limit oshsa truncate qilmaydi (FULL-only yondashuv).
-3. `include_pr=true` bo'lsa ham fallbackda TZ-only davom etishi mumkin (cache gate fail case-lardan tashqari).
-4. `generate_test_cases()` ichida 0 testcase holati `success=true` bo'lishi mumkin; ammo webhook layer buni `failure` deb qaytaradi.
-5. Service2 DB status transitionlari `service_runner`da boshqariladi, generatorning o'zi DB status yozmaydi.
+1. Testcase generator PR ishlatmaydi.
+2. Min TZ faqat JIRA `description` bo'yicha hisoblanadi.
+3. UI va webhook Service2 bir xil testcase run enginega boradi.
+4. Service2 DB status transitionlari `service_runner`da boshqariladi.
+5. Generatorning o'zi webhook task DB state machine'ni boshqarmaydi.

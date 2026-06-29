@@ -18,6 +18,7 @@ function buildSteps(
   settings: SharedSettingsView | null,
   webhookUrl: string,
   hasWebhookModule: boolean,
+  webhookTriggerConfigured: boolean,
 ): Step[] {
   const f = settings?.fields;
   const steps: Step[] = [
@@ -48,7 +49,7 @@ function buildSteps(
     steps.push({
       key: "webhook",
       title: "Webhook JIRA ga ulash",
-      done: false,
+      done: webhookTriggerConfigured,
       description: "JIRA webhook URL ni JIRA Admin panelga qo'shing.",
       hint: `JIRA Admin → System → WebHooks → Create a WebHook. URL: ${webhookUrl || "https://sizning-domen.com/webhook/jira"}. Events: Issue Updated (status change).`,
     });
@@ -61,10 +62,16 @@ type SetupWizardProps = {
   settings: SharedSettingsView | null;
   webhookUrl?: string;
   hasWebhookModule?: boolean;
+  webhookTriggerConfigured?: boolean;
 };
 
-export function SetupWizard({ settings, webhookUrl = "", hasWebhookModule = false }: SetupWizardProps) {
-  const steps = buildSteps(settings, webhookUrl, hasWebhookModule);
+export function SetupWizard({
+  settings,
+  webhookUrl = "",
+  hasWebhookModule = false,
+  webhookTriggerConfigured = false,
+}: SetupWizardProps) {
+  const steps = buildSteps(settings, webhookUrl, hasWebhookModule, webhookTriggerConfigured);
   const completedCount = steps.filter((s) => s.done).length;
   const allDone = completedCount === steps.length;
   const [open, setOpen] = useState(!allDone);

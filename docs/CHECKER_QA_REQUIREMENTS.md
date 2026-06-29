@@ -3,7 +3,7 @@
 Bu hujjat `TZ-PR Checker` uchun asosiy product requirement hisoblanadi.
 
 Execution plan:
-- [docs/CHECKER_QA_EXECUTION_PLAN.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/docs/CHECKER_QA_EXECUTION_PLAN.md)
+- [docs/CHECKER_QA_EXECUTION_PLAN.md](/Users/mac/Documents/projects/QA-Assistant/docs/CHECKER_QA_EXECUTION_PLAN.md)
 
 Muhim qoida:
 - Checker bo'yicha keyingi UI, UX, backend contract va promptga oid qarorlar avvalo shu hujjatdagi `QA nuqtayi nazari`ga mos kelishi kerak.

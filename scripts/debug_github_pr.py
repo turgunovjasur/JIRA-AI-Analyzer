@@ -54,7 +54,7 @@ def debug_github_pr(task_key: str):
     session = requests.Session()
     session.headers.update({
         'Accept': 'application/vnd.github.v3+json',
-        'User-Agent': 'JIRA-AI-Analyzer-Debug',
+        'User-Agent': 'QA-Assistant-Debug',
         'Authorization': f'token {token}' if token else ''
     })
     print("  ✅ Session tayyor")

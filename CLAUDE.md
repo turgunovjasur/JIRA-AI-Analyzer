@@ -1,4 +1,4 @@
-# CLAUDE.md — JIRA-AI-Analyzer
+# CLAUDE.md — QA-Assistant
 
 Bu fayl Claude uchun loyiha arxitekturasi, qarorlar va muhim qoidalar.
 Har yangi suhbatda avtomatik yuklanadi.
@@ -28,7 +28,7 @@ JIRA webhook → jira_webhook_handler.py (orchestrator)
 ```
 
 **MUHIM:** webhook, UI va worker — uchalasi ham AYNAN bir xil multi-agent engine'ni
-ishlatadi (eski monolit `analyze_task` yo'li o'chirilgan, 2026-06-23). Checker:
+ishlatadi. Checker:
 agent1 (scope) → agent1b (merge) → agent2 (verify, parallel) → agent3 (arbiter).
 Testcase: agent1 (reuse checker contract) → agent2 (yozish) → agent3 (audit).
 
@@ -48,13 +48,13 @@ Testcase: agent1 (reuse checker contract) → agent2 (yozish) → agent3 (audit)
 | `services/checkers/tzpr_orchestrator.py` | Multi-agent checker engine (agent1→1b→2→3) |
 | `services/checkers/tzpr_agent_runner.py` | Agentlarni ishga tushirish + JSON parse |
 | `services/checkers/tzpr_multi_agent.py` | create_multi_agent_run / run_multi_agent_for_webhook |
-| `services/checkers/tz_pr_checker.py` | `TZPRService` bazaviy sinf (137q) — core + mixinlar |
 | `services/checkers/tzpr_data_fetch.py` | DataFetchMixin — JIRA/PR/Figma/TZ olish |
 | `services/checkers/tzpr_result_builders.py` | ResultBuildersMixin — natija/matritsa qurish |
 | `services/checkers/tzpr_text_parser.py` | TextParserMixin — matn/patch parse |
 | `services/checkers/tzpr_presenters.py` | compliance score (agent3 count'laridan) + final text |
 | `services/generators/testcase_generator.py` | Multi-agent testcase (agent1→2→3); PR YO'Q |
 | `core/module_start_preflight.py` | Run-start gate: credential + Gemini kvota tekshiruvi |
+| `core/setup_checks/` | UI/webhook setup check engine, registry va profillar |
 | `core/tz_helper.py` | TZHelper + CommentSeparator |
 | `core/base_service.py` | Servislar uchun umumiy asos (lazy loading) |
 | `core/pr_helper.py` | GitHub PR qidirish va olish |
@@ -80,7 +80,7 @@ Testcase: agent1 (reuse checker contract) → agent2 (yozish) → agent3 (audit)
 1. JIRA webhook POST /webhook/jira
 2. Event tekshiruvi: faqat jira:issue_updated
 3. Changelog: status o'zgardimi?
-4. Kompaniya: project key orqali topiladi (DEV-1234 → DEV → jasur co.)
+4. Kompaniya: company-specific endpoint yoki JIRA Project Key(lar) mappingi orqali topiladi
 5. Trigger status: yangi status ro'yxatdami?
 6. Filtrlar: issue type, assignee exclusion
 7. DB: task holati tekshiruvi (duplicate, reset if needed)
@@ -92,7 +92,8 @@ Testcase: agent1 (reuse checker contract) → agent2 (yozish) → agent3 (audit)
 11. company credentials olish
 12. return_reason DB dan o'qish → is_recheck aniqlash
 13. create_multi_agent_run + run_multi_agent_for_webhook(run_id):
-    a. _collect_context: JIRA task, PR (PRHelper), Figma, TZ+comment
+    a. _collect_context: `checker_engine` setup profili
+       (`jira_fetch → min_tz_check → pr_check → tz_build → figma_check`)
     b. agent1 (scope) → agent1b (merge) → agent2 (verify, parallel) → agent3 (arbiter)
     c. har agent: GeminiHelper.analyze() → parse_gemini_json (markaziy parser)
     d. compliance score: agent3 count'laridan (tzpr_presenters); all-skipped → None (manual review)
@@ -104,7 +105,7 @@ Testcase: agent1 (reuse checker contract) → agent2 (yozish) → agent3 (audit)
 --- Servis-2 (multi-agent testcase) ---
 17. Shartlar tekshiruvi (S1 done, score OK, not returned)
 18. create_testcase_run + run_testcase_for_webhook(run_id):
-    a. JIRA task details + TZ + Figma (PR ISHLATILMAYDI)
+    a. `testcase_engine` setup profili (`jira_fetch → min_tz_check → figma_check → tz_build`)
     b. agent1 (checker contract reuse) → agent2 (yozish) → agent3 (audit)
     c. parse_gemini_json → TestCase objects → deterministik finalize
 19. ADF comment yozish (fallback: simple)
@@ -245,7 +246,8 @@ AppSettings
 ## Multi-tenant tizim
 
 Har bir kompaniyaning o'z API kalitlari va sozlamalari bor.
-Webhook kelganda project key orqali kompaniya topiladi (DEV → kompaniya).
+Webhook kelganda company-specific endpoint ustuvor; legacy endpointda kompaniya `jira_project_keys` mappingi orqali topiladi.
+Manual UI'da `1234` kabi raqamli input faqat `jira_project_keys` settingdan project key olib `DEV-1234`ga aylantiriladi.
 `company_id` barcha servis funksiyalariga uzatiladi.
 
 ---
@@ -287,9 +289,10 @@ progress.clear()
 - Qadamlar orasida chiziq rangi: yashil → gradient → kulrang
 
 **Servislar `update_status("progress", msg)` chaqirishi shart:**
-- `testcase_generator.py` — JIRA olish, TZ tahlil, AI chaqirishdan oldin
-- `tz_pr_checker.py` — AI chaqirishdan oldin
-- `pr_helper.py` — PR tahlil bosqichida (mavjud)
+- `core/setup_checks/checks.py` — JIRA, PR, Figma, TZ build bosqichlarida
+- `testcase_generator.py` — agent bosqichlari va validation paytida
+- `tzpr_orchestrator.py` — multi-agent run holatlari uchun
+- `pr_helper.py` — PR tahlil bosqichida
 
 Sahifa callbacklari `msg.lower()` orqali qaysi stepga tegishliligini aniqlaydi.
 

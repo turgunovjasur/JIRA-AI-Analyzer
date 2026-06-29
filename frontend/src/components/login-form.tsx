@@ -145,7 +145,7 @@ export function LoginForm() {
         <Badge tone="soft">Web Portal</Badge>
         <div className="space-y-2">
           <h1 className="text-3xl font-semibold tracking-tight text-foreground">
-            QA Assistant portaliga kiring
+            QA-Assistant portaliga kiring
           </h1>
           <p className="text-sm leading-6 text-muted-foreground">
             O&apos;z rolingizga mos ish maydoniga kirish uchun login va parolni kiriting.

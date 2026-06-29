@@ -4,7 +4,7 @@ Bu papka production-ready `PostgreSQL` schema artefaktlarini saqlaydi.
 
 ## Fayllar
 
-- [001_initial_schema.sql](/Users/mac/Documents/projects/JIRA-AI-Analyzer/database/postgresql/001_initial_schema.sql)
+- [001_initial_schema.sql](/Users/mac/Documents/projects/QA-Assistant/database/postgresql/001_initial_schema.sql)
   - birinchi target schema
   - auth, billing, integrations, ops va processing jadvallarini o'z ichiga oladi
 
@@ -20,11 +20,11 @@ Bu SQL production runtime uchun PostgreSQL source-of-truth schema bo'lib xizmat 
 ## Runtime va Tekshiruv
 
 - schema validator:
-  - [utils/tools/validate_postgres_schema.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/utils/tools/validate_postgres_schema.py)
+  - [utils/tools/validate_postgres_schema.py](/Users/mac/Documents/projects/QA-Assistant/utils/tools/validate_postgres_schema.py)
 - migration runner:
-  - [utils/tools/run_postgres_migration_bundle.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/utils/tools/run_postgres_migration_bundle.py)
+  - [utils/tools/run_postgres_migration_bundle.py](/Users/mac/Documents/projects/QA-Assistant/utils/tools/run_postgres_migration_bundle.py)
 - readiness checker:
-  - [utils/tools/check_postgres_ready.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/utils/tools/check_postgres_ready.py)
+  - [utils/tools/check_postgres_ready.py](/Users/mac/Documents/projects/QA-Assistant/utils/tools/check_postgres_ready.py)
 - `runtime.py` ichida:
   - postgres driver availability check
   - postgres connect helperlar
@@ -37,7 +37,7 @@ Bu SQL production runtime uchun PostgreSQL source-of-truth schema bo'lib xizmat 
 - kerakli env:
   - `APP_POSTGRES_DSN=postgresql://USER:PASSWORD@HOST:5432/DBNAME`
 - preflight checker:
-  - [utils/tools/check_postgres_ready.py](/Users/mac/Documents/projects/JIRA-AI-Analyzer/utils/tools/check_postgres_ready.py)
+  - [utils/tools/check_postgres_ready.py](/Users/mac/Documents/projects/QA-Assistant/utils/tools/check_postgres_ready.py)
 
 ## Dry Run Natijasi
 

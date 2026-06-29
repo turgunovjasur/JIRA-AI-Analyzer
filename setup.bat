@@ -1,9 +1,9 @@
 @echo off
-title JIRA AI Analyzer - Setup
+title QA-Assistant - Setup
 
 echo.
 echo ============================================================
-echo   JIRA AI Analyzer - Windows Setup
+echo   QA-Assistant - Windows Setup
 echo ============================================================
 echo.
 

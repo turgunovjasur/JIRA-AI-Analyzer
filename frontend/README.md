@@ -57,7 +57,7 @@ NEXT_PUBLIC_BACKEND_API_BASE_URL=http://127.0.0.1:8000
 - `docker compose up --build` worker + postgres bilan to'liq stackni ko'taradi
 - compose ichida frontend `backend:8000` manziliga ulanadi
 - local `./start.sh` esa `.env` dagi `APP_WEBHOOK_EXECUTION_MODE=queue` bo'lsa worker'ni ham avtomatik ko'taradi
-- production checklist uchun [DEPLOY_WEB.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/DEPLOY_WEB.md) ga qarang
+- production checklist uchun [DEPLOY_WEB.md](/Users/mac/Documents/projects/QA-Assistant/DEPLOY_WEB.md) ga qarang
 
 ## UI Stack
 

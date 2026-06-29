@@ -1,4 +1,4 @@
-# JIRA Bug Analyzer
+# QA-Assistant
 
 AI-powered bug root cause analysis tizimi. Production buglarning asosiy sababini semantic search va Gemini AI yordamida topadi.
 
@@ -42,8 +42,8 @@ AI-powered bug root cause analysis tizimi. Production buglarning asosiy sababini
 
 ### 1. Clone
 ```bash
-git clone https://github.com/your-org/jira-bug-analyzer.git
-cd jira-bug-analyzer
+git clone https://github.com/your-org/qa-assistant.git
+cd qa-assistant
 ```
 
 ### 2. Virtual Environment
@@ -128,11 +128,11 @@ Customer, company admin va super admin oqimlari endi yagona `Next.js` portal ich
 ```
 
 Asosiy fayllar:
-- [frontend/README.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/frontend/README.md)
-- [DEPLOY_WEB.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/DEPLOY_WEB.md)
-- [ROADMAP_SAAS.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/ROADMAP_SAAS.md)
-- [PERMISSION_MATRIX.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/PERMISSION_MATRIX.md)
-- [PROGRESS_LOG.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/PROGRESS_LOG.md)
+- [frontend/README.md](/Users/mac/Documents/projects/QA-Assistant/frontend/README.md)
+- [DEPLOY_WEB.md](/Users/mac/Documents/projects/QA-Assistant/DEPLOY_WEB.md)
+- [ROADMAP_SAAS.md](/Users/mac/Documents/projects/QA-Assistant/ROADMAP_SAAS.md)
+- [PERMISSION_MATRIX.md](/Users/mac/Documents/projects/QA-Assistant/PERMISSION_MATRIX.md)
+- [PROGRESS_LOG.md](/Users/mac/Documents/projects/QA-Assistant/PROGRESS_LOG.md)
 
 Hozirgi bosqich:
 - backend-managed auth session tayyor
@@ -146,7 +146,7 @@ Hozirgi bosqich:
 
 ## 📁 Struktura
 ```
-jira-bug-analyzer/
+qa-assistant/
 ├── frontend/               # Next.js web portal
 ├── services/               # FastAPI API, webhook va domain services
 ├── utils/                  # Auth, database, helper qatlamlari

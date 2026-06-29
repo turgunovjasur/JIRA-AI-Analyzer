@@ -36,10 +36,8 @@ Har bir setting uchun roli ko'rsatiladi:
 
 - `testcase.read_comments_enabled` -> `ONA`
 - `testcase.max_comments_to_read` -> `BOLA` (parent: `testcase.read_comments_enabled`)
-- `testcase.default_include_pr` -> `MUSTAQIL`
-- `testcase.default_use_smart_patch` -> `MUSTAQIL`
 - `testcase.default_test_types` -> `MUSTAQIL`
-- `testcase.max_test_cases` -> `MUSTAQIL`
+- `testcase.testcases_per_requirement` -> `MUSTAQIL`
 - `testcase.ai_data_section_order` -> `MUSTAQIL`
 - `testcase.agent1_primary_model` -> `MUSTAQIL`
 - `testcase.agent1_fallback_model` -> `MUSTAQIL`
@@ -88,10 +86,8 @@ Har bir setting uchun roli ko'rsatiladi:
 - `webhook_testcase.auto_comment_enabled` -> `ONA`
 - `webhook_testcase.auto_comment_trigger_status` -> `BOLA` (parent: `webhook_testcase.auto_comment_enabled`)
 - `webhook_testcase.auto_comment_trigger_aliases` -> `BOLA` (parent: `webhook_testcase.auto_comment_enabled`)
-- `webhook_testcase.default_include_pr` -> `BOLA` (parent: `webhook_testcase.auto_comment_enabled`)
-- `webhook_testcase.default_use_smart_patch` -> `BOLA` (parent: `webhook_testcase.auto_comment_enabled`)
 - `webhook_testcase.default_test_types` -> `BOLA` (parent: `webhook_testcase.auto_comment_enabled`)
-- `webhook_testcase.max_test_cases` -> `BOLA` (parent: `webhook_testcase.auto_comment_enabled`)
+- `webhook_testcase.testcases_per_requirement` -> `BOLA` (parent: `webhook_testcase.auto_comment_enabled`)
 - `webhook_testcase.ai_data_section_order` -> `BOLA` (parent: `webhook_testcase.auto_comment_enabled`)
 - `webhook_testcase.read_comments_enabled` -> `BOLA-ONA` (parent: `webhook_testcase.auto_comment_enabled`)
 - `webhook_testcase.max_comments_to_read` -> `BOLA` (parent: `webhook_testcase.read_comments_enabled`)
@@ -139,10 +135,8 @@ Har bir setting uchun roli ko'rsatiladi:
 - `webhook_testcase.auto_comment_enabled = false` ->
   - hide `webhook_testcase.auto_comment_trigger_status`
   - hide `webhook_testcase.auto_comment_trigger_aliases`
-  - hide `webhook_testcase.default_include_pr`
-  - hide `webhook_testcase.default_use_smart_patch`
   - hide `webhook_testcase.default_test_types`
-  - hide `webhook_testcase.max_test_cases`
+  - hide `webhook_testcase.testcases_per_requirement`
   - hide `webhook_testcase.ai_data_section_order`
   - hide `webhook_testcase.read_comments_enabled`
   - hide `webhook_testcase.max_comments_to_read`

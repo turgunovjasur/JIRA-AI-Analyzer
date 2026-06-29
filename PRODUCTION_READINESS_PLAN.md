@@ -1,4 +1,4 @@
-# Production Readiness Plan — JIRA-AI-Analyzer
+# Production Readiness Plan — QA-Assistant
 
 > Maqsad: loyihani 10 → 100+ kompaniya uchun sotuvga tayyor holatga keltirish.
 > Sana: 2026-06-17 | Holat: **~70% tayyor**
@@ -71,18 +71,17 @@ Worker `FOR UPDATE SKIP LOCKED` + `dedupe_key` bilan xavfsiz, gorizontal kengayt
 
 ### 🟢 FAZA C — YAXSHILASH (bloker emas)
 
-- [ ] **C1. PR cache kalitiga company_id qo'shish** — `pr_cache.py:65` `task_key` bilan kalitlanadi. Queue+ketma-ket worker'da to'qnashuv bo'lmaydi, lekin arzon ehtiyot: `f"{company_id}:{task_key}"`.
-- [ ] **C2. Data retention / arxiv siyosati** — `task_processing` + `task_status_history` cheksiz o'sadi (sekin: ~100MB/yil).
-- [ ] **C3. Load test** — 100 kompaniya bir vaqtda webhook stsenariysi test qilinmagan.
-- [ ] **C4. Graceful shutdown** — SIGTERM handler yo'q; in-flight job'lar uziladi.
-- [ ] **C5. uvicorn `--workers`** — API faqat navbatga yozadi, shuning uchun yengil; baribir 2-4 worker yaxshi.
+- [ ] **C1. Data retention / arxiv siyosati** — `task_processing` + `task_status_history` cheksiz o'sadi (sekin: ~100MB/yil).
+- [ ] **C2. Load test** — 100 kompaniya bir vaqtda webhook stsenariysi test qilinmagan.
+- [ ] **C3. Graceful shutdown** — SIGTERM handler yo'q; in-flight job'lar uziladi.
+- [ ] **C4. uvicorn `--workers`** — API faqat navbatga yozadi, shuning uchun yengil; baribir 2-4 worker yaxshi.
 
 ---
 
 ## 4. Muammo EMAS (audit oshirib yuborgan, tasdiqlangan)
 
 - ✅ `.env` git'da YO'Q — `.gitignore:106`'da. Tokenlar oshkor bo'lmagan.
-- ✅ PR cache "cross-tenant leak" — queue rejimda ketma-ket ishlov tufayli yuz bermaydi.
+- ✅ Eski in-memory PR handoff oqimi yo'q — checker PR ma'lumoti `PRHelper` va run context orqali olinadi; testcase PR ishlatmaydi.
 - ✅ `reload=True` faqat lokal run uchun; Docker CMD'da yo'q.
 - ✅ Streamlit yo'q — FastAPI + Next.js.
 - ✅ Parollar PBKDF2-HMAC-SHA256, 200k iteratsiya bilan hash.

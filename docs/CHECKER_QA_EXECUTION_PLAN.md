@@ -1,6 +1,6 @@
 # Checker QA Execution Plan
 
-Bu hujjat [docs/CHECKER_QA_REQUIREMENTS.md](/Users/mac/Documents/projects/JIRA-AI-Analyzer/docs/CHECKER_QA_REQUIREMENTS.md) ni yopish uchun amaliy bajaruv planidir.
+Bu hujjat [docs/CHECKER_QA_REQUIREMENTS.md](/Users/mac/Documents/projects/QA-Assistant/docs/CHECKER_QA_REQUIREMENTS.md) ni yopish uchun amaliy bajaruv planidir.
 
 Asosiy qoida:
 - Har bir phase oxirida checker QA uchun qaror chiqarishni soddalashtirishi kerak.
