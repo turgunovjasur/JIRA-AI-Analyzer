@@ -13,9 +13,11 @@ Auditdan keyin quyidagilar tuzatildi va commit qilindi (`dev1`):
 | Bosqich | Holat | Commit |
 |---|---|---|
 | **Faza 1 — 3 BLOCKER + CI** | ✅ **To'liq bajarildi** | `7a622c5` |
-| **Faza 2 — HIGH (kod itemlari)** | ✅ **4/7 bajarildi** (F2-5/6/9/10) | `7b01aa7` |
-| Faza 2 — qolgan | ⏳ F2-7 (alerting, qaror kerak), F2-8 (multi-worker locking), F2-11 (huquqiy, biznes kirishi kerak) | — |
-| Faza 3–4 | ⏳ Boshlanmadi | — |
+| **Faza 2 — HIGH (kod itemlari)** | ✅ **5/7 bajarildi** (F2-5/6/8/9/10) | `7b01aa7`, `dffda66` |
+| Faza 2 — qolgan | ⏳ F2-7 (alerting, qaror kerak), F2-11 (huquqiy, biznes kirishi kerak) | — |
+| **Faza 3 — Barqarorlik** | ✅ **3/5** (F3-12/13/15) | `3b7da21`, `5dbd8dd` |
+| Faza 3 — qolgan | ⏳ F3-14 (async bloklash — ehtiyotkor sessiya), F3-16 (README) | — |
+| Faza 4 | ⏳ Boshlanmadi | — |
 
 Har bir tuzatish haqiqiy kodda tasdiqlangan; to'liq test suite'da 0 yangi regressiya
 (mavjud ~13 fail — auditdan oldingi eskirgan mock testlar). Tafsilotlar 6-bo'limda (✅/⏳).
@@ -84,13 +86,13 @@ Bu **eng ko'p takrorlangan** muammo — 3 ta auditda mustaqil ravishda chiqdi (b
 - ✅ **(TUZATILDI)** **Zaif kalit + parol fallback.** `SUPER_ADMIN_PASSWORD` shifrlashdan olib tashlandi (faqat legacy-decrypt); KDF `sha256` → **PBKDF2-HMAC-SHA256** (200k iter). Migratsiya-xavfsiz: eski ma'lumot deshifrlashda hali o'qiladi, keyingi saqlashda avtomatik ko'chadi.
 
 ### Baza
-- **Migratsiya runner cross-process xavfsiz emas.** `utils/database/migrations.py:38,103` — faqat `threading.Lock` (jarayon ichida), `pg_advisory_lock` yo'q. `init_db()` `task_db` import vaqtida ishlaydi + webhook/worker/monitoring startidan chaqiriladi. Ular bir vaqtda ishga tushsa migratsiyalar ikki marta qo'llanishi mumkin (hozircha idempotent, lekin birinchi non-idempotent data migratsiya buzadi).
-- **Async endpointlarda bloklovchi DB chaqiruvlar.** `jira_webhook_handler.py:374,570-608`, `monitoring_api.py`, `sprint_report_api.py` — `async def` ichida sinxron psycopg + sinxron JIRA HTTP. Pool tugasa (`APP_DB_POOL_MAX_SIZE=10`) `getconn` **event loop'ni 30s bloklaydi** → barcha webhook'lar timeout.
-- **Cheksiz jadval o'sishi (retention yo'q).** `checker_runs`, `analysis_runs`, `ai_usage_events`, `job_queue` va h.k. hech qachon tozalanmaydi (faqat `web_sessions` tozalanadi). Oylar davomida DB shishadi, monitoring so'rovlari sekinlashadi.
+- 🟡 **(QISMAN TUZATILDI)** **Migratsiya runner cross-process xavfsiz emas.** `run_migrations` endi `pg_advisory_lock` bilan cross-process serializatsiya qiladi (lock ichida applied-versiya qayta o'qiladi, poolga qaytishdan oldin unlock; konkurent 5x test — xatosiz). ⏳ Qolgan: import-time `init_db` (`task_db.py:987`) olib tashlash — API app lifespan migratsiyani chaqirishini tasdiqlash kerak (advisory lock hozircha buni ham xavfsiz qildi).
+- ⏳ **Async endpointlarda bloklovchi DB chaqiruvlar.** `jira_webhook_handler.py:374,570-608`, `monitoring_api.py`, `sprint_report_api.py` — `async def` ichida sinxron psycopg + sinxron JIRA HTTP. Pool tugasa (`APP_DB_POOL_MAX_SIZE=10`) `getconn` **event loop'ni 30s bloklaydi** → barcha webhook'lar timeout. **385-qatorli kritik webhook handler — ehtiyotkor alohida sessiya kerak (F3-14).**
+- ✅ **(TUZATILDI)** **Cheksiz jadval o'sishi (retention yo'q).** `utils/database/retention.py` — eski terminal `checker_runs`/`analysis_runs`/`job_queue`(done,failed)/`ai_usage_events` yozuvlarini davriy o'chiradi (bola-jadvallar FK CASCADE). Worker kuniga bir marta (`asyncio.to_thread`). Oynalar env orqali (RUN=90, JOB=30, USAGE=365 kun). Haqiqiy Postgres'da parent+cascade o'chirish tasdiqlandi.
 
 ### Prodakshn
 - 🟡 **(QISMAN TUZATILDI)** **Gemini kvota webhook yo'lida.** `run_multi_agent_for_webhook` endi kvotani tekshiradi (tugasa run ishga tushmaydi) va completed global run'ni increment qiladi; `execute_multi_agent_run` source-driven (queue/worker UI run'lari ham increment qiladi). ⏳ Qolgan: per-company oylik xarajat cheklovi (`ai_usage_events`).
-- **Bitta ketma-ket worker + event-loop bloklash = past o'tkazuvchanlik.** `worker/main.py:218` bir vaqtda 1 ta job. Run ~3–8 daqiqa. Bitta worker ≈ 200–450 task/kun. 20 kompaniya × 50 webhook/kun = 1000/kun → 3–5 worker kerak. Lekin per-company lock/rate-limit **jarayon-ichi dict** (`queue_manager.py:36`), shuning uchun N worker bilan "kompaniyaga 1 AI task" va 6s interval kafolati yo'qoladi. `inline` rejimda (default!) run FastAPI event loop'ni bloklaydi.
+- 🟡 **(QISMAN TUZATILDI)** **Bitta ketma-ket worker + event-loop bloklash = past o'tkazuvchanlik.** Per-company AI concurrency endi DB'da (`claim_next_job` + `pg_advisory_xact_lock`): N worker bilan ham "kompaniyaga bir vaqtda 1 AI job" kafolati saqlanadi (haqiqiy Postgres'da 8-worker konkurent test → faqat 1 claim). Per-company=1 bo'lgani uchun 6s interval ham amalda ta'minlanadi (joblar 3-8 daq). ⏳ Qolgan: `inline` rejim event-loop bloklashi (F3-14 bilan bog'liq), bir nechta workerni jonli deploy'da yoqish.
 - **Alerting umuman yo'q.** Sentry/Prometheus/email/Slack yo'q. O'lik worker, bloklangan task, barcha kalit muzlagani — faqat kimdir monitoring UI'ni ochsa ko'rinadi. `/health` navbat holatini tekshirmaydi.
 - **LICENSE / ToS / maxfiylik siyosati yo'q.** Mahsulot mijozning JIRA matni, GitHub PR diff'lari (to'liq patch), Figma ma'lumotini Google Gemini'ga yuboradi — hech qanday oshkor qilish hujjati, data-processing kelishuvi yoki per-company cheklov yo'q. B2B sotuv uchun bu kontrakt blocker.
 
@@ -111,7 +113,7 @@ Bu **eng ko'p takrorlangan** muammo — 3 ta auditda mustaqil ravishda chiqdi (b
 - **Checker engine testsiz.** 7 ta orkestratsiya moduli (`tzpr_orchestrator`, `tzpr_run_state`, `tzpr_data_fetch` va h.k.) nol test. `MockGeminiHelper` testlari real kodda mavjud bo'lmagan atributlarga assert qiladi. DSN'siz `test_full_system.py`ning ~205/206 testi jimgina skip.
 
 **Biznes-oqim:**
-- **`return_count` cheklovi yo'q.** `increment_return_count` yoziladi lekin o'qilmaydi — task returned→Testing→returned cheksiz aylanishi mumkin, har aylanish to'liq AI xarajati. Faqat inson AS_SKIP yozsa to'xtaydi.
+- ✅ **(TUZATILDI)** **`return_count` cheklovi yo'q.** auto-return endi `APP_MAX_RETURN_COUNT` (default 3, 0=cheksiz) chegarasiga bo'ysunadi — task N marta qaytarilgan bo'lsa boshqa qaytarilmaydi (JIRA'ga "qo'lda ko'rish" warning). `check_tz_pr_and_comment` allaqachon yuklangan `task_db.return_count`ni o'qiydi. Config o'rniga env (WIP `app_settings.py`ga tegilmadi).
 - **Bitta agent2 texnik nosozligi butun run'ni "Blocked" deb belgilaydi, lekin success sifatida yetkaziladi** (`agent3.py:314-319` + `tzpr_agent_runner.py:736`).
 - **Har ikkala comment formati ham jimgina fail bo'lishi mumkin** — S1 `done` deb belgilanadi, lekin tahlil JIRA'ga yetib bormaydi (`error_handler.py:136-146`).
 - **`return_reason` muvaffaqiyatli o'tgandan keyin tozalanmaydi** — keyingi tahlil hali ham `is_recheck=True`, eski commentlar objection sifatida yuboriladi.
@@ -153,21 +155,21 @@ Bu loyihaning poydevori jiddiy — bularni saqlab qoling:
 3. ✅ Stale-job reaper + stuck-`progressing` sweeper + `mark_completed` (finalize) tegishli oqimlarda chaqiriladi; worker loop + docker `stop_grace_period`. Haqiqiy Postgres'da tasdiqlandi.
 4. ✅ Xavfsiz default'lar: `.env.example` `APP_WEBHOOK_REQUIRE_SECRET=true`, `APP_STRICT_MODE=true`; `create_company` `webhook_secret` avto-generatsiya (shifrlangan). Enforcement env-driven (jonli prod buzilmaydi); query-param `?token=` deprecated.
 
-### Faza 2 — HIGH (2–3-hafta) — ⏳ 4/7 BAJARILDI (`7b01aa7`)
+### Faza 2 — HIGH (2–3-hafta) — ⏳ 5/7 BAJARILDI (`7b01aa7`, `dffda66`)
 5. 🟡 **Qisman** — Gemini kvota webhook + queue yo'lida majburlanadi (check+increment, source-driven; kvota tugasa run ishga tushmaydi). ⏳ Qolgan: per-company oylik xarajat cheklovi (`ai_usage_events` ledger'idan).
 6. ✅ RPC kwargs rol-bypass yopildi (args+kwargs imzoga bind); credential fail-closed (plain text saqlamaydi); `SUPER_ADMIN_PASSWORD` shifrlashdan olib tashlandi (faqat legacy-decrypt); KDF → PBKDF2 (migratsiya-xavfsiz).
 7. ⏳ Alerting (Sentry + `/metrics` ustidan watchdog: queued>N, blocked>0, worker heartbeat). **Tashqi servis tanlashni talab qiladi.**
-8. ⏳ ≥2 worker + per-company lock/rate-limit'ni DB/advisory lock'ga ko'chirish. Dizayn tayyor: `claim_next_job`ga per-company concurrency + `pg_advisory_xact_lock` serializatsiya. **Hozir 1 worker → buzuq emas, faqat scaling uchun.**
+8. ✅ Per-company AI concurrency DB'ga ko'chirildi (`dffda66`): `claim_next_job` + `pg_advisory_xact_lock` — N worker bilan ham "kompaniyaga 1 AI job". Env toggle `APP_QUEUE_PER_COMPANY_CONCURRENCY`. Haqiqiy Postgres'da 8-worker konkurent test o'tdi. ⏳ Qolgan: jonli deploy'da ≥2 worker yoqish + rate-limit ledger (kerak bo'lsa).
 9. ✅ AI-outage S1 klassifikatsiyasi tuzatildi — `_run_agent1` `analyze()` xatosini alohida ushlab real matnni saqlaydi → `ai_timeout` → WARN_AI_TIMEOUT → retry.
 10. 🟡 **Qisman** — marker detektori (`CommentSeparator`) markerni istalgan qator boshida topadi (oxirgi paragrafdagi marker endi to'g'ri AI deb tanaladi). ⏳ Qolgan: formatter tomonida marker-joylashuv + S2-marker (foydalanuvchi WIP'ida).
 11. ⏳ LICENSE + ToS + maxfiylik/data-processing hujjati ("JIRA matningiz va PR diff'lar Google Gemini'ga yuboriladi") + per-company diff opt-out. **Biznes/yurisdiksiya kirishini talab qiladi.**
 
-### Faza 3 — Barqarorlik va tozalik (4-hafta+)
-12. Log rotation (`RotatingFileHandler` yoki Docker stdout) + retention job (eski run/event/usage tozalash).
-13. `return_count` cheklovi (cheksiz return loop'ning oldini olish).
-14. Async endpointlarda `asyncio.to_thread` (event loop bloklashni tugatish).
-15. Migratsiya runner'ga `pg_advisory_lock` + import-time `init_db`'ni olib tashlash.
-16. README'ni yagona onboarding hujjatiga aylantirish; eski (bug-analyzer/ChromaDB/2.0.0) bo'limlarni o'chirish; `dev1` ishini commit qilish.
+### Faza 3 — Barqarorlik va tozalik (4-hafta+) — ⏳ 3/5 BAJARILDI (`3b7da21`, `5dbd8dd`)
+12. ✅ Retention job (`utils/database/retention.py`) — eski run/event/usage/job yozuvlari kuniga bir marta tozalanadi (RUN=90, JOB=30, USAGE=365 kun; CASCADE bilan). ⏳ Qolgan: log rotation (`RotatingFileHandler`/Docker stdout).
+13. ✅ `return_count` cheklovi — `APP_MAX_RETURN_COUNT` (default 3) chegarasi; cheksiz return loop to'xtatildi.
+14. ⏳ Async endpointlarda `asyncio.to_thread` (event loop bloklashni tugatish). **385-qatorli kritik webhook handler + o'rtada await — ehtiyotkor alohida sessiya kerak.**
+15. 🟡 **Qisman** — migratsiya runner'ga `pg_advisory_lock` qo'shildi (cross-process serializatsiya, konkurent test o'tdi). ⏳ Qolgan: import-time `init_db`'ni olib tashlash (API app lifespan migratsiyasini tasdiqlagach).
+16. ⏳ README'ni yagona onboarding hujjatiga aylantirish; eski (bug-analyzer/ChromaDB/2.0.0) bo'limlarni o'chirish.
 
 ### Faza 4 — Texnik qarz (sotuvdan keyin, lekin muhim)
 17. Ikkita run-repository'ni birlashtirish (~550 qator o'chirish).
