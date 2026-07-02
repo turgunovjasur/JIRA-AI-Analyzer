@@ -7,6 +7,7 @@ navbatdan olib bajaradi.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -15,9 +16,23 @@ from utils.database.repository_common import (
     row_to_dict as _row_to_dict,
 )
 
+# F2-8: multi-worker claim serializatsiyasi uchun global advisory lock kaliti.
+_CLAIM_ADVISORY_LOCK_KEY = 4917_2026_02
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _per_company_concurrency_enabled() -> bool:
+    """Bir kompaniyaga bir vaqtda 1 ta running job (multi-worker uchun DB-level).
+
+    Ilgari bu 'kompaniyaga 1 AI task' kafolati queue_manager in-process dict'da
+    edi — N worker bilan yo'qolardi. Endi claim DB'da serializatsiya qilinadi.
+    Bitta worker uchun no-op (ketma-ket claim). Env bilan o'chiriladi.
+    """
+    raw = (os.getenv("APP_QUEUE_PER_COMPANY_CONCURRENCY") or "true").strip().lower()
+    return raw not in ("0", "false", "no", "off")
 
 
 def ensure_job_queue_tables(conn) -> None:
@@ -136,15 +151,59 @@ def enqueue_job(
 def claim_next_job(conn, *, worker_name: str) -> dict[str, Any] | None:
     now = _now_iso()
 
+    if not _per_company_concurrency_enabled():
+        # Klassik claim: eng eski queued job, per-company cheklovsiz.
+        row = _execute(
+            conn,
+            """
+            WITH next_job AS (
+                SELECT id
+                FROM job_queue
+                WHERE status = 'queued'
+                  AND scheduled_at <= ?
+                ORDER BY scheduled_at ASC, id ASC
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED
+            )
+            UPDATE job_queue jq
+            SET status = 'running',
+                attempts = jq.attempts + 1,
+                worker_name = ?,
+                started_at = ?,
+                updated_at = ?,
+                finished_at = NULL
+            FROM next_job
+            WHERE jq.id = next_job.id
+            RETURNING jq.*
+            """,
+            [now, worker_name, now, now],
+        ).fetchone()
+        conn.commit()
+        return _row_to_dict(row) if row else None
+
+    # Multi-worker: kompaniyaga bir vaqtda faqat 1 ta running job.
+    # pg_advisory_xact_lock barcha workerlarning claim'ini serializatsiya qiladi
+    # → NOT EXISTS tekshiruvi TOCTOU'siz (ikki worker bir kompaniyaga bir vaqtda
+    # ikki job olmaydi). Claim tez; lock tranzaksiya commit'ida ochiladi. AI ishi
+    # claim'dan TASHQARIDA (boshqa ulanish, allaqachon yopilgan) — lock ushlab qolmaydi.
+    _execute(conn, "SELECT pg_advisory_xact_lock(?)", [_CLAIM_ADVISORY_LOCK_KEY])
     row = _execute(
         conn,
         """
         WITH next_job AS (
-            SELECT id
-            FROM job_queue
-            WHERE status = 'queued'
-              AND scheduled_at <= ?
-            ORDER BY scheduled_at ASC, id ASC
+            SELECT jq.id
+            FROM job_queue jq
+            WHERE jq.status = 'queued'
+              AND jq.scheduled_at <= ?
+              AND (
+                  jq.company_id IS NULL
+                  OR NOT EXISTS (
+                      SELECT 1 FROM job_queue r
+                      WHERE r.status = 'running'
+                        AND r.company_id = jq.company_id
+                  )
+              )
+            ORDER BY jq.scheduled_at ASC, jq.id ASC
             LIMIT 1
             FOR UPDATE SKIP LOCKED
         )
