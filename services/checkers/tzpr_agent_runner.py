@@ -153,6 +153,12 @@ class AgentRunnerMixin:
             "requirements": [],
             "warnings": [],
         }
+        # AI chaqiruvi — parse/validation'dan ALOHIDA try. Bu yerdagi xato AI
+        # outage / timeout / barcha-kalit-freeze degani. Ilgari bitta keng try
+        # ichida edi: analyze() yiqilsa raw bo'sh qolib, quyidagi "Requirement
+        # inventory qurilmadi" generic xabari qaytardi va _classify_error uni
+        # 'unknown' (terminal error, retry YO'Q) deb belgilardi. Endi real xatoni
+        # saqlaymiz → _classify_error 'ai_timeout' → WARN_AI_TIMEOUT → BLOCKED → retry.
         try:
             raw = self._model_for_agent(agent_key).analyze(
                 prompt,
@@ -162,6 +168,19 @@ class AgentRunnerMixin:
                     "response_schema": agent1_contract.RESPONSE_SCHEMA,
                 },
             )
+        except Exception as ai_exc:
+            log.warning(f"[{self.task_key}] Agent1 AI chaqiruvi yiqildi: {ai_exc}")
+            self._finish_agent(
+                agent_key,
+                state="failed",
+                error_text=str(ai_exc),
+                output_summary="Agent1 AI chaqiruvi yiqildi",
+                warnings=warnings,
+                artifact={"raw_excerpt": ""},
+            )
+            return {"success": False, "error": str(ai_exc)}
+
+        try:
             parse_result = _parse_gemini_json(raw)
             parse_metadata = {
                 "ok": parse_result.ok,

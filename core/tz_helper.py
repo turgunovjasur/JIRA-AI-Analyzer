@@ -24,6 +24,12 @@ class CommentSeparator:
 
     S1_MARKER = "[AI_S1]"
     S2_MARKER = "[AI_S2]"
+    # Marker comment tanasidagi ISTALGAN qator boshida bo'lishi mumkin. Ilgari faqat
+    # body[:30] tekshirilardi — lekin ba'zi AI commentlar (warning/return panellari)
+    # markerni oxirgi paragrafga qo'yadi, natijada ular inson izohi deb tasniflanib,
+    # recheck "Developer izohlari" paneliga va Agent3 kiritmasiga sizib kirardi (audit F10).
+    # Qator boshiga anchor — inson matn ichida iqtibos keltirsa noto'g'ri ushlamaslik uchun.
+    _MARKER_RE = re.compile(r"(?m)^\s*\[AI_S([12])\]")
     AUTO_GENERATED_HINTS = (
         "avtomatik tz-pr moslik tekshiruvi",
         "avtomatik test case",
@@ -45,22 +51,18 @@ class CommentSeparator:
         return any(hint in normalized for hint in cls.AUTO_GENERATED_HINTS)
 
     @classmethod
+    def _marker_type(cls, body: str) -> Optional[str]:
+        match = cls._MARKER_RE.search(str(body or ""))
+        return f"S{match.group(1)}" if match else None
+
+    @classmethod
     def is_ai_comment(cls, comment: Dict) -> bool:
         body = comment.get('body', '')
-        return (
-            cls.S1_MARKER in body[:30]
-            or cls.S2_MARKER in body[:30]
-            or cls._looks_like_generated_report(body)
-        )
+        return cls._marker_type(body) is not None or cls._looks_like_generated_report(body)
 
     @classmethod
     def get_ai_type(cls, comment: Dict) -> Optional[str]:
-        body = comment.get('body', '')
-        if cls.S1_MARKER in body[:30]:
-            return 'S1'
-        if cls.S2_MARKER in body[:30]:
-            return 'S2'
-        return None
+        return cls._marker_type(comment.get('body', ''))
 
     @classmethod
     def is_valid_dev_comment(cls, comment: Dict) -> bool:

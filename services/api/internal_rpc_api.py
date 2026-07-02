@@ -6,6 +6,7 @@ backend persistence code directly while we preserve current business logic.
 """
 from __future__ import annotations
 
+import inspect
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
 from decimal import Decimal
@@ -239,6 +240,34 @@ def _arg_as_positive_int(args: list[Any], index: int) -> int:
     return value
 
 
+def _effective_positional_args(op: str, args: list[Any], kwargs: dict[str, Any]) -> list[Any]:
+    """args + kwargs'ni operation funksiyasi imzosiga bog'lab, pozitsion tartibdagi
+    effektiv argumentlar ro'yxatini qaytaradi.
+
+    Nima uchun kerak: authz tekshiruvi security-muhim argumentlarni (company_id,
+    role) pozitsion INDEKS bo'yicha o'qiydi. Agar chaqiruvchi ularni kwargs orqali
+    yuborsa (masalan create_user(..., role="company_admin")), positional-only
+    tekshiruv ularni ko'rmay qolib, keyin fn(*args, **kwargs) haqiqiy qiymatni
+    qo'llab, authz'ni CHETLAB o'tardi. Bind qilib effektiv qiymatlarni olamiz.
+    Kutilmagan/mos kelmaydigan argument → TypeError → 400.
+    """
+    fn = _OPERATIONS.get(op)
+    if fn is None:
+        return list(args or [])
+    try:
+        sig = inspect.signature(fn)
+        bound = sig.bind_partial(*(args or []), **(kwargs or {}))
+    except TypeError:
+        raise HTTPException(status_code=400, detail="RPC argumentlari funksiya imzosiga mos emas")
+    bound.apply_defaults()
+    eff: list[Any] = []
+    for p in sig.parameters.values():
+        if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+            continue
+        eff.append(bound.arguments.get(p.name))
+    return eff
+
+
 def _authorize_internal_rpc(session: dict, payload: RpcRequest) -> None:
     role = get_session_role(session)
     if role == "super_admin":
@@ -251,15 +280,18 @@ def _authorize_internal_rpc(session: dict, payload: RpcRequest) -> None:
     if not session_company_id:
         raise HTTPException(status_code=403, detail="Company admin sessiyasida company_id topilmadi")
 
+    # Kwargs bypass'ining oldini olish uchun effektiv (bind qilingan) argumentlar.
+    eff = _effective_positional_args(payload.op, payload.args, payload.kwargs)
+
     if payload.op in _COMPANY_ADMIN_COMPANY_ARG0_OPS:
-        company_id = _arg_as_positive_int(payload.args, 0)
+        company_id = _arg_as_positive_int(eff, 0)
         if company_id != session_company_id:
             raise HTTPException(status_code=403, detail="Boshqa company scope bilan RPC chaqirib bo'lmaydi")
         return
 
     if payload.op == "create_user":
-        company_id = _arg_as_positive_int(payload.args, 0)
-        target_role = str(payload.args[3] if len(payload.args) > 3 else "user").strip().lower()
+        company_id = _arg_as_positive_int(eff, 0)
+        target_role = str(eff[3] if len(eff) > 3 and eff[3] is not None else "user").strip().lower()
         if company_id != session_company_id:
             raise HTTPException(status_code=403, detail="Boshqa companyga user yaratib bo'lmaydi")
         if target_role != "user":
@@ -267,13 +299,13 @@ def _authorize_internal_rpc(session: dict, payload: RpcRequest) -> None:
         return
 
     if payload.op in {"update_user_password_for_company", "update_user_status_for_company", "delete_user_for_company"}:
-        company_id = _arg_as_positive_int(payload.args, 1)
+        company_id = _arg_as_positive_int(eff, 1)
         if company_id != session_company_id:
             raise HTTPException(status_code=403, detail="Boshqa company useriga ta'sir qilib bo'lmaydi")
         return
 
     if payload.op == "create_password_reset_token":
-        user_id = _arg_as_positive_int(payload.args, 0)
+        user_id = _arg_as_positive_int(eff, 0)
         if not get_user_by_id_and_company(user_id, session_company_id):
             raise HTTPException(status_code=403, detail="Faqat o'z company useri uchun reset token yaratish mumkin")
         return

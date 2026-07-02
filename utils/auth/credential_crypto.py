@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
+from functools import lru_cache
 from typing import Any, Iterable
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -17,6 +18,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 _ENCRYPTED_PREFIX = "enc::"
+
+# KDF: yangi ma'lumot PBKDF2-HMAC-SHA256 (stretching) bilan shifrlanadi. Salt
+# qat'iy (deterministik) — schema o'zgarmasdan migratsiya-xavfsiz bo'lishi uchun.
+# Eski ma'lumot bare sha256 KDF bilan shifrlangan — deshifrlashda ikkalasi ham
+# sinaladi, keyingi saqlashda avtomatik PBKDF2'ga ko'chiriladi (needs_reencryption).
+_PBKDF2_SALT = b"qa-assistant.credential-crypto.v1"
+_PBKDF2_ITERATIONS = 200_000
 
 _SENSITIVE_FIELDS = {
     "jira_token",
@@ -64,11 +72,24 @@ def assert_master_key_configured() -> None:
 
 
 def _get_master_secret() -> str:
-    return (
-        os.getenv("APP_CREDENTIALS_MASTER_KEY")
-        or os.getenv("SUPER_ADMIN_PASSWORD")
-        or ""
-    ).strip()
+    """Shifrlash (ENCRYPTION) uchun master secret — FAQAT APP_CREDENTIALS_MASTER_KEY.
+
+    SUPER_ADMIN_PASSWORD fallback shifrlashdan olib tashlandi (zaif kalit — audit F6).
+    Eski ma'lumotni o'qish uchun u faqat DESHIFRLASHda ishlatiladi
+    (_get_legacy_decryption_secrets).
+    """
+    return (os.getenv("APP_CREDENTIALS_MASTER_KEY") or "").strip()
+
+
+def _get_legacy_decryption_secrets() -> list[str]:
+    """Faqat DESHIFRLASH uchun eski secretlar.
+
+    SUPER_ADMIN_PASSWORD fallback bilan (master key o'rnatilmagan paytda)
+    shifrlangan eski credential'lar hali ham o'qilishi uchun. Yangi shifrlash
+    hech qachon bularni ishlatmaydi.
+    """
+    legacy = (os.getenv("SUPER_ADMIN_PASSWORD") or "").strip()
+    return [legacy] if legacy else []
 
 
 def _get_old_master_secrets() -> list[str]:
@@ -107,39 +128,69 @@ def get_credential_security_status() -> dict[str, Any]:
     if is_using_super_admin_password_fallback():
         return {
             "status": "warning",
-            "message": "Credential encryption hozir SUPER_ADMIN_PASSWORD fallback bilan ishlayapti. Production uchun alohida APP_CREDENTIALS_MASTER_KEY kiriting.",
+            "message": (
+                "APP_CREDENTIALS_MASTER_KEY yo'q. SUPER_ADMIN_PASSWORD endi faqat ESKI "
+                "ma'lumotni deshifrlash uchun ishlatiladi — yangi credential saqlab "
+                "bo'lmaydi (fail-closed). APP_CREDENTIALS_MASTER_KEY ni o'rnating."
+            ),
             "rotation_ready": False,
         }
     return {
         "status": "danger",
-        "message": "APP_CREDENTIALS_MASTER_KEY yo'q va fallback ham topilmadi. Yangi credentiallar plain text holatda saqlanishi mumkin.",
+        "message": "APP_CREDENTIALS_MASTER_KEY yo'q. Yangi credential saqlab bo'lmaydi (fail-closed).",
         "rotation_ready": False,
     }
 
 
-def _build_fernet(secret: str) -> Fernet | None:
+@lru_cache(maxsize=64)
+def _fernet_from_secret(secret: str, legacy: bool) -> Fernet | None:
+    """secret'dan Fernet kalit hosil qilish (cached — PBKDF2 qimmat).
+
+    legacy=False → PBKDF2-HMAC-SHA256 (yangi, stretching bilan).
+    legacy=True  → bare sha256 (eski ma'lumotni deshifrlash uchun).
+    """
     if not secret:
         return None
-    digest = hashlib.sha256(secret.encode("utf-8")).digest()
+    if legacy:
+        digest = hashlib.sha256(secret.encode("utf-8")).digest()
+    else:
+        digest = hashlib.pbkdf2_hmac("sha256", secret.encode("utf-8"), _PBKDF2_SALT, _PBKDF2_ITERATIONS)
     key = base64.urlsafe_b64encode(digest)
     return Fernet(key)
 
 
+def _build_fernet(secret: str) -> Fernet | None:
+    """Yangi shifrlash uchun Fernet (PBKDF2)."""
+    return _fernet_from_secret(secret, False)
+
+
 def _get_fernet() -> Fernet | None:
-    return _build_fernet(_get_master_secret())
+    return _fernet_from_secret(_get_master_secret(), False)
 
 
 def _get_decryption_fernets() -> list[Fernet]:
-    secrets_in_order = [_get_master_secret(), *_get_old_master_secrets()]
+    """Deshifrlash uchun barcha nomzod fernet'lar (tartib bo'yicha sinaladi).
+
+    Yangi KDF (master + rotation) → eski sha256 KDF (master + rotation + super_admin
+    legacy). Shu tariqa eski har qanday formatdagi ma'lumot ham o'qiladi.
+    """
     fernets: list[Fernet] = []
-    seen: set[str] = set()
-    for secret in secrets_in_order:
-        if not secret or secret in seen:
-            continue
-        fernet = _build_fernet(secret)
+    seen: set[tuple[str, bool]] = set()
+
+    def _add(secret: str, legacy: bool) -> None:
+        if not secret or (secret, legacy) in seen:
+            return
+        fernet = _fernet_from_secret(secret, legacy)
         if fernet is not None:
             fernets.append(fernet)
-            seen.add(secret)
+            seen.add((secret, legacy))
+
+    # 1) Yangi KDF: master + rotation kalitlar
+    for secret in (_get_master_secret(), *_get_old_master_secrets()):
+        _add(secret, False)
+    # 2) Eski sha256 KDF: master + rotation + super_admin legacy
+    for secret in (_get_master_secret(), *_get_old_master_secrets(), *_get_legacy_decryption_secrets()):
+        _add(secret, True)
     return fernets
 
 
@@ -156,7 +207,13 @@ def encrypt_value(value: Any) -> Any:
         return value
     fernet = _get_fernet()
     if fernet is None:
-        return value
+        # FAIL-CLOSED: master key yo'q bo'lsa plain text QAYTARMAYMIZ. Chaqiruvchilar
+        # avval can_encrypt_credentials() bilan tekshiradi; bu — mudofaa qatlami
+        # (audit F6: fail-open plaintext teshigini yopadi).
+        raise RuntimeError(
+            "Credential shifrlash uchun APP_CREDENTIALS_MASTER_KEY o'rnatilmagan — "
+            "plain text saqlash rad etildi."
+        )
     token = fernet.encrypt(value.encode("utf-8")).decode("utf-8")
     return f"{_ENCRYPTED_PREFIX}{token}"
 

@@ -220,6 +220,12 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
     worker_name = _worker_name()
     stop_event = stop_event or asyncio.Event()
 
+    # STRICT_MODE'da master key yo'q bo'lsa boot'da loud fail (worker credential
+    # deshifrlaydi — kalitsiz har job jimgina yiqilardi). Backend API lifespan'da
+    # ham shu tekshiruv bor (audit F6).
+    from utils.auth.credential_crypto import assert_master_key_configured
+    assert_master_key_configured()
+
     init_db()
     log.info(f"WORKER -> started | name={worker_name}")
     # Restart'da darhol crash-recovery: oldingi worker o'lganda qolgan stale
