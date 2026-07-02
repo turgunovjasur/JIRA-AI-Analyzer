@@ -13,11 +13,11 @@ Auditdan keyin quyidagilar tuzatildi va commit qilindi (`dev1`):
 | Bosqich | Holat | Commit |
 |---|---|---|
 | **Faza 1 — 3 BLOCKER + CI** | ✅ **To'liq bajarildi** | `7a622c5` |
-| **Faza 2 — HIGH (kod itemlari)** | ✅ **5/7 bajarildi** (F2-5/6/8/9/10) | `7b01aa7`, `dffda66` |
-| Faza 2 — qolgan | ⏳ F2-7 (alerting, qaror kerak), F2-11 (huquqiy, biznes kirishi kerak) | — |
-| **Faza 3 — Barqarorlik** | ✅ **4/5** (F3-12/13/15/16) | `3b7da21`, `5dbd8dd`, `<README>` |
+| **Faza 2 — HIGH (kod itemlari)** | ✅ **6/7 bajarildi** (F2-5/6/7/8/9/10) | `7b01aa7`, `dffda66`, `7ce00b3` |
+| Faza 2 — qolgan | ⏳ F2-11 (huquqiy, biznes kirishi kerak) | — |
+| **Faza 3 — Barqarorlik** | ✅ **4/5** (F3-12/13/15/16) | `3b7da21`, `5dbd8dd`, `858df9b` |
 | Faza 3 — qolgan | ⏳ F3-14 (async bloklash — ehtiyotkor sessiya) | — |
-| Faza 4 | ⏳ Boshlanmadi | — |
+| **Faza 4 — Texnik qarz** | ✅ **1/4** (F4-19 dead-code) | `c1f4e86` |
 
 Har bir tuzatish haqiqiy kodda tasdiqlangan; to'liq test suite'da 0 yangi regressiya
 (mavjud ~13 fail — auditdan oldingi eskirgan mock testlar). Tafsilotlar 6-bo'limda (✅/⏳).
@@ -93,7 +93,7 @@ Bu **eng ko'p takrorlangan** muammo — 3 ta auditda mustaqil ravishda chiqdi (b
 ### Prodakshn
 - 🟡 **(QISMAN TUZATILDI)** **Gemini kvota webhook yo'lida.** `run_multi_agent_for_webhook` endi kvotani tekshiradi (tugasa run ishga tushmaydi) va completed global run'ni increment qiladi; `execute_multi_agent_run` source-driven (queue/worker UI run'lari ham increment qiladi). ⏳ Qolgan: per-company oylik xarajat cheklovi (`ai_usage_events`).
 - 🟡 **(QISMAN TUZATILDI)** **Bitta ketma-ket worker + event-loop bloklash = past o'tkazuvchanlik.** Per-company AI concurrency endi DB'da (`claim_next_job` + `pg_advisory_xact_lock`): N worker bilan ham "kompaniyaga bir vaqtda 1 AI job" kafolati saqlanadi (haqiqiy Postgres'da 8-worker konkurent test → faqat 1 claim). Per-company=1 bo'lgani uchun 6s interval ham amalda ta'minlanadi (joblar 3-8 daq). ⏳ Qolgan: `inline` rejim event-loop bloklashi (F3-14 bilan bog'liq), bir nechta workerni jonli deploy'da yoqish.
-- **Alerting umuman yo'q.** Sentry/Prometheus/email/Slack yo'q. O'lik worker, bloklangan task, barcha kalit muzlagani — faqat kimdir monitoring UI'ni ochsa ko'rinadi. `/health` navbat holatini tekshirmaydi.
+- ✅ **(TUZATILDI)** **Alerting umuman yo'q.** `core/watchdog.py` — API jarayonida davriy (worker'dan alohida) navbat backlog / blocked task / worker heartbeat holatini tekshiradi; muammo bo'lsa WARNING log + (SMTP sozlansa) email (dedup/cooldown bilan). Tashqi servis (Sentry) shart emas. Haqiqiy Postgres'da tekshirildi.
 - **LICENSE / ToS / maxfiylik siyosati yo'q.** Mahsulot mijozning JIRA matni, GitHub PR diff'lari (to'liq patch), Figma ma'lumotini Google Gemini'ga yuboradi — hech qanday oshkor qilish hujjati, data-processing kelishuvi yoki per-company cheklov yo'q. B2B sotuv uchun bu kontrakt blocker.
 
 ### Biznes-oqim
@@ -108,7 +108,7 @@ Bu **eng ko'p takrorlangan** muammo — 3 ta auditda mustaqil ravishda chiqdi (b
 - **~550 qator copy-paste repository.** `checker_run_repository.py` (396 q.) vs `analysis_run_repository.py` (399 q.) — ~94% bir xil. Wrapper'lar `checker_run_db.py` vs `analysis_run_db.py` — 12 qator farq. Har bugfix ikki marta qo'llanishi kerak. `analysis_run_repository` allaqachon `module_key` bilan generic bo'lishga mo'ljallangan edi.
 - **Ikkita parallel run-lifecycle.** Checker `RunStateMixin` vs testcase `_TestcaseRunExecutor`. Testcase tomoni agent chegaralarini **progress-message string'larini parse qilib** aniqlaydi (`testcase_run.py:224-233`) — matn o'zgarsa buziladi.
 - **String-matching orqali error-klassifikatsiya.** `error_handler.py:30-81` task holatini `'pr topilmadi'`, `'merged emas'` kabi **inson o'qiydigan o'zbekcha** matnlarni qidirib aniqlaydi. Xabar matnini o'zgartirish state-machine'ni jimgina buzadi. Bu ladder `service_runner.py`da 4 marta takrorlangan.
-- **O'lik kod hali ham yetkaziladi.** Tashlab ketilgan embedding/vector-DB feature (`embedding_helper.py`, `chunking_helper.py`, `vectordb_helper.py`, `sprint_data_service.py` 822 q., `scripts/1_/2_/3_*`) — `torch`/`chromadb`/`sentence-transformers` bilan birga. `config/ui_foundation.py`, `generate_testcases_sync` — nol chaqiruvchi. Ikkita config tizimi (`app_settings.py` + `settings.py`) yonma-yon.
+- 🟡 **(ASOSAN TUZATILDI)** **O'lik kod hali ham yetkaziladi.** Embedding/vector-DB/sprint feature'i o'chirildi (`c1f4e86`): `embedding_helper`, `chunking_helper`, `vectordb_helper`, `sprint_data_service` (822 q.), `scripts/1_/2_/3_`, `view_database`, `config/ui_foundation`, `test_chunking_system`. `torch`/`chromadb`/`sentence-transformers` allaqachon requirements'dan chiqarilgan. ⏳ Qolgan: `generate_testcases_sync` (live faylда, qoldirildi), ikkita config tizimi.
 - **Ulkan funksiyalar.** `_run_agent2_per_requirement` — 420 qator; `_jira_webhook_impl` — 385 qator; `generate_test_cases` — 294 qator.
 - **Checker engine testsiz.** 7 ta orkestratsiya moduli (`tzpr_orchestrator`, `tzpr_run_state`, `tzpr_data_fetch` va h.k.) nol test. `MockGeminiHelper` testlari real kodda mavjud bo'lmagan atributlarga assert qiladi. DSN'siz `test_full_system.py`ning ~205/206 testi jimgina skip.
 
@@ -155,10 +155,10 @@ Bu loyihaning poydevori jiddiy — bularni saqlab qoling:
 3. ✅ Stale-job reaper + stuck-`progressing` sweeper + `mark_completed` (finalize) tegishli oqimlarda chaqiriladi; worker loop + docker `stop_grace_period`. Haqiqiy Postgres'da tasdiqlandi.
 4. ✅ Xavfsiz default'lar: `.env.example` `APP_WEBHOOK_REQUIRE_SECRET=true`, `APP_STRICT_MODE=true`; `create_company` `webhook_secret` avto-generatsiya (shifrlangan). Enforcement env-driven (jonli prod buzilmaydi); query-param `?token=` deprecated.
 
-### Faza 2 — HIGH (2–3-hafta) — ⏳ 5/7 BAJARILDI (`7b01aa7`, `dffda66`)
+### Faza 2 — HIGH (2–3-hafta) — ⏳ 6/7 BAJARILDI (`7b01aa7`, `dffda66`, `7ce00b3`)
 5. 🟡 **Qisman** — Gemini kvota webhook + queue yo'lida majburlanadi (check+increment, source-driven; kvota tugasa run ishga tushmaydi). ⏳ Qolgan: per-company oylik xarajat cheklovi (`ai_usage_events` ledger'idan).
 6. ✅ RPC kwargs rol-bypass yopildi (args+kwargs imzoga bind); credential fail-closed (plain text saqlamaydi); `SUPER_ADMIN_PASSWORD` shifrlashdan olib tashlandi (faqat legacy-decrypt); KDF → PBKDF2 (migratsiya-xavfsiz).
-7. ⏳ Alerting (Sentry + `/metrics` ustidan watchdog: queued>N, blocked>0, worker heartbeat). **Tashqi servis tanlashni talab qiladi.**
+7. ✅ Alerting (`core/watchdog.py`, `7ce00b3`) — self-hosted: navbat backlog / blocked / worker heartbeat → WARNING log + email (SMTP). Tashqi servis (Sentry) shart emas. Env `APP_WATCHDOG_*`.
 8. ✅ Per-company AI concurrency DB'ga ko'chirildi (`dffda66`): `claim_next_job` + `pg_advisory_xact_lock` — N worker bilan ham "kompaniyaga 1 AI job". Env toggle `APP_QUEUE_PER_COMPANY_CONCURRENCY`. Haqiqiy Postgres'da 8-worker konkurent test o'tdi. ⏳ Qolgan: jonli deploy'da ≥2 worker yoqish + rate-limit ledger (kerak bo'lsa).
 9. ✅ AI-outage S1 klassifikatsiyasi tuzatildi — `_run_agent1` `analyze()` xatosini alohida ushlab real matnni saqlaydi → `ai_timeout` → WARN_AI_TIMEOUT → retry.
 10. 🟡 **Qisman** — marker detektori (`CommentSeparator`) markerni istalgan qator boshida topadi (oxirgi paragrafdagi marker endi to'g'ri AI deb tanaladi). ⏳ Qolgan: formatter tomonida marker-joylashuv + S2-marker (foydalanuvchi WIP'ida).
@@ -171,11 +171,11 @@ Bu loyihaning poydevori jiddiy — bularni saqlab qoling:
 15. 🟡 **Qisman** — migratsiya runner'ga `pg_advisory_lock` qo'shildi (cross-process serializatsiya, konkurent test o'tdi). ⏳ Qolgan: import-time `init_db`'ni olib tashlash (API app lifespan migratsiyasini tasdiqlagach).
 16. ✅ README qayta yozildi — eskirgan bug-analyzer/ChromaDB/VectorDB/embeddings/2.0.0 bo'limlari olib tashlandi; joriy mahsulot (multi-tenant TZ-PR checker + testcase SaaS) va to'g'ri o'rnatish/oqim/struktura hujjatlandi. Barcha havolalar tekshirildi.
 
-### Faza 4 — Texnik qarz (sotuvdan keyin, lekin muhim)
-17. Ikkita run-repository'ni birlashtirish (~550 qator o'chirish).
-18. String-matched error klassifikatsiyani typed exception'larga almashtirish.
-19. O'lik embedding/sprint kodini o'chirish.
-20. `ruff` + `mypy` (loose) qo'shish; ulkan funksiyalarni bo'lish.
+### Faza 4 — Texnik qarz (sotuvdan keyin, lekin muhim) — ⏳ 1/4 BAJARILDI (`c1f4e86`)
+17. ⏳ Ikkita run-repository'ni birlashtirish (~550 qator o'chirish).
+18. ⏳ String-matched error klassifikatsiyani typed exception'larga almashtirish.
+19. ✅ O'lik embedding/vector/sprint kodi o'chirildi (10 fayl; import/deploy tekshiruvidan o'tdi, pytest 319 test yig'di).
+20. ⏳ `ruff` + `mypy` (loose) qo'shish; ulkan funksiyalarni bo'lish.
 
 ---
 
