@@ -236,8 +236,10 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
     last_session_cleanup: datetime | None = None
     last_subscription_expire: datetime | None = None
     last_reaper_scan: datetime | None = datetime.now()
+    last_retention: datetime | None = None
     _SESSION_CLEANUP_INTERVAL = 3600
     _SUBSCRIPTION_EXPIRE_INTERVAL = 3600
+    _RETENTION_INTERVAL = _env_int("APP_RETENTION_INTERVAL_SECONDS", 86400, 3600)
 
     while not stop_event.is_set():
         settings = get_app_settings(force_reload=False)
@@ -275,6 +277,18 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
             except Exception:
                 pass
             last_subscription_expire = now
+
+        now = datetime.now()
+        if last_retention is None or (now - last_retention).total_seconds() >= _RETENTION_INTERVAL:
+            try:
+                from utils.database.retention import run_retention_cleanup
+                removed = await asyncio.to_thread(run_retention_cleanup)
+                if removed:
+                    summary = ", ".join(f"{k}={v}" for k, v in removed.items())
+                    log.info(f"WORKER -> retention: eski yozuvlar o'chirildi ({summary})")
+            except Exception as exc:
+                log.warning(f"WORKER -> retention error: {exc}")
+            last_retention = now
 
         job = claim_next_background_job(worker_name)
         if not job:

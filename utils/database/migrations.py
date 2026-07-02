@@ -35,6 +35,12 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 )
 """
 
+# Cross-process migratsiya serializatsiyasi uchun global advisory lock kaliti.
+# Barcha kirish nuqtalari (webhook/worker/monitoring) bir vaqtda startup bo'lsa,
+# faqat bittasi migratsiya qo'llaydi; qolganlar kutadi va lock ochilganda
+# hamma versiya qo'llangan holatni ko'rib skip qiladi.
+_MIGRATION_ADVISORY_LOCK_KEY = 4917_2026_01  # ixtiyoriy, lekin barqaror bigint
+
 _lock = threading.Lock()
 _applied_for_dsn: str | None = None
 
@@ -106,29 +112,47 @@ def run_migrations(*, force: bool = False) -> None:
 
         conn = connect_processing_db()
         try:
+            # Cross-process serializatsiya: bir vaqtda ishga tushgan boshqa
+            # jarayonlar shu yerda kutadi. Session-level lock — commit'lardan
+            # keyin ham saqlanadi, shuning uchun butun migratsiya davomida ushlanadi.
             with conn.cursor() as cur:
-                cur.execute(_SCHEMA_MIGRATIONS_DDL)
+                cur.execute("SELECT pg_advisory_lock(%s)", [_MIGRATION_ADVISORY_LOCK_KEY])
             conn.commit()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(_SCHEMA_MIGRATIONS_DDL)
+                conn.commit()
 
-            applied = _applied_versions(conn)
-            for version, path in _sql_migration_files():
-                if version in applied:
-                    continue
-                with open(path, encoding="utf-8") as fh:
-                    sql_text = fh.read()
+                # Lock ichida qayta o'qiymiz: agar boshqa jarayon biz kutayotganda
+                # migratsiyalarni qo'llagan bo'lsa, ularni takrorlamaymiz.
+                applied = _applied_versions(conn)
+                for version, path in _sql_migration_files():
+                    if version in applied:
+                        continue
+                    with open(path, encoding="utf-8") as fh:
+                        sql_text = fh.read()
+                    try:
+                        # SQL fayl ko'p statementli + parametrsiz — xom cursor (simple protocol).
+                        with conn.cursor() as cur:
+                            cur.execute(sql_text)
+                        _record(conn, version)
+                        conn.commit()
+                        log.info(f"migration applied: {version}")
+                    except Exception:
+                        conn.rollback()
+                        log.error(f"migration failed: {version}", exc_info=True)
+                        raise
+
+                _ensure_runtime_tables(conn)
+            finally:
+                # Poolga qaytishdan oldin lockni ochish SHART (session-level lock
+                # aks holda pooled connection'da qolib ketadi).
                 try:
-                    # SQL fayl ko'p statementli + parametrsiz — xom cursor (simple protocol).
                     with conn.cursor() as cur:
-                        cur.execute(sql_text)
-                    _record(conn, version)
+                        cur.execute("SELECT pg_advisory_unlock(%s)", [_MIGRATION_ADVISORY_LOCK_KEY])
                     conn.commit()
-                    log.info(f"migration applied: {version}")
                 except Exception:
-                    conn.rollback()
-                    log.error(f"migration failed: {version}", exc_info=True)
-                    raise
-
-            _ensure_runtime_tables(conn)
+                    log.warning("pg_advisory_unlock failed", exc_info=True)
         finally:
             conn.close()
 
