@@ -15,8 +15,8 @@ Auditdan keyin quyidagilar tuzatildi va commit qilindi (`dev1`):
 | **Faza 1 — 3 BLOCKER + CI** | ✅ **To'liq bajarildi** | `7a622c5` |
 | **Faza 2 — HIGH (kod itemlari)** | ✅ **5/7 bajarildi** (F2-5/6/8/9/10) | `7b01aa7`, `dffda66` |
 | Faza 2 — qolgan | ⏳ F2-7 (alerting, qaror kerak), F2-11 (huquqiy, biznes kirishi kerak) | — |
-| **Faza 3 — Barqarorlik** | ✅ **3/5** (F3-12/13/15) | `3b7da21`, `5dbd8dd` |
-| Faza 3 — qolgan | ⏳ F3-14 (async bloklash — ehtiyotkor sessiya), F3-16 (README) | — |
+| **Faza 3 — Barqarorlik** | ✅ **4/5** (F3-12/13/15/16) | `3b7da21`, `5dbd8dd`, `<README>` |
+| Faza 3 — qolgan | ⏳ F3-14 (async bloklash — ehtiyotkor sessiya) | — |
 | Faza 4 | ⏳ Boshlanmadi | — |
 
 Har bir tuzatish haqiqiy kodda tasdiqlangan; to'liq test suite'da 0 yangi regressiya
@@ -164,12 +164,12 @@ Bu loyihaning poydevori jiddiy — bularni saqlab qoling:
 10. 🟡 **Qisman** — marker detektori (`CommentSeparator`) markerni istalgan qator boshida topadi (oxirgi paragrafdagi marker endi to'g'ri AI deb tanaladi). ⏳ Qolgan: formatter tomonida marker-joylashuv + S2-marker (foydalanuvchi WIP'ida).
 11. ⏳ LICENSE + ToS + maxfiylik/data-processing hujjati ("JIRA matningiz va PR diff'lar Google Gemini'ga yuboriladi") + per-company diff opt-out. **Biznes/yurisdiksiya kirishini talab qiladi.**
 
-### Faza 3 — Barqarorlik va tozalik (4-hafta+) — ⏳ 3/5 BAJARILDI (`3b7da21`, `5dbd8dd`)
+### Faza 3 — Barqarorlik va tozalik (4-hafta+) — ⏳ 4/5 BAJARILDI (`3b7da21`, `5dbd8dd`, README)
 12. ✅ Retention job (`utils/database/retention.py`) — eski run/event/usage/job yozuvlari kuniga bir marta tozalanadi (RUN=90, JOB=30, USAGE=365 kun; CASCADE bilan). ⏳ Qolgan: log rotation (`RotatingFileHandler`/Docker stdout).
 13. ✅ `return_count` cheklovi — `APP_MAX_RETURN_COUNT` (default 3) chegarasi; cheksiz return loop to'xtatildi.
 14. ⏳ Async endpointlarda `asyncio.to_thread` (event loop bloklashni tugatish). **385-qatorli kritik webhook handler + o'rtada await — ehtiyotkor alohida sessiya kerak.**
 15. 🟡 **Qisman** — migratsiya runner'ga `pg_advisory_lock` qo'shildi (cross-process serializatsiya, konkurent test o'tdi). ⏳ Qolgan: import-time `init_db`'ni olib tashlash (API app lifespan migratsiyasini tasdiqlagach).
-16. ⏳ README'ni yagona onboarding hujjatiga aylantirish; eski (bug-analyzer/ChromaDB/2.0.0) bo'limlarni o'chirish.
+16. ✅ README qayta yozildi — eskirgan bug-analyzer/ChromaDB/VectorDB/embeddings/2.0.0 bo'limlari olib tashlandi; joriy mahsulot (multi-tenant TZ-PR checker + testcase SaaS) va to'g'ri o'rnatish/oqim/struktura hujjatlandi. Barcha havolalar tekshirildi.
 
 ### Faza 4 — Texnik qarz (sotuvdan keyin, lekin muhim)
 17. Ikkita run-repository'ni birlashtirish (~550 qator o'chirish).
