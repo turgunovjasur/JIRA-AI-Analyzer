@@ -237,13 +237,25 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
     last_subscription_expire: datetime | None = None
     last_reaper_scan: datetime | None = datetime.now()
     last_retention: datetime | None = None
+    last_heartbeat: datetime | None = None
     _SESSION_CLEANUP_INTERVAL = 3600
     _SUBSCRIPTION_EXPIRE_INTERVAL = 3600
     _RETENTION_INTERVAL = _env_int("APP_RETENTION_INTERVAL_SECONDS", 86400, 3600)
+    _HEARTBEAT_INTERVAL = _env_int("APP_WORKER_HEARTBEAT_SECONDS", 60, 15)
 
     while not stop_event.is_set():
         settings = get_app_settings(force_reload=False)
         retry_scan_interval = max(5, int(settings.queue.blocked_check_interval))
+
+        now = datetime.now()
+        if last_heartbeat is None or (now - last_heartbeat).total_seconds() >= _HEARTBEAT_INTERVAL:
+            try:
+                from core.watchdog import record_worker_heartbeat
+                record_worker_heartbeat(worker_name)
+            except Exception:
+                pass
+            last_heartbeat = now
+
         now = datetime.now()
         if last_retry_scan is None or (now - last_retry_scan).total_seconds() >= retry_scan_interval:
             queued_retries = _enqueue_due_retry_jobs()

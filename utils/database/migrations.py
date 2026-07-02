@@ -83,6 +83,7 @@ def _ensure_runtime_tables(conn) -> None:
     from utils.database.analysis_run_repository import ensure_analysis_run_tables
     from utils.database.quota_repository import ensure_quota_tables
     from utils.auth.auth_bootstrap import _ensure_postgres_auth_runtime_tables
+    from core.watchdog import ensure_watchdog_tables
 
     ensure_job_queue_tables(conn)
     ensure_checker_run_tables(conn)
@@ -90,6 +91,7 @@ def _ensure_runtime_tables(conn) -> None:
     ensure_analysis_run_tables(conn)
     ensure_quota_tables(conn)
     _ensure_postgres_auth_runtime_tables(conn)
+    ensure_watchdog_tables(conn)
     conn.commit()
 
 

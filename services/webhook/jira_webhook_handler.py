@@ -143,6 +143,8 @@ def _is_allowed_issue_type(issue_type: str, allowed_types_raw: str) -> bool:
 
 # Blocked retry scheduler uchun global task (startup'da yaratiladi)
 _blocked_retry_task: Optional[asyncio.Task] = None
+# Watchdog (navbat/blocked/worker holatini kuzatuvchi) uchun global task
+_watchdog_task: Optional[asyncio.Task] = None
 # Oxirgi log qilingan task — yangi task boshida separator uchun
 _last_task_key: Optional[str] = None
 
@@ -186,6 +188,29 @@ def _queue_job(
 
 
 @asynccontextmanager
+async def _watchdog_loop() -> None:
+    """Davriy watchdog — navbat/blocked/worker holatini tekshirib ogohlantiradi.
+
+    Sinxron DB o'qishi `asyncio.to_thread`da — event loop bloklanmaydi. API
+    jarayonida ishlaydi (worker'dan alohida), shuning uchun worker o'limini ham
+    aniqlay oladi.
+    """
+    from core.watchdog import run_watchdog_and_notify, watchdog_enabled
+    try:
+        interval = max(60, int(os.getenv("APP_WATCHDOG_INTERVAL_SECONDS", "300")))
+    except ValueError:
+        interval = 300
+    while True:
+        try:
+            await asyncio.sleep(interval)
+            if watchdog_enabled():
+                await asyncio.to_thread(run_watchdog_and_notify)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.warning("watchdog loop iteratsiyasi xato", exc_info=True)
+
+
 async def lifespan(app: FastAPI):
     """
     Server lifecycle boshqaruvi.
@@ -197,7 +222,7 @@ async def lifespan(app: FastAPI):
     Shutdown:
       - scheduler taskini toza to'xtatish
     """
-    global _blocked_retry_task
+    global _blocked_retry_task, _watchdog_task
 
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
@@ -232,6 +257,13 @@ async def lifespan(app: FastAPI):
     if not _worker_queue_enabled():
         _blocked_retry_task = asyncio.create_task(_blocked_retry_scheduler())
 
+    # Watchdog — API jarayonida (worker'dan alohida) navbat/blocked/worker holatini
+    # kuzatadi. Inline rejimda ham blocked/backlog uchun foydali.
+    from core.watchdog import watchdog_enabled
+    if watchdog_enabled():
+        _watchdog_task = asyncio.create_task(_watchdog_loop())
+        log.info("WATCHDOG      yoqilgan")
+
     try:
         yield
     finally:
@@ -240,6 +272,11 @@ async def lifespan(app: FastAPI):
             with suppress(asyncio.CancelledError):
                 await _blocked_retry_task
             _blocked_retry_task = None
+        if _watchdog_task is not None:
+            _watchdog_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await _watchdog_task
+            _watchdog_task = None
         # DB connection pool'ni toza yopish (ulanishlarni qaytarish).
         with suppress(Exception):
             from utils.database.runtime import close_pool
