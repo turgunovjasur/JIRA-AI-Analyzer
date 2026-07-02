@@ -39,6 +39,9 @@ services:
       dockerfile: Dockerfile.backend
     restart: unless-stopped
     command: ["python", "-m", "services.worker.main"]
+    # SIGTERM'da worker joriy jobni (multi-agent run ~3-8 daqiqa) tugatib to'xtaydi;
+    # bu vaqt tugasa job 'running' qoladi va reaper uni qayta navbatga qo'yadi.
+    stop_grace_period: 600s
     env_file: .env
     environment:
       APP_POSTGRES_DSN: postgresql://${POSTGRES_USER:-jira_ai_analyzer}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-jira_ai_analyzer}

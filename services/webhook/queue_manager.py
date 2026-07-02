@@ -24,9 +24,29 @@ from typing import Optional
 
 from config.app_settings import get_app_settings
 from core.logger import get_logger
-from utils.database.task_db import get_task, mark_blocked
+from utils.database.task_db import get_task, mark_blocked, mark_completed
 
 log = get_logger("webhook.queue_manager")
+
+
+def _finalize_terminal_state(task_key: str, company_id: Optional[int] = None) -> None:
+    """Orkestratsiya tugagach task hali 'progressing' bo'lsa — 'completed' ga o'tkazish.
+
+    Service1 muvaffaqiyatli tugab, Service2 ishlamaydigan oqimlarda
+    (checker-only, score past + auto_return o'chirilgan, testcase trigger emas)
+    hech qaysi funksiya terminal holat qo'ymaydi — task abadiy 'progressing'da
+    qolar edi va keyingi webhook'lar SKIP bo'lardi. Bu — o'sha bo'shliqni yopadi.
+
+    Terminal holatlar (completed/returned/error/blocked) ustiga YOZMAYDI —
+    faqat 'progressing' bo'lsa completed qiladi.
+    """
+    try:
+        task_db = get_task(task_key, company_id=company_id)
+        if task_db and task_db.get('task_status') == 'progressing':
+            mark_completed(task_key, company_id=company_id)
+            log.info(f"[{task_key}] FINALIZE -> task_status=completed (orkestratsiya yakunlandi)")
+    except Exception as e:
+        log.warning(f"[{task_key}] finalize terminal state error: {e}")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # AI QUEUE STATE
@@ -145,6 +165,7 @@ async def _run_task_group(
         if task_db and _can_run_service2(task_db, app_settings):
             await _wait_for_ai_slot(task_key, company_id=company_id, min_interval=queue_settings.gemini_min_interval)
             await _run_testcase_generation(task_key=task_key, new_status=new_status, company_id=company_id)
+        _finalize_terminal_state(task_key, company_id=company_id)
         return
 
     lock = _get_ai_queue_lock(company_id)
@@ -183,6 +204,8 @@ async def _run_task_group(
     finally:
         lock.release()
 
+    _finalize_terminal_state(task_key, company_id=company_id)
+
 
 async def _queued_check_tz_pr(
     task_key: str,
@@ -220,6 +243,7 @@ async def _queued_check_tz_pr(
             company_id=company_id,
             task_details=task_details,
         )
+        _finalize_terminal_state(task_key, company_id=company_id)
         return
 
     lock = _get_ai_queue_lock(company_id)
@@ -244,6 +268,8 @@ async def _queued_check_tz_pr(
         )
     finally:
         lock.release()
+
+    _finalize_terminal_state(task_key, company_id=company_id)
 
 
 def _can_run_service2(task_db: dict, app_settings) -> bool:

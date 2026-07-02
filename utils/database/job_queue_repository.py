@@ -249,6 +249,68 @@ def mark_job_failed(conn, job: dict[str, Any], error_message: str) -> None:
     conn.commit()
 
 
+def requeue_stale_running_jobs(conn, *, stale_seconds: int) -> dict[str, int]:
+    """Worker crash tufayli 'running'da qotib qolgan joblarni tiklash.
+
+    ``claim_next_job`` faqat ``status='queued'`` joblarni oladi, shuning uchun
+    worker run o'rtasida o'lsa, uning jobi abadiy ``running`` qoladi va o'sha
+    task uchun dedupe keyingi webhook'larni bloklaydi. Bu funksiya ``started_at``
+    ``stale_seconds`` dan eski bo'lgan running joblarni:
+      - urinishlar qolgan bo'lsa → ``queued`` (boshqa worker qayta oladi)
+      - urinishlar tugagan bo'lsa → ``failed``
+    ga o'tkazadi.
+
+    ``stale_seconds`` eng uzun normal run'dan (multi-agent ~3-8 daqiqa) sezilarli
+    katta bo'lishi shart — aks holda hali ishlayotgan job xato requeue qilinadi.
+
+    Returns:
+        {"requeued": N, "failed": M}
+    """
+    now = _now_iso()
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(seconds=max(1, int(stale_seconds)))
+    ).isoformat()
+
+    requeued = _execute(
+        conn,
+        """
+        UPDATE job_queue
+        SET status = 'queued',
+            worker_name = NULL,
+            started_at = NULL,
+            finished_at = NULL,
+            updated_at = ?,
+            last_error = 'reaped: stale running job requeued'
+        WHERE status = 'running'
+          AND started_at IS NOT NULL
+          AND started_at < ?
+          AND attempts < max_attempts
+        RETURNING id
+        """,
+        [now, cutoff],
+    ).fetchall()
+
+    failed = _execute(
+        conn,
+        """
+        UPDATE job_queue
+        SET status = 'failed',
+            finished_at = ?,
+            updated_at = ?,
+            last_error = 'reaped: stale running job exceeded max_attempts'
+        WHERE status = 'running'
+          AND started_at IS NOT NULL
+          AND started_at < ?
+          AND attempts >= max_attempts
+        RETURNING id
+        """,
+        [now, now, cutoff],
+    ).fetchall()
+
+    conn.commit()
+    return {"requeued": len(requeued or []), "failed": len(failed or [])}
+
+
 def fetch_queue_snapshot(conn) -> dict[str, Any]:
     cursor = _execute(
         conn,

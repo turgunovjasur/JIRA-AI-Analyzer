@@ -473,14 +473,19 @@ async def _jira_webhook_impl(
             log.warning(f"[{task_key}] Webhook secret sozlanmagan (company_id={company_id})")
             return JSONResponse(status_code=401, content={"status": "unauthorized", "reason": "webhook secret not configured"})
         if expected_secret:
-            provided_secret = (
-                request.headers.get("X-Webhook-Secret")
-                or request.query_params.get("token")
-                or ""
-            ).strip()
+            # Header ustuvor. Query-param (?token=) — deprecated fallback: token
+            # URL orqali server/proxy loglariga tushadi, shuning uchun ogohlantiramiz.
+            header_secret = (request.headers.get("X-Webhook-Secret") or "").strip()
+            query_secret = (request.query_params.get("token") or "").strip()
+            provided_secret = header_secret or query_secret
             if not secrets.compare_digest(provided_secret, expected_secret):
                 from fastapi.responses import JSONResponse
                 return JSONResponse(status_code=401, content={"status": "unauthorized", "reason": "invalid webhook secret"})
+            if not header_secret and query_secret:
+                log.warning(
+                    f"[{task_key}] DEPRECATED -> webhook secret query-param (?token=) orqali yuborildi. "
+                    f"X-Webhook-Secret header'ga o'ting (token URL loglariga tushadi) | company_id={company_id}"
+                )
 
         # Obuna tekshiruvi — muddati o'tgan yoki bloklangan kompaniya ignore
         from utils.auth.auth_db import is_company_subscription_active

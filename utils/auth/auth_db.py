@@ -561,6 +561,20 @@ def create_company(
             )
             delete_company_by_id(_get_conn, company_id)
             return None
+
+        # Webhook secret avtomatik generatsiya — yangi kompaniya xavfsiz-default
+        # bilan boshlanadi (BLOCKER-2). Admin buni JIRA webhook'iga
+        # X-Webhook-Secret header sifatida qo'yadi. Shifrlash tayyor bo'lmasa
+        # (master key yo'q) jimgina o'tkazib yuboriladi — admin keyin qo'lda qo'yadi.
+        try:
+            if not save_company_settings(company_id, {"webhook_secret": secrets.token_urlsafe(32)}):
+                log.warning(
+                    f"create_company: webhook_secret avto-generatsiya saqlanmadi "
+                    f"(shifrlash tayyor emas?) | company_id={company_id}"
+                )
+        except Exception as sec_exc:
+            log.warning(f"create_company: webhook_secret avto-generatsiya xatosi | company_id={company_id} | {sec_exc}")
+
         log.info(
             f"create_company success | company_id={company_id} | code={code_lower} | "
             f"seat_limit={max(0, int(seat_limit))} | webhook={bool(mods.get('webhook'))}"

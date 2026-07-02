@@ -158,7 +158,7 @@ def fetch_stuck_tasks(
     conn = connect_processing(row_factory=True)
     cutoff_time = (datetime.now() - timedelta(minutes=timeout_minutes)).isoformat()
     query = """
-    SELECT task_id, task_status, service1_status, service2_status,
+    SELECT task_id, company_id, task_status, service1_status, service2_status,
            last_processed_at, updated_at,
            ROUND(EXTRACT(EPOCH FROM (NOW() - updated_at)) / 60.0) as stuck_minutes
     FROM task_processing

@@ -29,7 +29,9 @@ from utils.database.task_db import (
     get_background_queue_snapshot,
     get_blocked_tasks_ready_for_retry,
     init_db,
+    requeue_stale_background_jobs,
     retry_background_job,
+    sweep_stuck_progressing_tasks,
 )
 
 log = get_logger("worker.runtime")
@@ -53,6 +55,50 @@ def _poll_interval_seconds() -> int:
         return max(1, int(raw))
     except ValueError:
         return 3
+
+
+def _env_int(name: str, default: int, minimum: int) -> int:
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    try:
+        return max(minimum, int(raw))
+    except ValueError:
+        return default
+
+
+def _stale_job_timeout_seconds() -> int:
+    # Eng uzun normal run (~3-8 daqiqa) dan sezilarli katta: default 30 daqiqa.
+    return _env_int("APP_STALE_JOB_TIMEOUT_SECONDS", 1800, 300)
+
+
+def _stuck_task_timeout_minutes() -> int:
+    # Job reaper'dan uzunroq — u crash'ni birinchi tiklaydi: default 60 daqiqa.
+    return _env_int("APP_STUCK_TASK_TIMEOUT_MINUTES", 60, 10)
+
+
+def _reaper_interval_seconds() -> int:
+    return _env_int("APP_REAPER_INTERVAL_SECONDS", 120, 30)
+
+
+def _run_recovery_sweep() -> None:
+    """Stale running joblarni tiklash + qotib qolgan 'progressing' tasklarni error qilish."""
+    try:
+        reaped = requeue_stale_background_jobs(_stale_job_timeout_seconds())
+        if reaped.get("requeued") or reaped.get("failed"):
+            log.warning(
+                f"WORKER -> reaper: {reaped.get('requeued', 0)} job requeued, "
+                f"{reaped.get('failed', 0)} failed (stale running)"
+            )
+    except Exception as exc:
+        log.warning(f"WORKER -> reaper error: {exc}")
+
+    try:
+        swept = sweep_stuck_progressing_tasks(_stuck_task_timeout_minutes())
+        if swept:
+            log.warning(f"WORKER -> sweeper: {swept} stuck 'progressing' task(s) -> error")
+    except Exception as exc:
+        log.warning(f"WORKER -> sweeper error: {exc}")
 
 
 def _retry_delay_seconds(job: dict[str, Any]) -> int:
@@ -176,10 +222,14 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
 
     init_db()
     log.info(f"WORKER -> started | name={worker_name}")
+    # Restart'da darhol crash-recovery: oldingi worker o'lganda qolgan stale
+    # 'running' joblarni va qotib qolgan 'progressing' tasklarni tiklash.
+    _run_recovery_sweep()
     poll_interval = _poll_interval_seconds()
     last_retry_scan: datetime | None = None
     last_session_cleanup: datetime | None = None
     last_subscription_expire: datetime | None = None
+    last_reaper_scan: datetime | None = datetime.now()
     _SESSION_CLEANUP_INTERVAL = 3600
     _SUBSCRIPTION_EXPIRE_INTERVAL = 3600
 
@@ -192,6 +242,11 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
             if queued_retries:
                 log.info(f"WORKER -> enqueued {queued_retries} retry job(s)")
             last_retry_scan = now
+
+        now = datetime.now()
+        if last_reaper_scan is None or (now - last_reaper_scan).total_seconds() >= _reaper_interval_seconds():
+            _run_recovery_sweep()
+            last_reaper_scan = now
 
         now = datetime.now()
         if last_session_cleanup is None or (now - last_session_cleanup).total_seconds() >= _SESSION_CLEANUP_INTERVAL:

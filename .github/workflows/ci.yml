@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev1]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Docker image quriladi + runtime deps import qilinadi.
+  # Bu job aynan BLOCKER-1 (buzuq requirements.txt) turdagi xatolarni ushlaydi:
+  # google-genai / cryptography yo'q bo'lsa yoki dep resolver yiqilsa — bu yerda ko'rinadi.
+  backend-build:
+    name: Backend image + deps
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build -f Dockerfile.backend -t qa-backend .
+      - name: Import runtime deps (must not raise)
+        run: |
+          docker run --rm qa-backend python -c "
+          from google import genai
+          from google.genai import types
+          from cryptography.fernet import Fernet
+          import fastapi, uvicorn, starlette, jira, pandas
+          import psycopg, psycopg_pool, pydantic, requests
+          print('runtime deps import OK')
+          "
+
+  # pytest — Postgres service bilan (DB testlari uchun majburiy).
+  # HOZIRCHA non-blocking (continue-on-error): suite'da ~13 ta ESKIRGAN test bor
+  # (mock imzolari joriy kod bilan mos emas — masalan get_task(company_id=...)).
+  # Bular Phase-1'dan oldin ham fail bo'lardi (haqiqiy bug emas). To'liq natija
+  # loglarda ko'rinadi. Faza 4 (test tozalash) da tuzatilgach, continue-on-error
+  # olib tashlanadi va bu job bloklovchi merge-gate bo'ladi.
+  tests:
+    name: pytest (Postgres)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: jira_ai_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      APP_TEST_POSTGRES_DSN: postgresql://postgres:postgres@localhost:5432/jira_ai_test
+      # Import-vaqtidagi init_db bloklab qolmasligi uchun (conftest baribir override qiladi):
+      APP_POSTGRES_DSN: postgresql://postgres:postgres@localhost:5432/jira_ai_test
+      APP_CREDENTIALS_MASTER_KEY: ci-test-master-key-not-a-real-secret
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Apply base schema
+        # conftest _align_postgres_test_schema ALTER'lari task_processing/companies
+        # mavjudligini talab qiladi; init_db (run_migrations) qolgan runtime jadvallarni
+        # (job_queue va h.k.) test ichida qo'shadi.
+        run: psql "$APP_TEST_POSTGRES_DSN" -f database/postgresql/001_initial_schema.sql -q
+      - name: Run pytest
+        # test_chunking_system.py — tashlab ketilgan embedding/vector feature'ini
+        # sinaydi (chromadb/sentence-transformers requirements'dan olib tashlangan).
+        run: python -m pytest --ignore=tests/test_chunking_system.py -q
+
+  # Frontend (Next.js) build — kompilyatsiya/tayp xatolarini ushlaydi.
+  frontend-build:
+    name: Frontend build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      BACKEND_API_BASE_URL: http://backend:8000
+      NEXT_PUBLIC_BACKEND_API_BASE_URL: http://backend:8000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build

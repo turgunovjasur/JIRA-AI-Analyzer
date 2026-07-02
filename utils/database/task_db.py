@@ -27,6 +27,7 @@ from utils.database.job_queue_repository import (
     mark_job_retry as repo_mark_job_retry,
     mark_job_failed as repo_mark_job_failed,
     fetch_queue_snapshot as repo_fetch_queue_snapshot,
+    requeue_stale_running_jobs as repo_requeue_stale_running_jobs,
 )
 
 log = get_logger("database")
@@ -924,6 +925,49 @@ def fail_background_job(job: Dict[str, Any], error_message: str) -> bool:
     except Exception as e:
         log.warning(f"[job:{job.get('id')}] fail_background_job error: {e}")
         return False
+
+
+def requeue_stale_background_jobs(stale_seconds: int) -> Dict[str, int]:
+    """Worker crash tufayli 'running'da qotib qolgan joblarni qayta navbatga/failed."""
+    try:
+        settings = _get_db_settings()
+        conn = connect_processing_db(timeout=settings.db_connection_timeout, row_factory=True)
+        result = repo_requeue_stale_running_jobs(conn, stale_seconds=stale_seconds)
+        conn.close()
+        return result
+    except Exception as e:
+        log.warning(f"requeue_stale_background_jobs error: {e}")
+        return {"requeued": 0, "failed": 0}
+
+
+def sweep_stuck_progressing_tasks(timeout_minutes: int = 60) -> int:
+    """Terminal holatga o'tmay 'progressing'da qotib qolgan tasklarni 'error' qilish.
+
+    So'nggi himoya chizig'i: worker/API run o'rtasida o'lsa yoki instrumentlanmagan
+    oqim taskni 'progressing'da qoldirsa, keyingi webhook'lar SKIP bo'ladi (lockout).
+    Bu ularni 'error' ga o'tkazadi — monitoring'da ko'rinadi va keyingi status
+    o'zgarishida webhook handler reset qilib qayta ishlaydi.
+
+    Job reaper (requeue_stale_background_jobs) crash'ni birinchi tiklaydi, shuning
+    uchun bu timeout undan uzunroq bo'lishi kerak (default 60 daqiqa).
+
+    Returns:
+        int: 'error' ga o'tkazilgan tasklar soni.
+    """
+    swept = 0
+    for task in get_stuck_tasks(timeout_minutes):
+        task_id = str(task.get('task_id') or '').strip()
+        if not task_id:
+            continue
+        company_id = task.get('company_id')
+        stuck_minutes = task.get('stuck_minutes')
+        mark_error(
+            task_id,
+            f"Stuck: {stuck_minutes} daqiqa 'progressing'da qoldi (avto-tiklash)",
+            company_id=company_id,
+        )
+        swept += 1
+    return swept
 
 
 def get_background_queue_snapshot() -> Dict[str, Any]:
