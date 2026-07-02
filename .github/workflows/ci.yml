@@ -77,9 +77,7 @@ jobs:
         # (job_queue va h.k.) test ichida qo'shadi.
         run: psql "$APP_TEST_POSTGRES_DSN" -f database/postgresql/001_initial_schema.sql -q
       - name: Run pytest
-        # test_chunking_system.py — tashlab ketilgan embedding/vector feature'ini
-        # sinaydi (chromadb/sentence-transformers requirements'dan olib tashlangan).
-        run: python -m pytest --ignore=tests/test_chunking_system.py -q
+        run: python -m pytest -q
 
   # Frontend (Next.js) build — kompilyatsiya/tayp xatolarini ushlaydi.
   frontend-build:
