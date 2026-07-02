@@ -51,7 +51,7 @@ def _build_source_info() -> dict[str, Any]:
 
 
 @router.get("/source-info")
-async def get_monitoring_source_info(
+def get_monitoring_source_info(
     x_session_id: str | None = Header(default=None, alias="X-Session-ID"),
 ):
     load_api_session(x_session_id, allowed_roles={"super_admin", "company_admin"})
@@ -59,7 +59,7 @@ async def get_monitoring_source_info(
 
 
 @router.get("/snapshot")
-async def get_monitoring_snapshot(
+def get_monitoring_snapshot(
     company_id: Optional[int] = Query(default=None, ge=1),
     status: str = Query(default="Barchasi"),
     x_session_id: str | None = Header(default=None, alias="X-Session-ID"),
@@ -96,7 +96,7 @@ async def get_monitoring_snapshot(
 
 
 @router.post("/bootstrap")
-async def bootstrap_monitoring_storage(
+def bootstrap_monitoring_storage(
     x_session_id: str | None = Header(default=None, alias="X-Session-ID"),
 ):
     load_api_session(x_session_id, allowed_roles={"super_admin"})
@@ -110,7 +110,7 @@ async def bootstrap_monitoring_storage(
 
 
 @router.get("/tasks/{task_key}")
-async def get_monitoring_task(
+def get_monitoring_task(
     task_key: str,
     company_id: Optional[int] = Query(default=None, ge=1),
     x_session_id: str | None = Header(default=None, alias="X-Session-ID"),
@@ -133,7 +133,7 @@ async def get_monitoring_task(
 
 
 @router.delete("/tasks/{task_key}")
-async def delete_monitoring_task(
+def delete_monitoring_task(
     task_key: str,
     company_id: Optional[int] = Query(default=None, ge=1),
     x_session_id: str | None = Header(default=None, alias="X-Session-ID"),

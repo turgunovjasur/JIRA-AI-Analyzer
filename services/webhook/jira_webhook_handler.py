@@ -816,9 +816,11 @@ async def jira_webhook_company(request: Request, background_tasks: BackgroundTas
 # ============================================================================
 
 @app.get("/")
-async def root():
+def root():
     """
     Root endpoint — service holati va mavjud endpoint'lar ro'yxati.
+
+    Sinxron `def` — FastAPI threadpool'da ishlaydi (event loop bloklanmaydi).
 
     Monitoring va to'g'ri ishlayotganini tekshirish uchun.
     """
@@ -845,9 +847,10 @@ async def root():
 
 
 @app.get("/health")
-async def health_check():
+def health_check():
     """
     Health check endpoint — monitoring tizimlari uchun.
+    Sinxron `def` — DB probe event loop'ni bloklamaydi (FastAPI threadpool).
 
     Tekshiradigan komponentlar:
     - tz_pr service: TZPRService instansiyasi yaratilganmi
@@ -909,10 +912,11 @@ async def health_check():
 
 
 @app.get("/metrics")
-async def get_metrics():
+def get_metrics():
     """
     Tashqi monitoring tizimlari (UptimeRobot, Grafana) uchun metrikalar.
     Auth talab qilinmaydi — faqat aggregat ko'rsatkichlar qaytaradi.
+    Sinxron `def` — DB aggregat so'rovi event loop'ni bloklamaydi (FastAPI threadpool).
     """
     metrics: dict = {
         "status": "ok",
@@ -964,9 +968,10 @@ async def get_metrics():
 
 
 @app.get("/settings")
-async def get_settings():
+def get_settings():
     """
     Joriy sozlamalarni ko'rsatish.
+    Sinxron `def` — FastAPI threadpool'da ishlaydi (event loop bloklanmaydi).
 
     Debugging va monitoring uchun — hozirgi konfiguratsiya qiymatlarini
     JSON formatida qaytaradi.

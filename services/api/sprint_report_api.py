@@ -96,7 +96,7 @@ class SprintReportResponse(BaseModel):
 
 
 @router.get("/sprint-report", response_model=SprintReportResponse)
-async def get_sprint_report(
+def get_sprint_report(
     company_id: int = Query(..., ge=1, description="Company ID"),
     days: int = Query(default=7, ge=1, le=365, description="Period in days"),
     limit: int = Query(default=10, ge=1, le=100, description="Top features limit"),
