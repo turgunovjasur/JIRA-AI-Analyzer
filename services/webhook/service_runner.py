@@ -16,6 +16,7 @@ Service2 (Testcase Generator):
 
 Ikkala servis ham DB'da holat saqlaydi va xatolikda mos holat qo'yadi.
 """
+import os
 from typing import Any
 
 from config.app_settings import get_app_settings, TZPRCheckerSettings
@@ -33,6 +34,22 @@ from utils.database.task_db import (
 from services.webhook.error_handler import _error_type_to_reason_code
 
 log = get_logger("webhook.service_runner")
+
+
+def _max_return_count() -> int:
+    """Maksimal avtomatik-return soni — cheksiz return loop'ining oldini oladi.
+
+    Config o'rniga env (`APP_MAX_RETURN_COUNT`, default 3). 0 = cheksiz.
+    Task qaytarilgan har safar to'liq multi-agent AI xarajati sarflanadi, shuning
+    uchun returned→Testing→returned aylanishi chegaralanadi.
+    """
+    raw = os.getenv("APP_MAX_RETURN_COUNT")
+    if raw is None:
+        return 3
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 3
 
 
 def _log_service2_guard_failure(task_key: str, detail: str, meta: dict[str, Any] | None = None) -> None:
@@ -229,12 +246,26 @@ async def check_tz_pr_and_comment(
         if settings.auto_return_enabled and compliance_score is not None:
             threshold = settings.return_threshold
             if compliance_score < threshold:
-                returned = await _handle_auto_return(task_key, result, settings, company_id=company_id)
-                if returned:
-                    mark_returned(task_key, company_id=company_id)
-                    set_return_reason(task_key, WARN_LOW_SCORE, company_id=company_id)
+                max_returns = _max_return_count()
+                prior_returns = int((task_db or {}).get('return_count') or 0)
+                if max_returns and prior_returns >= max_returns:
+                    # Cheksiz return loop'ining oldini olish: chegaraga yetganda
+                    # task boshqa qaytarilmaydi (har aylanish to'liq AI xarajati).
+                    log.warning(
+                        f"[{task_key}] Return cheklovi ({max_returns}) — score={compliance_score}% past, "
+                        f"lekin {prior_returns} marta qaytarilgan; qaytarilmaydi (qo'lda ko'rish)."
+                    )
+                    await _notify_return_cap_reached(
+                        task_key, compliance_score, threshold, prior_returns, max_returns,
+                        comment_writer, adf_formatter,
+                    )
                 else:
-                    log.warning(f"[{task_key}] Auto-return requested but JIRA transition bajarilmadi")
+                    returned = await _handle_auto_return(task_key, result, settings, company_id=company_id)
+                    if returned:
+                        mark_returned(task_key, company_id=company_id)
+                        set_return_reason(task_key, WARN_LOW_SCORE, company_id=company_id)
+                    else:
+                        log.warning(f"[{task_key}] Auto-return requested but JIRA transition bajarilmadi")
 
     except Exception as e:
         error_msg = str(e)
@@ -484,6 +515,38 @@ async def _handle_auto_return(
         return False
 
     return False
+
+
+async def _notify_return_cap_reached(
+        task_key: str,
+        score: int,
+        threshold: int,
+        prior_returns: int,
+        max_returns: int,
+        comment_writer: Any,
+        adf_formatter: Any,
+) -> None:
+    """Return chegarasi urilganda JIRA'ga qisqa xabar — task qaytarilmaydi.
+
+    `_handle_auto_return` bilan bir xil warning-comment mexanizmini ishlatadi,
+    lekin JIRA status transition YO'Q va DB `returned` ga o'tmaydi (caller
+    qaytarmaydi). Maqsad — QA'ga past ball + chegara haqida ogohlantirish.
+    """
+    try:
+        from services.webhook.error_handler import _build_warning_adf, format_warning_simple
+        reason = (
+            f"Moslik bali: {score}% (chegarasi: {threshold}%). "
+            f"Task avtomatik {prior_returns} marta qaytarilgan — chegara ({max_returns}) ga yetdi. "
+            f"Boshqa avtomatik qaytarilmaydi; iltimos qo'lda ko'rib chiqing."
+        )
+        doc = _build_warning_adf(adf_formatter, "Servis-1", reason, task_key, "warning", reason_code=WARN_LOW_SCORE)
+        if not comment_writer.add_comment_adf(task_key, doc):
+            comment_writer.add_comment(task_key, format_warning_simple("Servis-1", reason, task_key))
+            log.jira_comment_added(task_key, "simple")
+        else:
+            log.jira_comment_added(task_key, "Return-cap ADF")
+    except Exception as e:
+        log.error(f"[{task_key}] Return-cap notification xato: {e}")
 
 
 async def _handle_pr_not_merged_return(
