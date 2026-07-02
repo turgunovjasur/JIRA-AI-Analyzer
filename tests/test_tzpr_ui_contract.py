@@ -454,3 +454,85 @@ def test_jira_formatter_prefers_structured_sections_and_visible_filter():
     assert "API endpoint tayyor." not in simple_comment
     assert "Dev izohi asosida boshqa repoda tekshiriladi." not in simple_comment
     assert "RAW TEXT WITHOUT PARSEABLE HEADINGS" not in simple_comment
+
+
+def test_jira_formatter_renders_each_requirement_as_nested_expand():
+    formatter = JiraADFFormatter()
+    result = TZPRAnalysisResult(
+        success=True,
+        task_key="DEV-1",
+        task_summary="Summary",
+        analysis_sections=[
+            TZPRAnalysisSection(
+                key="completed",
+                title="✅ Bajarilgan talablar",
+                items=[
+                    "[REQ-1] Login validatsiyasi bajarilgan. | Evidence: LoginForm.tsx",
+                    "[REQ-2] Submit loading holati qo'shilgan. | Evidence: Button disabled state",
+                ],
+                item_count=2,
+            ),
+            TZPRAnalysisSection(
+                key="failed",
+                title="❌ Bajarilmagan talablar",
+                items=["[REQ-3] Export flow topilmadi. | Evidence: route yo'q"],
+                item_count=1,
+            ),
+            TZPRAnalysisSection(
+                key="skipped",
+                title="⏭️ Skip qilingan talablar",
+                items=["[REQ-4] Scope tashqarisida. | Evidence: dev izohi"],
+                item_count=1,
+            ),
+            TZPRAnalysisSection(
+                key="issues",
+                title="🔍 Extra Scan",
+                items=["[REQ-5] Potensial regression bor. | Evidence: shared helper o'zgargan"],
+                item_count=1,
+            ),
+        ],
+    )
+
+    adf_doc = formatter.build_comment_document(result)
+
+    def _heading_text(node):
+        return "".join(c.get("text", "") for c in node.get("content", []))
+
+    def _requirement_panels_under(section_title):
+        content = adf_doc["content"]
+        idx = next(
+            i for i, node in enumerate(content)
+            if node.get("type") == "heading" and _heading_text(node) == section_title
+        )
+        panels = []
+        for node in content[idx + 1:]:
+            # ADF qoidasi: bo'lim = heading, talablar = flat top-level expand
+            # (expand ichida expand JIRA'da 400 beradi). Keyingi heading/rule'da to'xtaymiz.
+            if node.get("type") in ("heading", "rule"):
+                break
+            if node.get("type") == "expand":
+                panels.append(node)
+        return panels
+
+    completed_panels = _requirement_panels_under("✅ Bajarilgan talablar (2 ta)")
+    assert [node["attrs"]["title"] for node in completed_panels] == [
+        "✅ [REQ-1] Login validatsiyasi bajarilgan.",
+        "✅ [REQ-2] Submit loading holati qo'shilgan.",
+    ]
+    assert "Login validatsiyasi bajarilgan" in str(completed_panels[0])
+    assert "Submit loading holati qo'shilgan" in str(completed_panels[1])
+    assert len(completed_panels[0]["content"]) == 2
+    assert "Evidence: " in str(completed_panels[0]["content"][1])
+
+    for section_title, requirement_title in [
+        ("❌ Bajarilmagan talablar (1 ta)", "❌ [REQ-3] Export flow topilmadi."),
+        ("⏭️ Skip qilingan talablar (1 ta)", "⏭️ [REQ-4] Scope tashqarisida."),
+        ("🔍 Extra Scan (1 ta)", "🔍 [REQ-5] Potensial regression bor."),
+    ]:
+        panels = _requirement_panels_under(section_title)
+        assert [node["attrs"]["title"] for node in panels] == [requirement_title]
+
+    # Scoreboard: ball ostida talab verdiktlari bir qatorda ko'rinadi
+    doc_text = str(adf_doc["content"])
+    assert "2 bajarildi" in doc_text
+    assert "1 bajarilmadi" in doc_text

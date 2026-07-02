@@ -18,9 +18,6 @@ class BaseADFFormatter:
     To'g'ridan-to'g'ri instantiate qilinmaydi.
     """
 
-    # Subklasslar bu atributni override qiladi (contradictory panel uchun)
-    _contradictory_action_text: str = "ishlov bering!"
-
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # ADF NODE BUILDERS
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -110,48 +107,3 @@ class BaseADFFormatter:
     def _link_text(self, text: str, href: str) -> Dict:
         """Havola (link) text node"""
         return self._text_node(text, [{"type": "link", "attrs": {"href": href}}])
-
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # SHARED PANEL BUILDERS
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-    def _build_contradictory_comments_panel(self, comment_analysis: Dict) -> Optional[Dict]:
-        """
-        Zid commentlar uchun expand panel yaratish.
-
-        Subklasslar _contradictory_action_text ni override qilib
-        harakatga undash matnini o'zgartirishi mumkin.
-
-        Args:
-            comment_analysis: TZHelper.analyze_comments() natijasi
-
-        Returns:
-            ADF expand panel node yoki None (agar zid comment yo'q bo'lsa)
-        """
-        if not comment_analysis or not comment_analysis.get('has_changes'):
-            return None
-
-        change_count = comment_analysis['change_count']
-        panel_title = f"🚨 ZID COMMENTLAR ({change_count} ta)"
-
-        panel_content = []
-
-        warning_para = [
-            self._colored_text("⚠️ DIQQAT: ", "#FF5630"),
-            self._text_node(
-                "Quyidagi comment'larda TZ'ni o'zgartiruvchi yoki bekor qiluvchi "
-                "kalit so'zlar topildi. "
-            ),
-            self._text_node(f"Eng so'nggi talablar asosida {self._contradictory_action_text}")
-        ]
-        panel_content.append(self._paragraph(warning_para))
-
-        for idx, comment in enumerate(comment_analysis.get('important_comments', []), 1):
-            comment_header = [
-                self._bold_text(f"Comment #{idx}:"),
-                self._text_node(f" {comment['author']} - {comment['created']}")
-            ]
-            panel_content.append(self._paragraph(comment_header))
-            panel_content.append(self._code_block(comment['full_text']))
-
-        return self._expand_panel(panel_title, panel_content)

@@ -54,6 +54,7 @@ class GeminiHelper:
     TRANSIENT_ERROR_KEYWORDS = [
         '503', 'unavailable', 'overloaded', 'high demand',
         'temporarily', 'server error', '500', '502', '504',
+        'timeout', 'timed out', 'deadline',
     ]
 
     # Transient xatolik uchun kutish vaqtlari (soniya)
@@ -107,7 +108,25 @@ class GeminiHelper:
         self.last_total_token_count = 0
         self.last_usage_metadata: dict[str, int] = {}
         self.usage_context: dict = dict(usage_context or {})
-        self._client = genai.Client(api_key=self.api_keys[self._current_idx])
+        self._client = self._make_client(self._current_idx)
+
+    def _request_timeout_ms(self) -> int:
+        """Bitta Gemini so'rovi uchun timeout (millisekund). Sozlamadan, default 120s.
+
+        Timeout bo'lmasa, javob bermagan ulanish butun run'ni cheksiz osib qo'yadi
+        (generate_content ichida bloklanadi, retry sikli ham ishlamaydi).
+        """
+        try:
+            seconds = int(getattr(_get_gemini_settings(), "gemini_request_timeout", 120) or 120)
+        except Exception:
+            seconds = 120
+        return max(1, seconds) * 1000
+
+    def _make_client(self, idx: int):
+        return genai.Client(
+            api_key=self.api_keys[idx],
+            http_options=types.HttpOptions(timeout=self._request_timeout_ms()),
+        )
 
     def _load_keys(self) -> list[str]:
         raise RuntimeError(
@@ -119,7 +138,7 @@ class GeminiHelper:
         return f"KEY_{idx + 1}"
 
     def _configure_model(self, idx: int):
-        self._client = genai.Client(api_key=self.api_keys[idx])
+        self._client = self._make_client(idx)
         self._current_idx = idx
 
     def _is_frozen(self, idx: int) -> bool:
@@ -177,7 +196,11 @@ class GeminiHelper:
         return any(kw in error_msg for kw in self.FALLBACK_ERROR_KEYWORDS)
 
     def _is_transient_error(self, error: Exception) -> bool:
-        """Vaqtinchalik server xatosi (503, overloaded) — bir oz kutib qayta urinish kerak."""
+        """Vaqtinchalik server xatosi (503, overloaded, timeout) — bir oz kutib qayta urinish kerak."""
+        # httpx timeout xatolari (ReadTimeout/ConnectTimeout/...) ko'pincha bo'sh xabar beradi —
+        # shuning uchun tur nomini ham tekshiramiz.
+        if 'timeout' in type(error).__name__.lower():
+            return True
         error_msg = str(error).lower()
         return any(kw in error_msg for kw in self.TRANSIENT_ERROR_KEYWORDS)
 

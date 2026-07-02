@@ -23,8 +23,6 @@ logger = logging.getLogger(__name__)
 class TestcaseADFFormatter(BaseADFFormatter):
     """Test case'larni ADF formatda JIRA comment uchun formatlash"""
 
-    _contradictory_action_text = "test case'lar yarating!"
-
     def __init__(self):
         """Initialize formatter"""
         pass
@@ -78,7 +76,6 @@ class TestcaseADFFormatter(BaseADFFormatter):
             self,
             task_key: str,
             test_cases: List[Any],
-            comment_analysis: Optional[Dict] = None,
             footer_text: Optional[str] = None,
             pr_details: Optional[List[Dict]] = None,
             pr_count: int = 0,
@@ -91,7 +88,6 @@ class TestcaseADFFormatter(BaseADFFormatter):
         Args:
             task_key: JIRA task key (masalan: DEV-1234)
             test_cases: TestCase ob'ektlari ro'yxati
-            comment_analysis: TZHelper.analyze_comments() natijasi (optional)
             footer_text: Settings-dan olingan footer matn (None bo'lsa default)
 
         Returns:
@@ -119,12 +115,6 @@ class TestcaseADFFormatter(BaseADFFormatter):
         ]
         content.append(self._paragraph(meta_text))
 
-        # ━━━ ZID COMMENTLAR PANEL ━━━
-        if comment_analysis:
-            contradictory_panel = self._build_contradictory_comments_panel(comment_analysis)
-            if contradictory_panel:
-                content.append(self._rule())
-                content.append(contradictory_panel)
         content.append(self._rule())
 
         # ━━━ STATISTIKA ━━━
@@ -216,9 +206,13 @@ class TestcaseADFFormatter(BaseADFFormatter):
         tc_id = getattr(tc, 'id', 'TC-000')
         tc_title = getattr(tc, 'title', 'Nomsiz test')
         tc_priority = getattr(tc, 'priority', 'Medium')
+        tc_severity = getattr(tc, 'severity', '')
         tc_type = getattr(tc, 'test_type', 'positive')
         type_emoji = self._get_type_emoji(tc_type)
-        return f"{type_emoji} {tc_id}: {tc_title} [{tc_priority}]"
+        badge = tc_priority
+        if tc_severity:
+            badge = f"{tc_priority} · {tc_severity}"
+        return f"{type_emoji} {tc_id}: {tc_title} [{badge}]"
 
     def _build_testcase_panel_content(self, tc: Any) -> List[Dict]:
         """
@@ -241,10 +235,15 @@ class TestcaseADFFormatter(BaseADFFormatter):
 
         preconditions = getattr(tc, 'preconditions', '')
         if preconditions:
-            content.append(self._paragraph([
-                self._bold_text("⚙️ Boshlang'ich shartlar: "),
-                self._text_node(preconditions)
-            ]))
+            precond_items = [p.strip() for p in str(preconditions).split("\n") if p.strip()]
+            if len(precond_items) > 1:
+                content.append(self._paragraph([self._bold_text("⚙️ Boshlang'ich shartlar:")]))
+                content.append(self._bullet_list(precond_items))
+            else:
+                content.append(self._paragraph([
+                    self._bold_text("⚙️ Boshlang'ich shartlar: "),
+                    self._text_node(precond_items[0] if precond_items else preconditions)
+                ]))
 
         steps = getattr(tc, 'steps', [])
         if steps:
@@ -259,10 +258,8 @@ class TestcaseADFFormatter(BaseADFFormatter):
             ]))
 
         test_type = getattr(tc, 'test_type', 'positive')
-        priority = getattr(tc, 'priority', 'Medium')
-        severity = getattr(tc, 'severity', 'Normal')
 
-        meta_line = f"Type: {test_type} | Priority: {priority} | Severity: {severity}"
+        meta_line = f"Type: {test_type}"
         content.append(self._paragraph([self._colored_text(meta_line, "#8b949e")]))
 
         tags = getattr(tc, 'tags', [])
@@ -322,10 +319,12 @@ class TestcaseADFFormatter(BaseADFFormatter):
             tc_id = getattr(tc, 'id', 'TC-000')
             tc_title = getattr(tc, 'title', 'Nomsiz test')
             tc_priority = getattr(tc, 'priority', 'Medium')
+            tc_severity = getattr(tc, 'severity', '')
             tc_type = getattr(tc, 'test_type', 'positive')
             type_emoji = self._get_type_emoji(tc_type)
 
-            lines.append(f"*{type_emoji} {tc_id}: {tc_title}* [{tc_priority}]")
+            badge = f"{tc_priority} · {tc_severity}" if tc_severity else tc_priority
+            lines.append(f"*{type_emoji} {tc_id}: {tc_title}* [{badge}]")
 
             description = getattr(tc, 'description', '')
             if description:
@@ -333,7 +332,13 @@ class TestcaseADFFormatter(BaseADFFormatter):
 
             preconditions = getattr(tc, 'preconditions', '')
             if preconditions:
-                lines.append(f"_Shartlar:_ {preconditions}")
+                precond_items = [p.strip() for p in str(preconditions).split("\n") if p.strip()]
+                if len(precond_items) > 1:
+                    lines.append("_Shartlar:_")
+                    for item in precond_items:
+                        lines.append(f"  * {item}")
+                else:
+                    lines.append(f"_Shartlar:_ {precond_items[0] if precond_items else preconditions}")
 
             steps = getattr(tc, 'steps', [])
             if steps:

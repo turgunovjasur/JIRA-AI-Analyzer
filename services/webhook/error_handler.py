@@ -123,13 +123,15 @@ async def _write_success_comment(
         is_recheck: Agar True bo'lsa, comment'da re-check belgisi ko'rinadi
     """
     try:
+        extra_scan_enabled = bool(getattr(settings, "agent2_extra_scan_enabled", True))
         adf_doc = adf_formatter.build_comment_document(
             result,
             new_status,
             footer_text=settings.tz_pr_footer_text,
             is_recheck=is_recheck,
             recheck_text=settings.recheck_comment_text,
-            dev_objections=dev_objections or []
+            dev_objections=dev_objections or [],
+            extra_scan_enabled=extra_scan_enabled
         )
         success = comment_writer.add_comment_adf(task_key, adf_doc)
 
@@ -139,6 +141,7 @@ async def _write_success_comment(
             simple_comment = adf_formatter.build_simple_comment(
                 result,
                 new_status,
+                extra_scan_enabled=extra_scan_enabled,
             )
             comment_writer.add_comment(task_key, simple_comment)
 

@@ -66,12 +66,24 @@ def _section(title: str, body: str) -> str:
     return f"{_LINE}\n{title}\n{_LINE}\n\n{body}\n"
 
 
+def _normalize_test_types(test_types: List[str] | None) -> List[str]:
+    """So'ralgan test turlarini TEST_TYPE_DESC bilan tekshirib, tartibni saqlab tozalash."""
+    requested = [
+        t
+        for t in (str(x or "").strip().casefold() for x in (test_types or []))
+        if t in TEST_TYPE_DESC
+    ]
+    requested = list(dict.fromkeys(requested))
+    return requested or ["positive", "negative"]
+
+
 def build_prompt(
     *,
     requirements: List[Dict[str, Any]],
     tz_content: str,
     custom_context: str = "",
     testcases_per_requirement: int = 3,
+    test_types: List[str] | None = None,
     mode: str = "initial",
 ) -> str:
     """Agent2 uchun talab-drayverli prompt yig'ish."""
@@ -80,7 +92,23 @@ def build_prompt(
     except (TypeError, ValueError):
         testcases_per_requirement = 3
     testcases_per_requirement = max(1, min(3, testcases_per_requirement))
-    allowed_types = ", ".join(f"{t} ({desc})" for t, desc in TEST_TYPE_DESC.items())
+
+    requested_types = _normalize_test_types(test_types)
+    allowed_types = ", ".join(f"{t} ({TEST_TYPE_DESC[t]})" for t in requested_types)
+    test_type_example = "/".join(requested_types)
+
+    type_rule_lines = [
+        f"**Faqat quyidagi test turlaridan foydalaning:** {allowed_types}. "
+        "Boshqa test turlarini ISHLATMANG.",
+        f"Test to'plamida har bir so'ralgan tur ({', '.join(requested_types)}) "
+        "kamida bittadan test case bilan ishtirok etsin.",
+    ]
+    if "negative" in requested_types:
+        type_rule_lines.append(
+            "`negative` uchun: noto'g'ri/bo'sh kiritish, ruxsatsiz holat, saqlamasdan chiqish "
+            "kabi kamida 1 ta salbiy stsenariy ALBATTA yozing."
+        )
+    type_rule = "\n".join(type_rule_lines)
 
     req_lines = "\n".join(
         f"- {str(r.get('id') or '').strip()}: {str(r.get('text') or '').strip()} "
@@ -131,7 +159,7 @@ def build_prompt(
 🎯 SIFAT TALABLARI
 {_LINE}
 
-**Test turlari:** {allowed_types}
+{type_rule}
 
 1. Har bir test case TO'LIQ va ANIQ bo'lsin (title, steps, expected_result).
 2. Steps batafsil — har bir qadam alohida element.
@@ -153,9 +181,9 @@ Javobni FAQAT JSON formatda bering, boshqa hech narsa yo'q:
       "title": "Test case nomi (qisqa va aniq)",
       "description": "Nima test qilinadi",
       "preconditions": "Boshlang'ich shartlar",
-      "steps": ["1. Birinchi qadam", "2. Ikkinchi qadam"],
+      "steps": ["Birinchi qadam", "Ikkinchi qadam"],
       "expected_result": "Kutilayotgan natija (aniq)",
-      "test_type": "positive/negative/boundary/edge",
+      "test_type": "{test_type_example}",
       "priority": "High/Medium/Low",
       "severity": "Critical/Major/Minor",
       "tags": ["tag1", "tag2"],
@@ -167,7 +195,8 @@ Javobni FAQAT JSON formatda bering, boshqa hech narsa yo'q:
 
 **MUHIM:**
 - Har bir talab (REQ) KAMIDA 1 ta, KO'PI BILAN {testcases_per_requirement} ta test case bilan qoplansin.
-- `steps` ro'yxat (list) bo'lsin, har bir step alohida.
+- `steps` ro'yxat (list) bo'lsin, har bir step alohida. Step matnida qo'lda "1.", "2." raqam YOZMANG — tizim o'zi raqamlaydi.
+- `preconditions` bir nechta bo'lsa har birini alohida qatorga yozing (raqamsiz).
 - `requirement_ids` har test case'da to'ldirilsin.
 - `id` qaytarish shart emas — backend final TC-001 raqamlashni o'zi qiladi.
 

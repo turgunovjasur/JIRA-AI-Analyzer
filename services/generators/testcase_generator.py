@@ -12,6 +12,7 @@ Author: JASUR TURGUNOV
 from typing import Any, Dict, List, Optional, Callable
 from dataclasses import dataclass, field
 import json
+import re
 
 # Core imports
 from core import BaseService
@@ -286,6 +287,7 @@ class TestCaseGeneratorService(BaseService):
                     tz_content=tz_content,
                     custom_context=custom_context,
                     testcases_per_requirement=testcases_per_requirement,
+                    test_types=test_types,
                 )
             except Exception as agent2_err:
                 log.log_error(task_key, "agent2", str(agent2_err))
@@ -329,6 +331,7 @@ class TestCaseGeneratorService(BaseService):
                         tz_content=tz_content,
                         custom_context=custom_context,
                         testcases_per_requirement=testcases_per_requirement,
+                        test_types=test_types,
                         mode="repair_missing_requirements",
                     )
                     repair_cases = self._parse_test_cases(repair_raw)
@@ -436,7 +439,7 @@ class TestCaseGeneratorService(BaseService):
                 by_type=by_type,
                 by_priority=by_priority,
                 success=True,
-                warnings=warnings,
+                warnings=list(dict.fromkeys(warnings)),
                 custom_context_used=bool(custom_context),
                 ai_model=self._last_agent_model(),
                 requirements=requirements,
@@ -654,6 +657,7 @@ class TestCaseGeneratorService(BaseService):
         tz_content: str,
         custom_context: str,
         testcases_per_requirement: int,
+        test_types: Optional[List[str]] = None,
         mode: str = "initial",
     ) -> str:
         """Agent2 — talablar asosida test case yozish (bitta Gemini chaqiruvi)."""
@@ -662,6 +666,7 @@ class TestCaseGeneratorService(BaseService):
             tz_content=tz_content,
             custom_context=custom_context,
             testcases_per_requirement=testcases_per_requirement,
+            test_types=test_types,
             mode=mode,
         )
 
@@ -741,11 +746,40 @@ class TestCaseGeneratorService(BaseService):
         text = str(value or "").strip()
         return [text] if text else []
 
+    @staticmethod
+    def _strip_leading_enum(text: str) -> str:
+        """Qator boshidagi '1.', '2)', '10. ' kabi raqamlashni olib tashlash."""
+        return re.sub(r"^\s*\d+[.)]\s+", "", str(text or "")).strip()
+
+    @classmethod
+    def _normalize_steps(cls, steps: Any) -> List[str]:
+        """Qadamlardagi qo'lbola raqamlashni tozalash (ADF ordered-list o'zi raqamlaydi)."""
+        out: List[str] = []
+        for raw in cls._as_string_list(steps):
+            for part in str(raw).split("\n"):
+                cleaned = cls._strip_leading_enum(part)
+                if cleaned:
+                    out.append(cleaned)
+        return out
+
+    @classmethod
+    def _split_enum_items(cls, text: str) -> List[str]:
+        """Bir/ko'p qatorli matnni alohida bandlarga bo'lish (raqamlashsiz)."""
+        text = str(text or "").strip()
+        if not text:
+            return []
+        if "\n" in text:
+            parts = text.split("\n")
+        else:
+            parts = re.split(r"\s*[,;]?\s*(?=\d+[.)]\s)", text)
+        items = [cls._strip_leading_enum(p) for p in parts]
+        return [it for it in items if it]
+
     def _normalize_test_case(self, tc: TestCase, valid_requirement_ids: set[str]) -> TestCase:
         tc.title = str(tc.title or "").strip() or "Nomsiz test case"
         tc.description = str(tc.description or "").strip()
-        tc.preconditions = str(tc.preconditions or "").strip()
-        tc.steps = self._as_string_list(tc.steps)
+        tc.preconditions = "\n".join(self._split_enum_items(tc.preconditions))
+        tc.steps = self._normalize_steps(tc.steps)
         tc.expected_result = str(tc.expected_result or "").strip()
         tc.test_type = str(tc.test_type or "positive").strip() or "positive"
         tc.priority = str(tc.priority or "Medium").strip() or "Medium"

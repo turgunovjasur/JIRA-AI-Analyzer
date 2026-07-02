@@ -32,8 +32,17 @@ class AnalysisSection:
 class JiraADFFormatter(BaseADFFormatter):
     """Jira ADF formatda comment yaratish"""
 
-    _contradictory_action_text = "ishlov bering!"
-    _default_visible_sections = ['completed', 'failed', 'skipped', 'issues', 'figma']
+    # Figma comment'da alohida bo'lim sifatida ko'rsatilmaydi — moslik har talab
+    # ichidagi "Figma:" qatorida bo'ladi; figma xom ma'lumoti faqat AI kontekstida.
+    _default_visible_sections = ['completed', 'failed', 'skipped', 'issues']
+
+    # Har talab panelida va scoreboardda ishlatiladigan status belgisi
+    _section_status_emoji = {
+        'completed': '✅',
+        'failed': '❌',
+        'skipped': '⏭️',
+        'issues': '🔍',
+    }
 
     def __init__(self):
         """Initialize formatter"""
@@ -51,7 +60,7 @@ class JiraADFFormatter(BaseADFFormatter):
             'completed': ('✅ Bajarilgan talablar', 'completed'),
             'failed': ('❌ Bajarilmagan talablar', 'failed'),
             'skipped': ('⏭️ Skip qilingan talablar', 'skipped'),
-            'issues': ('🐛 Potensial muammolar', 'issues'),
+            'issues': ('🔍 Extra Scan', 'issues'),
             'figma': ('🎨 Figma dizayn mosligi', 'figma')
         }
 
@@ -185,8 +194,80 @@ class JiraADFFormatter(BaseADFFormatter):
         else:
             lines = getattr(overview, "summary_lines", None)
         if lines:
-            return [str(line).strip() for line in lines if str(line).strip()]
+            # Moslik bali commentning yuqorisida alohida ko'rsatiladi —
+            # Xulosa ichida takrorlamaymiz.
+            return [
+                str(line).strip()
+                for line in lines
+                if str(line).strip()
+                and not str(line).strip().lower().startswith("compliance score")
+            ]
         return []
+
+    def _split_requirement_item(self, item: str, index: int) -> tuple[str, str]:
+        """Talab item'ini panel sarlavhasi (REQ-id + matn) va body (evidence/file)ga ajratish.
+
+        Sarlavha ochmasdan tushunarli bo'lishi uchun talab matnini ham o'z ichiga oladi;
+        body'da to'liq matn + evidence/file bo'ladi.
+        """
+        text = str(item or "").strip()
+        if not text:
+            return f"REQ-{index}", ""
+
+        segments = [p.strip() for p in re.split(r'\s+\|\s+', text) if p.strip()]
+        head = segments[0] if segments else text
+        tail = segments[1:]
+
+        req_match = re.search(r'(\[REQ-[^\]]+\]|REQ-[A-Za-z0-9_.-]+)', head, re.IGNORECASE)
+        if req_match:
+            req_id = req_match.group(1).strip()
+            if not req_id.startswith("["):
+                req_id = f"[{req_id}]"
+            desc = (head[:req_match.start()] + head[req_match.end():]).strip(" :-–—|")
+        else:
+            req_id = ""
+            desc = head
+
+        title_core = f"{req_id} {desc}".strip() if req_id else desc
+        title = title_core if len(title_core) <= 96 else title_core[:95].rstrip() + "…"
+        if not title:
+            title = f"REQ-{index}"
+
+        body_parts = ([desc] if desc else []) + tail
+        body = " | ".join(body_parts)
+        return title, body
+
+    def _requirement_panel_content(self, body: str) -> List[Dict]:
+        text = str(body or "").strip()
+        if not text:
+            return [self._paragraph([self._text_node("Tafsilot yo'q")])]
+
+        parts = [part.strip() for part in re.split(r'\s+\|\s+', text) if part.strip()]
+        if len(parts) <= 1:
+            return [self._paragraph([self._text_node(text)])]
+
+        content = []
+        for part in parts:
+            label_match = re.match(r'^([A-Za-zА-Яа-яЁёЎўҚқҒғҲҳІіЇїЄє0-9 _/-]{2,40}):\s*(.+)$', part, re.DOTALL)
+            if label_match:
+                label = label_match.group(1).strip()
+                value = label_match.group(2).strip()
+                content.append(self._paragraph([
+                    self._bold_text(f"{label}: "),
+                    self._text_node(value),
+                ]))
+            else:
+                content.append(self._paragraph([self._text_node(part)]))
+        return content
+
+    def _requirement_expand_panels(self, items: List[str], status_emoji: str = "") -> List[Dict]:
+        panels = []
+        for idx, item in enumerate(items, 1):
+            title, body = self._split_requirement_item(item, idx)
+            if status_emoji:
+                title = f"{status_emoji} {title}"
+            panels.append(self._expand_panel(title, self._requirement_panel_content(body)))
+        return panels
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # COMMENT DOCUMENT BUILDER
@@ -196,12 +277,12 @@ class JiraADFFormatter(BaseADFFormatter):
             self,
             result: Any,
             new_status: str = "Ready to Test",
-            comment_analysis: Optional[Dict] = None,
             footer_text: Optional[str] = None,
             is_recheck: bool = False,
             recheck_text: Optional[str] = None,
             visible_sections: Optional[List[str]] = None,
-            dev_objections: Optional[List[Dict]] = None
+            dev_objections: Optional[List[Dict]] = None,
+            extra_scan_enabled: bool = True
     ) -> Dict:
         """
         To'liq ADF comment document yaratish
@@ -209,7 +290,6 @@ class JiraADFFormatter(BaseADFFormatter):
         Args:
             result: TZPRAnalysisResult object
             new_status: Yangi status nomi
-            comment_analysis: TZHelper.analyze_comments() natijasi (optional)
             footer_text: Settings-dan olingan footer matn (None bo'lsa default)
             is_recheck: Bu re-check (qaytarildigan so'ng) tekshirish ekanmi
             recheck_text: Re-check paneli uchun matn (settings-dan)
@@ -241,21 +321,29 @@ class JiraADFFormatter(BaseADFFormatter):
         ]
         content.append(self._paragraph(meta_text))
 
-        # ━━━ MOSLIK BALI ━━━
+        # AI tahlil bo'limlari — score/scoreboard uchun oldindan hisoblanadi
+        sections = self._sections_from_result(result)
+
+        # ━━━ MOSLIK BALI + XULOSA SO'ZI ━━━
         if result.compliance_score is not None:
             score = result.compliance_score
             score_color = self._get_score_color(score)
 
-            score_content = [
+            content.append(self._paragraph([
                 self._bold_text("📊 Moslik Bali: "),
-                self._colored_text(f"{score}%", score_color)
-            ]
-            content.append(self._paragraph(score_content))
+                self._colored_text(f"{score}%", score_color),
+                self._text_node("  —  "),
+                self._colored_text(self._score_verdict(score), score_color),
+            ]))
+
+        # ━━━ SCOREBOARD (talab verdiktlari bir qatorda) ━━━
+        scoreboard = self._requirement_scoreboard(sections)
+        if scoreboard:
+            content.append(self._paragraph(scoreboard))
 
         summary_lines = self._summary_lines_from_result(result)
         if summary_lines:
-            content.append(self._heading("🧭 Xulosa", 3))
-            content.append(self._bullet_list(summary_lines))
+            content.append(self._expand_panel("🧭 Xulosa", [self._bullet_list(summary_lines)]))
         content.append(self._rule())
 
         # ━━━ RE-CHECK PANEL ━━━
@@ -283,64 +371,64 @@ class JiraADFFormatter(BaseADFFormatter):
             content.append(self._expand_panel("⚠ Run signallari", [self._bullet_list(warnings)]))
             content.append(self._rule())
 
-        # ━━━ ZID COMMENTLAR PANELI (legacy direct callerlar uchun) ━━━
-        if comment_analysis:
-            contradictory_panel = self._build_contradictory_comments_panel(comment_analysis)
-            if contradictory_panel:
-                content.append(contradictory_panel)
-                content.append(self._rule())
-
-        # ━━━ STATISTIKA ━━━
+        # ━━━ STATISTIKA + PR HAVOLALAR (dropdown, default yopiq) ━━━
         stats_items = [
             f"Pull Requests: {result.pr_count} ta",
             f"O'zgargan fayllar: {result.files_changed} ta",
             f"Qo'shilgan: +{result.total_additions}",
             f"O'chirilgan: -{result.total_deletions}"
         ]
-        content.append(self._heading("📈 Statistika", 3))
-        content.append(self._bullet_list(stats_items))
+        stats_panel_content = [self._bullet_list(stats_items)]
 
-        # ━━━ PR HAVOLALAR ━━━
         pr_details = getattr(result, 'pr_details', [])
-        if pr_details:
-            pr_links_content = []
-            for pr in pr_details:
-                pr_title = pr.get('title', 'PR')
-                pr_url = pr.get('url', '')
-                pr_files = pr.get('files', [])
-                pr_file_count = len(pr_files)
-                pr_add = sum(f.get('additions', 0) for f in pr_files)
-                pr_del = sum(f.get('deletions', 0) for f in pr_files)
+        for pr in pr_details:
+            pr_title = pr.get('title', 'PR')
+            pr_url = pr.get('url', '')
+            pr_files = pr.get('files', [])
+            pr_file_count = len(pr_files)
+            pr_add = sum(f.get('additions', 0) for f in pr_files)
+            pr_del = sum(f.get('deletions', 0) for f in pr_files)
 
-                nodes = [self._text_node("🔗 ")]
-                if pr_url:
-                    nodes.append(self._link_text(pr_title, pr_url))
-                else:
-                    nodes.append(self._text_node(pr_title))
-                nodes += [
-                    self._text_node(f" — {pr_file_count} fayl | "),
-                    self._colored_text(f"+{pr_add}", "#36B37E"),
-                    self._text_node(" / "),
-                    self._colored_text(f"-{pr_del}", "#FF5630"),
-                ]
-                pr_links_content.append(self._paragraph(nodes))
-            content.extend(pr_links_content)
+            nodes = [self._text_node("🔗 ")]
+            if pr_url:
+                nodes.append(self._link_text(pr_title, pr_url))
+            else:
+                nodes.append(self._text_node(pr_title))
+            nodes += [
+                self._text_node(f" — {pr_file_count} fayl | "),
+                self._colored_text(f"+{pr_add}", "#36B37E"),
+                self._text_node(" / "),
+                self._colored_text(f"-{pr_del}", "#FF5630"),
+            ]
+            stats_panel_content.append(self._paragraph(nodes))
 
+        content.append(self._expand_panel("📈 Statistika", stats_panel_content))
         content.append(self._rule())
 
         # ━━━ AI TAHLIL BO'LIMLARI (EXPAND PANELS) ━━━
-        sections = self._sections_from_result(result)
         _visible = self._normalize_visible_sections(visible_sections)
 
         for section_key in self._default_visible_sections:
             if section_key not in _visible:
                 continue
+            # Extra Scan o'chirilgan bo'lsa (webhook 'Agent2 Extra scan' setting),
+            # bu bo'lim commentda umuman ko'rinmaydi.
+            if section_key == 'issues' and not extra_scan_enabled:
+                continue
             if section_key in sections:
                 section = sections[section_key]
                 if section.items:
-                    panel_title = f"{section.title} ({len(section.items)} ta)"
-                    panel_content = [self._bullet_list(section.items)]
-                    content.append(self._expand_panel(panel_title, panel_content))
+                    display_title = self.section_titles[section_key][0] if section_key == 'issues' else section.title
+                    section_title = f"{display_title} ({len(section.items)} ta)"
+                    # Bo'lim sarlavhasi — oddiy heading; har bir talab esa ALOHIDA
+                    # top-level expand. ADF qoidasi: expand faqat top-level yoki panel
+                    # ichida bo'ladi — expand'ni expand ichiga joylab bo'lmaydi
+                    # (aks holda JIRA 400 INVALID_INPUT beradi).
+                    content.append(self._heading(section_title, 3))
+                    content.extend(self._requirement_expand_panels(
+                        section.items,
+                        self._section_status_emoji.get(section_key, ""),
+                    ))
 
         content.append(self._rule())
 
@@ -448,6 +536,34 @@ class JiraADFFormatter(BaseADFFormatter):
         else:
             return "#FF5630"  # Red
 
+    @staticmethod
+    def _score_verdict(score: int) -> str:
+        """Ball uchun qisqa xulosa so'zi (rangdan tashqari matn signali)."""
+        if score >= 80:
+            return "Yaxshi"
+        if score >= 60:
+            return "O'rtacha"
+        return "Past — qayta ishlash kerak"
+
+    def _requirement_scoreboard(self, sections: Dict[str, "AnalysisSection"]) -> List[Dict]:
+        """Talab verdiktlarini bitta rangli qatorga yig'ish (bajarildi/bajarilmadi/skip)."""
+        order = [
+            ('completed', "#36B37E", "bajarildi"),
+            ('failed', "#FF5630", "bajarilmadi"),
+            ('skipped', "#8b949e", "skip"),
+        ]
+        nodes: List[Dict] = []
+        for key, color, label in order:
+            section = sections.get(key)
+            count = len(section.items) if section and section.items else 0
+            if count == 0:
+                continue
+            emoji = self._section_status_emoji.get(key, "")
+            if nodes:
+                nodes.append(self._text_node("   ·   "))
+            nodes.append(self._colored_text(f"{emoji} {count} {label}", color))
+        return nodes
+
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # SIMPLE TEXT FORMAT (FALLBACK)
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -457,6 +573,7 @@ class JiraADFFormatter(BaseADFFormatter):
             result: Any,
             new_status: str = "Ready to Test",
             visible_sections: Optional[List[str]] = None,
+            extra_scan_enabled: bool = True,
     ) -> str:
         """
         Oddiy Jira Markup formatda comment (ADF ishlamasa)
@@ -480,8 +597,18 @@ class JiraADFFormatter(BaseADFFormatter):
 ----
 """
 
+        sections = self._sections_from_result(result)
+
         if result.compliance_score is not None:
-            comment += f"\n*📊 Moslik Bali:* *{result.compliance_score}%*\n"
+            comment += f"\n*📊 Moslik Bali:* *{result.compliance_score}%* — {self._score_verdict(result.compliance_score)}\n"
+            scoreboard_bits = []
+            for key, label in [('completed', 'bajarildi'), ('failed', 'bajarilmadi'), ('skipped', 'skip')]:
+                section = sections.get(key)
+                count = len(section.items) if section and section.items else 0
+                if count:
+                    scoreboard_bits.append(f"{self._section_status_emoji.get(key, '')} {count} {label}")
+            if scoreboard_bits:
+                comment += "  ·  ".join(scoreboard_bits) + "\n"
 
         summary_lines = self._summary_lines_from_result(result)
         if summary_lines:
@@ -507,12 +634,14 @@ class JiraADFFormatter(BaseADFFormatter):
 ----
 """
 
-        sections = self._sections_from_result(result)
         for section_key in self._normalize_visible_sections(visible_sections):
+            if section_key == 'issues' and not extra_scan_enabled:
+                continue
             section = sections.get(section_key)
             if not section or not section.items:
                 continue
-            comment += f"\n*{section.title}:*\n"
+            title = self.section_titles[section_key][0] if section_key == 'issues' else section.title
+            comment += f"\n*{title}:*\n"
             for item in section.items:
                 comment += f"• {item}\n"
 

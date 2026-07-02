@@ -492,6 +492,9 @@ class QueueSettings:
     key_freeze_duration: int = 600     # DEFAULT 600 sek (10 daqiqa)
     # Gemini vaqtinchalik xato (503/overload) bersa, necha marta qayta urinish
     gemini_max_retries: int = 3        # DEFAULT 3 marta
+    # Bitta Gemini so'rovi (generate_content) eng ko'p necha SEKUND kutadi.
+    # Timeout bo'lsa transient xato sifatida retry/fallback ishlaydi (osilib qolmaydi).
+    gemini_request_timeout: int = 120  # DEFAULT 120 sek (2 daqiqa)
     # Gemini ga yuboriladigan max input token soni
     ai_max_input_tokens: int = AI_MAX_INPUT_TOKENS  # DEFAULT 900K (Gemini 2.5 Flash limit 1M)
     # Token hisoblash koeffitsiyenti (1 token ≈ nechta belgi)
@@ -538,6 +541,11 @@ class QueueSettings:
     gemini_max_retries_help: str = (
         "Gemini vaqtincha band bo'lsa (503/overload), so'rov necha MARTA qayta urinadi "
         "(har urinish orasida ko'payib boruvchi tanaffus: 5s → 10s → 20s). Misol: 3 = 3 marta sinaydi."
+    )
+    gemini_request_timeout_help: str = (
+        "Bitta Gemini so'rovi eng ko'p necha SEKUND javob kutadi. Shu vaqtda javob kelmasa, "
+        "so'rov uziladi va vaqtinchalik xato sifatida qayta urinadi (osilib qolmaydi). "
+        "Katta promptlar (Pro modeli) uchun yetarli bo'lsin. Misol: 120 = 2 daqiqa."
     )
     ai_max_input_tokens_help: str = (
         "Gemini'ga yuboriladigan matn (TZ + PR) eng ko'p necha TOKEN bo'lishi mumkin. "

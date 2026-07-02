@@ -25,7 +25,7 @@ import logging
 import sys
 import os
 import secrets
-from contextlib import asynccontextmanager, suppress
+from contextlib import suppress
 from datetime import datetime
 from typing import Optional, Dict, Any
 
@@ -187,7 +187,6 @@ def _queue_job(
     )
 
 
-@asynccontextmanager
 async def _watchdog_loop() -> None:
     """Davriy watchdog — navbat/blocked/worker holatini tekshirib ogohlantiradi.
 

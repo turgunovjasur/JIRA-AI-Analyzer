@@ -213,9 +213,9 @@ def figma_lines(figma_data: dict[str, Any] | None) -> list[str]:
 
 
 def build_extra_issue_lines(agent1: dict[str, Any], agent2: dict[str, Any], agent3: dict[str, Any]) -> list[str]:
+    # Extra Scan bo'limi: faqat Agent2 extra scan topgan qo'shimcha kod o'zgarishlari.
+    # Umumiy run warninglari bu yerga kirmaydi — ular "Run signallari" da ko'rsatiladi.
     lines: list[str] = []
-    for warning in collect_final_warnings(agent1, agent2, agent3):
-        lines.append(f"- {warning}")
     for item in agent3.get("extra") or agent2.get("extra") or []:
         if not isinstance(item, dict):
             continue

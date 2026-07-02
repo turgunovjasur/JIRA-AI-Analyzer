@@ -120,6 +120,7 @@ class TZPRService(BaseService, DataFetchMixin, ResultBuildersMixin, TextParserMi
             "default_use_smart_patch": default_use_smart_patch,
             "agent2_parallelism": agent2_parallelism,
             "agent2_batch_size": agent2_batch_size,
+            "agent2_extra_scan_enabled": bool(getattr(settings, "agent2_extra_scan_enabled", True)),
             "effective_use_smart_patch": (
                 bool(effective_use_smart_patch)
                 if effective_use_smart_patch is not None
