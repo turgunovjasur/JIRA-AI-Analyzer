@@ -87,7 +87,7 @@ Bu **eng ko'p takrorlangan** muammo — 3 ta auditda mustaqil ravishda chiqdi (b
 
 ### Baza
 - 🟡 **(QISMAN TUZATILDI)** **Migratsiya runner cross-process xavfsiz emas.** `run_migrations` endi `pg_advisory_lock` bilan cross-process serializatsiya qiladi (lock ichida applied-versiya qayta o'qiladi, poolga qaytishdan oldin unlock; konkurent 5x test — xatosiz). ⏳ Qolgan: import-time `init_db` (`task_db.py:987`) olib tashlash — API app lifespan migratsiyani chaqirishini tasdiqlash kerak (advisory lock hozircha buni ham xavfsiz qildi).
-- ⏳ **Async endpointlarda bloklovchi DB chaqiruvlar.** `jira_webhook_handler.py:374,570-608`, `monitoring_api.py`, `sprint_report_api.py` — `async def` ichida sinxron psycopg + sinxron JIRA HTTP. Pool tugasa (`APP_DB_POOL_MAX_SIZE=10`) `getconn` **event loop'ni 30s bloklaydi** → barcha webhook'lar timeout. **385-qatorli kritik webhook handler — ehtiyotkor alohida sessiya kerak (F3-14).**
+- 🟡 **(QISMAN TUZATILDI)** **Async endpointlarda bloklovchi DB chaqiruvlar.** Read-only endpointlar (`/`, `/health`, `/metrics`, `/settings`, barcha `monitoring_api` va `sprint_report_api`) `async def` → `def` qilindi — FastAPI ularni threadpool'da ishlatadi (event loop bloklanmaydi). Await ishlatmagani tasdiqlangan; TestClient smoke o'tdi. ⏳ Qolgan: webhook POST core (`_jira_webhook_impl` 385q + `manual_*`) — o'rtada await'lar bor, integratsiya testisiz refactor kritik yo'lni buzishi mumkin (alohida ehtiyotkor ish).
 - ✅ **(TUZATILDI)** **Cheksiz jadval o'sishi (retention yo'q).** `utils/database/retention.py` — eski terminal `checker_runs`/`analysis_runs`/`job_queue`(done,failed)/`ai_usage_events` yozuvlarini davriy o'chiradi (bola-jadvallar FK CASCADE). Worker kuniga bir marta (`asyncio.to_thread`). Oynalar env orqali (RUN=90, JOB=30, USAGE=365 kun). Haqiqiy Postgres'da parent+cascade o'chirish tasdiqlandi.
 
 ### Prodakshn
@@ -167,7 +167,7 @@ Bu loyihaning poydevori jiddiy — bularni saqlab qoling:
 ### Faza 3 — Barqarorlik va tozalik (4-hafta+) — ⏳ 4/5 BAJARILDI (`3b7da21`, `5dbd8dd`, README)
 12. ✅ Retention job (`utils/database/retention.py`) — eski run/event/usage/job yozuvlari kuniga bir marta tozalanadi (RUN=90, JOB=30, USAGE=365 kun; CASCADE bilan). ⏳ Qolgan: log rotation (`RotatingFileHandler`/Docker stdout).
 13. ✅ `return_count` cheklovi — `APP_MAX_RETURN_COUNT` (default 3) chegarasi; cheksiz return loop to'xtatildi.
-14. ⏳ Async endpointlarda `asyncio.to_thread` (event loop bloklashni tugatish). **385-qatorli kritik webhook handler + o'rtada await — ehtiyotkor alohida sessiya kerak.**
+14. 🟡 **Qisman** (`e5bc904`) — read-only endpointlar (`/health`, `/metrics`, `/settings`, monitoring, sprint) `def`ga o'tkazildi (FastAPI threadpool). ⏳ Qolgan: webhook POST core (`_jira_webhook_impl` + `manual_*`) — integratsiya testi bilan alohida ehtiyotkor ish.
 15. 🟡 **Qisman** — migratsiya runner'ga `pg_advisory_lock` qo'shildi (cross-process serializatsiya, konkurent test o'tdi). ⏳ Qolgan: import-time `init_db`'ni olib tashlash (API app lifespan migratsiyasini tasdiqlagach).
 16. ✅ README qayta yozildi — eskirgan bug-analyzer/ChromaDB/VectorDB/embeddings/2.0.0 bo'limlari olib tashlandi; joriy mahsulot (multi-tenant TZ-PR checker + testcase SaaS) va to'g'ri o'rnatish/oqim/struktura hujjatlandi. Barcha havolalar tekshirildi.
 
