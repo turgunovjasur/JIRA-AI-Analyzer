@@ -6,6 +6,22 @@
 
 ---
 
+## ✅ Bajarilish holati (2026-07-02 yangilandi)
+
+Auditdan keyin quyidagilar tuzatildi va commit qilindi (`dev1`):
+
+| Bosqich | Holat | Commit |
+|---|---|---|
+| **Faza 1 — 3 BLOCKER + CI** | ✅ **To'liq bajarildi** | `7a622c5` |
+| **Faza 2 — HIGH (kod itemlari)** | ✅ **4/7 bajarildi** (F2-5/6/9/10) | `7b01aa7` |
+| Faza 2 — qolgan | ⏳ F2-7 (alerting, qaror kerak), F2-8 (multi-worker locking), F2-11 (huquqiy, biznes kirishi kerak) | — |
+| Faza 3–4 | ⏳ Boshlanmadi | — |
+
+Har bir tuzatish haqiqiy kodda tasdiqlangan; to'liq test suite'da 0 yangi regressiya
+(mavjud ~13 fail — auditdan oldingi eskirgan mock testlar). Tafsilotlar 6-bo'limda (✅/⏳).
+
+---
+
 ## 0. Bir qatorli javob
 
 > **Bugungi holatda sotuvga TAYYOR EMAS.** Poydevor (arxitektura, multi-tenant izolyatsiya, DB dizayni, AI resilience) haqiqatan kuchli — bu MVP darajasidan ancha yuqori. Lekin bir nechta **blocker** bor: toza o'rnatishda tizim umuman ishga tushmaydi (`requirements.txt` buzuq), webhook default holatda parolsiz (boshqa kompaniya nomidan AI ishlatish mumkin), va task'lar `progressing`/`running` holatida abadiy qotib qoladi. Bularni tuzatish uchun taxminan **2–4 hafta** intensiv ish kerak. Arxitekturani qayta yozish shart emas — asosan release-engineering va tijorat qadoqlash.
@@ -31,22 +47,23 @@
 ## 2. 🔴 BLOCKER'lar — sotishdan oldin SHART tuzatilishi kerak
 
 Bu 3 ta muammo mahsulotni sotib bo'lmaydigan qiladi. Ular bir nechta auditda takroran chiqdi.
+**➡️ Uchalasi ham 2026-07-02 da TUZATILDI (`7a622c5`) va tasdiqlandi.**
 
-### BLOCKER-1: Toza o'rnatishda tizim ishga tushmaydi (`requirements.txt` buzuq)
+### ✅ BLOCKER-1 (TUZATILDI): Toza o'rnatishda tizim ishga tushmaydi (`requirements.txt` buzuq)
 - `utils/ai/gemini_helper.py:1` — `from google import genai` (**yangi** SDK) ishlatiladi, lekin `requirements.txt:34` da faqat `google-generativeai==0.8.5` (**eski**, boshqa namespace) bor. `google-genai` yo'q.
 - `utils/auth/credential_crypto.py:14` — `from cryptography.fernet import Fernet`, lekin `cryptography` `requirements.txt`da yo'q.
 - Ikkalasi ham startupda (webhook lifespan'da) import qilinadi.
 - **Oqibat:** `docker compose up --build` (hujjatlardagi deploy usuli) → backend va worker `ImportError` bilan o'ladi. Hech qaysi mijoz tizimni ko'tara olmaydi. Dev muhitida ishlashining sababi — paketlar qo'lda o'rnatilgan (`.venv`da `google_genai-1.73.1` bor).
 - **Tuzatish:** `requirements.txt`ni toza venv'dan qayta generatsiya qilish (`google-genai`, `cryptography` qo'shish; `torch`/`chromadb`/`sentence-transformers`/`altair`/`plotly` — o'lik feature paketlarini olib tashlash). CI'da Docker build bilan tekshirish.
 
-### BLOCKER-2: Webhook default holatda autentifikatsiyasiz → boshqa kompaniya nomidan AI ishlatish + pulini sarflash
+### ✅ BLOCKER-2 (TUZATILDI): Webhook default holatda autentifikatsiyasiz → boshqa kompaniya nomidan AI ishlatish + pulini sarflash
 - `services/webhook/jira_webhook_handler.py:463-483` — webhook secret **faqat kompaniya uni sozlagan bo'lsa** tekshiriladi. Majburiy qilish `APP_WEBHOOK_REQUIRE_SECRET`/`APP_STRICT_MODE`'ni talab qiladi, lekin `.env.example:51` da `APP_WEBHOOK_REQUIRE_SECRET=false`.
 - **Hujum ssenariysi:** Hujumchi soxta `jira:issue_updated` body yuboradi (`issue.key="DEV-123"` + trigger statusga o'tish). Server: (a) qurbonning saqlangan JIRA tokeni bilan haqiqiy task'ni oladi, (b) qurbonning pullik Gemini kalitida to'liq multi-agent pipeline ishlatadi, (c) qurbonning haqiqiy JIRA task'iga `[AI_S1]` comment yozadi, (d) score past bo'lsa — task'ni orqaga qaytaradi. Agar kompaniya global (platforma) Gemini kalitidan foydalansa — 3 ta soxta so'rov bilan kvotani tugatib, modulni bloklash mumkin.
 - IP allowlist yo'q, Atlassian imzo validatsiyasi yo'q.
 - **Bog'liq:** `/metrics` (`:869`) va `/settings` (`:924`) endpointlari ham parolsiz — barcha kompaniyalar bo'yicha agregat statistikani ochib beradi.
 - **Tuzatish:** Har kompaniya uchun `webhook_secret` majburiy (yo'q bo'lsa 401), faqat header orqali (query param emas — `:476`), kompaniya yaratilganda avtomatik generatsiya.
 
-### BLOCKER-3: Task `progressing`/`running` holatida abadiy qotib qoladi (recovery yo'q)
+### ✅ BLOCKER-3 (TUZATILDI): Task `progressing`/`running` holatida abadiy qotib qoladi (recovery yo'q)
 Bu **eng ko'p takrorlangan** muammo — 3 ta auditda mustaqil ravishda chiqdi (baza, prodakshn, biznes-oqim).
 - `utils/database/task_db.py:152` — `mark_completed` funksiyasi mavjud, import qilingan, lekin **hech qaerda chaqirilmaydi**. `task_status='completed'` faqat `set_service2_done` orqali qo'yiladi. Ya'ni S2 tugamagan **har qanday** oqimda task abadiy `progressing`da qoladi:
   - Checker-only konfiguratsiya (S2 trigger emas / o'chirilgan)
@@ -62,9 +79,9 @@ Bu **eng ko'p takrorlangan** muammo — 3 ta auditda mustaqil ravishda chiqdi (b
 ## 3. 🟠 HIGH — sotishdan oldin kuchli tavsiya etiladi
 
 ### Xavfsizlik
-- **RPC rol-eskalatsiyasi (kwargs bypass).** `services/api/internal_rpc_api.py:260-267` faqat pozitsion argumentlardan rolni tekshiradi, lekin `:302` `fn(*args, **kwargs)` bilan chaqiradi. `company_admin` `kwargs={"role": "company_admin"}` yuborib, rol tekshiruvini chetlab o'tib, yangi admin yaratishi va seat-limitni buzishi mumkin.
-- **Credential shifrlash fail-open.** `utils/auth/credential_crypto.py:150-161` — master kalit yo'q bo'lsa `encrypt_value()` **plaintext qaytaradi**. Majburiy tekshiruv faqat `APP_STRICT_MODE`/`production` bo'lganda va faqat webhook jarayonida ishlaydi. UI/worker orqali saqlanganda ops flag'ni unutsa — barcha tenant tokenlari ochiq matnda DB'da yotadi.
-- **Zaif kalit hosil qilish + parol fallback.** `:66-71` master secret `APP_CREDENTIALS_MASTER_KEY` **yoki `SUPER_ADMIN_PASSWORD`** bo'lishi mumkin; `:120-125` Fernet kalitini tuzsiz `sha256(secret)` bilan hosil qiladi (KDF stretching yo'q). Kalit sizib chiqsa — barcha tenant credentiallari bitta kalit bilan ochiladi.
+- ✅ **(TUZATILDI)** **RPC rol-eskalatsiyasi (kwargs bypass).** `internal_rpc_api.py` endi args+kwargs'ni funksiya imzosiga bind qilib effektiv qiymatlarni tekshiradi — `kwargs={"role": "company_admin"}` bypass'i yopildi (test bilan tasdiqlangan).
+- ✅ **(TUZATILDI)** **Credential shifrlash fail-open.** `encrypt_value()` endi master kalit yo'q bo'lsa **plain text QAYTARMAYDI** (fail-closed, `RuntimeError`). Worker startup'da ham `assert_master_key_configured`.
+- ✅ **(TUZATILDI)** **Zaif kalit + parol fallback.** `SUPER_ADMIN_PASSWORD` shifrlashdan olib tashlandi (faqat legacy-decrypt); KDF `sha256` → **PBKDF2-HMAC-SHA256** (200k iter). Migratsiya-xavfsiz: eski ma'lumot deshifrlashda hali o'qiladi, keyingi saqlashda avtomatik ko'chadi.
 
 ### Baza
 - **Migratsiya runner cross-process xavfsiz emas.** `utils/database/migrations.py:38,103` — faqat `threading.Lock` (jarayon ichida), `pg_advisory_lock` yo'q. `init_db()` `task_db` import vaqtida ishlaydi + webhook/worker/monitoring startidan chaqiriladi. Ular bir vaqtda ishga tushsa migratsiyalar ikki marta qo'llanishi mumkin (hozircha idempotent, lekin birinchi non-idempotent data migratsiya buzadi).
@@ -72,14 +89,14 @@ Bu **eng ko'p takrorlangan** muammo — 3 ta auditda mustaqil ravishda chiqdi (b
 - **Cheksiz jadval o'sishi (retention yo'q).** `checker_runs`, `analysis_runs`, `ai_usage_events`, `job_queue` va h.k. hech qachon tozalanmaydi (faqat `web_sessions` tozalanadi). Oylar davomida DB shishadi, monitoring so'rovlari sekinlashadi.
 
 ### Prodakshn
-- **Gemini kvota webhook yo'lida umuman tekshirilmaydi.** `run_start_preflight` faqat UI'dan (`tzpr_api.py:62`) chaqiriladi. Webhook yo'lida (`tzpr_multi_agent.py:90`) kvota tekshiruvi ham, increment ham yo'q. Bundan tashqari queue rejimida UI run'lari ham increment'ni yo'qotadi. Global kalitli kompaniya cheksiz webhook run ishlatib, **platforma egasining Gemini hisobini** sarflashi mumkin.
+- 🟡 **(QISMAN TUZATILDI)** **Gemini kvota webhook yo'lida.** `run_multi_agent_for_webhook` endi kvotani tekshiradi (tugasa run ishga tushmaydi) va completed global run'ni increment qiladi; `execute_multi_agent_run` source-driven (queue/worker UI run'lari ham increment qiladi). ⏳ Qolgan: per-company oylik xarajat cheklovi (`ai_usage_events`).
 - **Bitta ketma-ket worker + event-loop bloklash = past o'tkazuvchanlik.** `worker/main.py:218` bir vaqtda 1 ta job. Run ~3–8 daqiqa. Bitta worker ≈ 200–450 task/kun. 20 kompaniya × 50 webhook/kun = 1000/kun → 3–5 worker kerak. Lekin per-company lock/rate-limit **jarayon-ichi dict** (`queue_manager.py:36`), shuning uchun N worker bilan "kompaniyaga 1 AI task" va 6s interval kafolati yo'qoladi. `inline` rejimda (default!) run FastAPI event loop'ni bloklaydi.
 - **Alerting umuman yo'q.** Sentry/Prometheus/email/Slack yo'q. O'lik worker, bloklangan task, barcha kalit muzlagani — faqat kimdir monitoring UI'ni ochsa ko'rinadi. `/health` navbat holatini tekshirmaydi.
 - **LICENSE / ToS / maxfiylik siyosati yo'q.** Mahsulot mijozning JIRA matni, GitHub PR diff'lari (to'liq patch), Figma ma'lumotini Google Gemini'ga yuboradi — hech qanday oshkor qilish hujjati, data-processing kelishuvi yoki per-company cheklov yo'q. B2B sotuv uchun bu kontrakt blocker.
 
 ### Biznes-oqim
-- **AI-uzilish S1'da `ERR_UNKNOWN` deb tasniflanadi → retry yo'q.** Barcha kalit muzlaganida `_run_agent1` (`tzpr_agent_runner.py:227-236`) haqiqiy Gemini xatosini yutib, umumiy `"Requirement inventory qurilmadi"` qaytaradi → `_classify_error` `unknown` → terminal `error`. CLAUDE.md'dagi "barcha kalit freeze → WARN_AI_TIMEOUT → BLOCKED → retry" kontrakti **S1 uchun buzilgan** (S2 uchun ishlaydi). Vaqtinchalik uzilish task'ni doimiy xatoga aylantiradi.
-- **Marker tizimi nomuvofiq → AI o'z commentini "dev izohi" deb qayta o'qiydi.** `error_handler.py:169-186` `[AI_S1]` markerini **oxirgi** paragrafga qo'yadi, lekin detektor faqat `body[:30]`ni o'qiydi (`tz_helper.py:48-63`). Natijada return-notification/warning commentlari inson izohi sifatida tasniflanadi va recheck'da "Developer izohlari" paneliga va Agent3 kiritmasiga tushadi. Bonus bug: S2 xato commentlari `service="Servis-2"` bo'lsa ham `[AI_S1]` marker bilan yoziladi.
+- ✅ **(TUZATILDI)** **AI-uzilish S1'da `ERR_UNKNOWN` → retry yo'q.** `_run_agent1` endi `analyze()` xatosini alohida ushlab **real matnni** saqlaydi → `_classify_error` `ai_timeout` → WARN_AI_TIMEOUT → BLOCKED → retry. Kontrakt S1 uchun tiklandi.
+- 🟡 **(QISMAN TUZATILDI)** **Marker tizimi nomuvofiq.** Detektor (`CommentSeparator`, `tz_helper.py`) endi markerni **istalgan qator boshida** topadi (regex, line-anchored) — oxirgi paragrafdagi marker ham to'g'ri AI deb tanaladi, recheck/Agent3 kiritmasiga sizib kirmaydi. ⏳ Qolgan (foydalanuvchi WIP'ida): formatter tomonida markerni boshga ko'chirish + S2 xato commentlari uchun `[AI_S2]`.
 
 ---
 
@@ -130,20 +147,20 @@ Bu loyihaning poydevori jiddiy — bularni saqlab qoling:
 
 ## 6. 📋 Sotuvga chiqish yo'l xaritasi (prioritet bo'yicha)
 
-### Faza 1 — Blockerlar (1-hafta) — bularsiz sotib bo'lmaydi
-1. `requirements.txt`ni tuzatish (`google-genai`, `cryptography` qo'shish; o'lik paketlarni olib tashlash) + Docker build bilan tasdiqlash.
-2. CI qo'shish (GitHub Actions): docker build + `pytest` (Postgres service bilan) + frontend `npm run build`. Aynan shu C1/C2 xatolari CI yo'qligi uchun o'tib ketgan.
-3. Stale-job reaper + stuck-`progressing` sweeper + `mark_completed`ni tegishli oqimlarda chaqirish.
-4. Xavfsiz default'lar: `APP_WEBHOOK_REQUIRE_SECRET=true`, `APP_STRICT_MODE=true`; kompaniya yaratilganda `webhook_secret` avtomatik.
+### Faza 1 — Blockerlar (1-hafta) — ✅ BAJARILDI (`7a622c5`)
+1. ✅ `requirements.txt`ni tuzatish (`google-genai`, `cryptography` qo'shildi; o'lik paketlar olib tashlandi, 138→48) + toza py3.11 venv'da 104 modul import bo'ldi. Qayta qurish: `scripts/build_requirements.py`.
+2. ✅ CI qo'shildi (`.github/workflows/ci.yml`): docker build + deps import (BLOCKER-1 sinfini ushlaydi) + `pytest` (Postgres service) + frontend `npm run build`. pytest hozircha non-blocking (eskirgan mock testlar).
+3. ✅ Stale-job reaper + stuck-`progressing` sweeper + `mark_completed` (finalize) tegishli oqimlarda chaqiriladi; worker loop + docker `stop_grace_period`. Haqiqiy Postgres'da tasdiqlandi.
+4. ✅ Xavfsiz default'lar: `.env.example` `APP_WEBHOOK_REQUIRE_SECRET=true`, `APP_STRICT_MODE=true`; `create_company` `webhook_secret` avto-generatsiya (shifrlangan). Enforcement env-driven (jonli prod buzilmaydi); query-param `?token=` deprecated.
 
-### Faza 2 — HIGH (2–3-hafta)
-5. Gemini kvotani webhook + queue yo'lida majburlash + per-company oylik xarajat cheklovi (`ai_usage_events` ledger'idan).
-6. RPC kwargs rol-bypass tuzatish; credential shifrlashni hamma joyda fail-closed qilish; `SUPER_ADMIN_PASSWORD` fallback'ini olib tashlash; to'g'ri KDF.
-7. Alerting (Sentry + `/metrics` ustidan watchdog: queued>N, blocked>0, worker heartbeat).
-8. ≥2 worker + per-company lock/rate-limit'ni DB/advisory lock'ga ko'chirish (multi-worker to'g'ri ishlashi uchun).
-9. AI-outage S1 klassifikatsiyasini tuzatish (real xato matnini saqlash → WARN_AI_TIMEOUT → retry).
-10. Marker tizimini tuzatish (marker doim boshida, detektor bilan izchil; S2 markeri to'g'ri).
-11. LICENSE + ToS + maxfiylik/data-processing hujjati ("JIRA matningiz va PR diff'lar Google Gemini'ga yuboriladi") + per-company diff opt-out.
+### Faza 2 — HIGH (2–3-hafta) — ⏳ 4/7 BAJARILDI (`7b01aa7`)
+5. 🟡 **Qisman** — Gemini kvota webhook + queue yo'lida majburlanadi (check+increment, source-driven; kvota tugasa run ishga tushmaydi). ⏳ Qolgan: per-company oylik xarajat cheklovi (`ai_usage_events` ledger'idan).
+6. ✅ RPC kwargs rol-bypass yopildi (args+kwargs imzoga bind); credential fail-closed (plain text saqlamaydi); `SUPER_ADMIN_PASSWORD` shifrlashdan olib tashlandi (faqat legacy-decrypt); KDF → PBKDF2 (migratsiya-xavfsiz).
+7. ⏳ Alerting (Sentry + `/metrics` ustidan watchdog: queued>N, blocked>0, worker heartbeat). **Tashqi servis tanlashni talab qiladi.**
+8. ⏳ ≥2 worker + per-company lock/rate-limit'ni DB/advisory lock'ga ko'chirish. Dizayn tayyor: `claim_next_job`ga per-company concurrency + `pg_advisory_xact_lock` serializatsiya. **Hozir 1 worker → buzuq emas, faqat scaling uchun.**
+9. ✅ AI-outage S1 klassifikatsiyasi tuzatildi — `_run_agent1` `analyze()` xatosini alohida ushlab real matnni saqlaydi → `ai_timeout` → WARN_AI_TIMEOUT → retry.
+10. 🟡 **Qisman** — marker detektori (`CommentSeparator`) markerni istalgan qator boshida topadi (oxirgi paragrafdagi marker endi to'g'ri AI deb tanaladi). ⏳ Qolgan: formatter tomonida marker-joylashuv + S2-marker (foydalanuvchi WIP'ida).
+11. ⏳ LICENSE + ToS + maxfiylik/data-processing hujjati ("JIRA matningiz va PR diff'lar Google Gemini'ga yuboriladi") + per-company diff opt-out. **Biznes/yurisdiksiya kirishini talab qiladi.**
 
 ### Faza 3 — Barqarorlik va tozalik (4-hafta+)
 12. Log rotation (`RotatingFileHandler` yoki Docker stdout) + retention job (eski run/event/usage tozalash).
