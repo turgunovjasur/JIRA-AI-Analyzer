@@ -292,6 +292,10 @@ export function SettingsPanel({
   const [webhookUrl, setWebhookUrl] = useState("");
   const [webhookUrlCopied, setWebhookUrlCopied] = useState(false);
 
+  const [webhookSecretGenerating, setWebhookSecretGenerating] = useState(false);
+  const [webhookSecretError, setWebhookSecretError] = useState<string | null>(null);
+
+  const webhookSecretMissing = Boolean(webhookUrl) && !webhookUrl.includes("token=");
   const maskedWebhookUrl = webhookUrl.replace(/(token=)[^&]+/, "$1••••••••");
   const copyWebhookUrl = async () => {
     try {
@@ -300,6 +304,25 @@ export function SettingsPanel({
       setTimeout(() => setWebhookUrlCopied(false), 2000);
     } catch {
       // clipboard ruxsati yo'q — foydalanuvchi URL'ni qo'lda belgilab nusxalaydi
+    }
+  };
+  const generateWebhookSecret = async () => {
+    setWebhookSecretGenerating(true);
+    setWebhookSecretError(null);
+    try {
+      const response = await fetch("/api/settings/webhook/secret", { method: "POST" });
+      const payload = (await response.json().catch(() => null)) as
+        | { success?: boolean; webhook_url?: string; error?: string }
+        | null;
+      if (!response.ok || !payload?.success || !payload.webhook_url) {
+        setWebhookSecretError(payload?.error || "Webhook parol yaratilmadi.");
+        return;
+      }
+      setWebhookUrl(String(payload.webhook_url));
+    } catch {
+      setWebhookSecretError("Webhook parol yaratilmadi.");
+    } finally {
+      setWebhookSecretGenerating(false);
     }
   };
   const [webhookTriggerConfigured, setWebhookTriggerConfigured] = useState<WebhookTriggerConfiguredState>(
@@ -1518,16 +1541,32 @@ export function SettingsPanel({
                       <div className="min-w-0 flex-1">
                         <div className="text-sm font-semibold text-foreground">📡 JIRA Webhook URL</div>
                         <div className="mt-1 text-xs text-muted-foreground">
-                          JIRA'da ⚙️ → System → Webhooks bo'limiga aynan shu URL'ni qo'ying.
-                          Token — kompaniyangizning webhook paroli (URL bilan birga yuboriladi).
+                          {webhookSecretMissing
+                            ? "Bu kompaniya uchun webhook parol hali yaratilmagan. Avval parol yarating — token URL tarkibiga qo'shiladi."
+                            : "JIRA'da ⚙️ → System → Webhooks bo'limiga aynan shu URL'ni qo'ying. Token — kompaniyangizning webhook paroli (nusxalashda to'liq olinadi)."}
                         </div>
                         <code className="mt-2 block truncate text-xs" title={maskedWebhookUrl}>
                           {maskedWebhookUrl}
                         </code>
+                        {webhookSecretError ? (
+                          <div className="mt-1 text-xs text-destructive">{webhookSecretError}</div>
+                        ) : null}
                       </div>
-                      <Button onClick={() => void copyWebhookUrl()} size="sm" type="button" variant="primary">
-                        {webhookUrlCopied ? "Nusxalandi ✓" : "URL'ni nusxalash"}
-                      </Button>
+                      {webhookSecretMissing ? (
+                        <Button
+                          disabled={webhookSecretGenerating}
+                          onClick={() => void generateWebhookSecret()}
+                          size="sm"
+                          type="button"
+                          variant="primary"
+                        >
+                          {webhookSecretGenerating ? "Yaratilmoqda..." : "Parol yaratish"}
+                        </Button>
+                      ) : (
+                        <Button onClick={() => void copyWebhookUrl()} size="sm" type="button" variant="primary">
+                          {webhookUrlCopied ? "Nusxalandi ✓" : "URL'ni nusxalash"}
+                        </Button>
+                      )}
                     </div>
                   </SettingsInnerCard>
                 </div>

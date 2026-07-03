@@ -72,3 +72,42 @@ def test_build_company_webhook_url_missing_company(monkeypatch):
     monkeypatch.setattr("services.api.settings_api.get_company_by_id", lambda company_id: None)
 
     assert _build_company_webhook_url(999) == ""
+
+
+def test_generate_webhook_secret_creates_once(monkeypatch):
+    import asyncio
+
+    from services.api import settings_api
+
+    saved: dict = {}
+    monkeypatch.setenv("APP_BASE_URL", "https://qa.example.uz")
+    monkeypatch.setattr(
+        settings_api, "load_api_session",
+        lambda sid, allowed_roles=None: {"role": "company_admin", "company_id": 331},
+    )
+    monkeypatch.setattr(settings_api, "_resolve_company_scope_for_webhook", lambda session, cid: 331)
+    monkeypatch.setattr(
+        settings_api, "get_company_settings",
+        lambda cid: {"webhook_secret": saved.get("webhook_secret", "")},
+    )
+    monkeypatch.setattr(settings_api, "get_company_by_id", lambda cid: {"id": cid, "company_code": "uzum"})
+
+    def fake_save(cid, settings):
+        saved.update(settings)
+        return True
+
+    monkeypatch.setattr(settings_api, "save_company_settings", fake_save)
+
+    result = asyncio.run(
+        settings_api.generate_webhook_secret(settings_api.WebhookSecretGenerateRequest(), x_session_id="sid")
+    )
+    assert result["generated"] is True
+    assert saved["webhook_secret"]
+    assert result["webhook_url"] == f"https://qa.example.uz/webhook/jira/uzum?token={saved['webhook_secret']}"
+
+    first_secret = saved["webhook_secret"]
+    result2 = asyncio.run(
+        settings_api.generate_webhook_secret(settings_api.WebhookSecretGenerateRequest(), x_session_id="sid")
+    )
+    assert result2["generated"] is False
+    assert saved["webhook_secret"] == first_secret

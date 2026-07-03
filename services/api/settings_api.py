@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 from dataclasses import asdict
 from typing import Any
 
@@ -362,6 +363,30 @@ def _build_company_webhook_url(company_id: int) -> str:
     secret = str(get_company_settings(company_id).get("webhook_secret") or "").strip()
     url = f"{base_url}/webhook/jira/{company_code}"
     return f"{url}?token={secret}" if secret else url
+
+
+class WebhookSecretGenerateRequest(BaseModel):
+    company_id: int | None = None
+
+
+@router.post("/webhook/secret/generate")
+async def generate_webhook_secret(
+    payload: WebhookSecretGenerateRequest,
+    x_session_id: str | None = Header(default=None, alias="X-Session-ID"),
+):
+    """
+    Bo'sh webhook_secret uchun parol yaratish (avto-generatsiya kodidan OLDIN
+    yaratilgan kompaniyalar uchun). Mavjud parolni QAYTA yozmaydi — aks holda
+    JIRA'dagi eski URL indamay 401 ola boshlaydi.
+    """
+    session = load_api_session(x_session_id, allowed_roles={"super_admin", "company_admin"})
+    company_id = _resolve_company_scope_for_webhook(session, payload.company_id)
+    current = str(get_company_settings(company_id).get("webhook_secret") or "").strip()
+    if current:
+        return {"success": True, "generated": False, "webhook_url": _build_company_webhook_url(company_id)}
+    if not save_company_settings(company_id, {"webhook_secret": secrets.token_urlsafe(32)}):
+        raise HTTPException(status_code=500, detail="Webhook secret saqlanmadi")
+    return {"success": True, "generated": True, "webhook_url": _build_company_webhook_url(company_id)}
 
 
 @router.post("/webhook/config/read")

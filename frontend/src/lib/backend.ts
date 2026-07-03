@@ -311,6 +311,18 @@ export function saveWebhookConfigWithBackend(payload: {
   });
 }
 
+export function generateWebhookSecretWithBackend(payload: {
+  company_id?: number | null;
+}) {
+  return backendRequest<{ success: boolean; generated: boolean; webhook_url?: string }>(
+    "/api/settings/webhook/secret/generate",
+    {
+      method: "POST",
+      body: payload,
+    },
+  );
+}
+
 export function readSystemConfigWithBackend(payload: {
   company_id?: number | null;
 }) {

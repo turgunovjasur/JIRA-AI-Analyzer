@@ -68,7 +68,14 @@ function backendErrorResponse(error: unknown, fallback: string) {
   return NextResponse.json({ success: false, error: message }, { status: 500 });
 }
 
-export async function GET() {
+function absoluteWebhookUrl(rawUrl: string, request: Request): string {
+  // APP_BASE_URL backendda sozlanmagan bo'lsa nisbiy path keladi —
+  // brauzer kirgan domen (prod'da Caddy domeni) bilan to'ldiramiz.
+  if (!rawUrl.startsWith("/")) return rawUrl;
+  return `${new URL(request.url).origin}${rawUrl}`;
+}
+
+export async function GET(request: Request) {
   const session = await getOptionalSession();
   if (!session?.success || !session.auth?.logged_in) {
     return NextResponse.json({ success: false, error: "Sessiya topilmadi." }, { status: 401 });
@@ -99,7 +106,7 @@ export async function GET() {
     return NextResponse.json({
       success: true,
       data: {
-        webhook_url: String(data.webhook_url || ""),
+        webhook_url: absoluteWebhookUrl(String(data.webhook_url || ""), request),
         auto_return_enabled: Boolean(data.auto_return_enabled),
         allowed_issue_types: String(data.allowed_issue_types || ""),
         excluded_assignees: String(data.excluded_assignees || ""),
