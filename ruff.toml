@@ -1,0 +1,27 @@
+target-version = "py311"
+line-length = 120
+extend-exclude = ["frontend", "data", "logs", "models"]
+
+[lint]
+select = ["E", "F", "W", "B", "I"]
+ignore = [
+    # Qator uzunligi — legacy kod bosqichma-bosqich moslashtiriladi
+    "E501",
+    # FastAPI Depends() default-argument pattern
+    "B008",
+    # sys.path.insert'dan keyingi importlar (tests, scripts, entrypoints)
+    "E402",
+    # TODO(F4-20 davomi): quyidagilar bosqichma-bosqich tuzatiladi, keyin ro'yxatdan olinadi
+    "E722",  # bare except (39 joy) — typed exception'ga o'tish davom etmoqda
+    "B904",  # raise ... from err
+    "E741",  # ambiguous variable name (l/I)
+    "B905",  # zip(strict=)
+    "B007",  # unused loop variable
+    "B011",  # assert False
+    "F601",  # repeated dict key
+    "F841",  # unused variable
+]
+
+[lint.per-file-ignores]
+# Testlarda lambda-assign va keng exception normal
+"tests/*" = ["E731", "B017"]
