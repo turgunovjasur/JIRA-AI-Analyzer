@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
 import {
   Activity,
@@ -32,20 +32,12 @@ import { ComplianceRing } from "@/components/ui/compliance-ring";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
-import { SectionHeader } from "@/components/ui/section-header";
-import { SettingsBaseCard } from "@/components/settings/base-card-system";
-import {
-  getOpenRunStorageKey,
-  useRecentRuns,
-  type RecentRun,
-  type RecentRunScope,
-} from "@/lib/use-recent-runs";
+import { useRunPolling } from "@/hooks/use-run-polling";
+import { type RecentRunScope } from "@/lib/use-recent-runs";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { cn } from "@/lib/cn";
 import { getModuleRunErrorMessage, normalizeModuleRunErrorPayload } from "@/lib/module-errors";
 import type {
-  ModuleRunErrorPayload,
-  ModuleStartStatus,
   TZPRAgentRunSnapshot,
   TZPRAnalysisResult,
   TZPRExecutionMode,
@@ -60,7 +52,6 @@ type PipelineState = "pending" | "running" | "completed" | "failed";
 type RequirementFilter = "all" | "completed" | "failed" | "skipped" | "extra";
 
 const DEFAULT_EXECUTION_MODE: TZPRExecutionMode = "multi_agent";
-const RUN_POLL_INTERVAL_MS = 2000;
 const MODULE_KEY = "tz_pr_checker";
 
 const FALLBACK_AGENTS: TZPRAgentRunSnapshot[] = [
@@ -117,14 +108,6 @@ function formatAgentDuration(agent?: TZPRAgentRunSnapshot | null) {
   if (!started) return "Boshlanmagan";
   const end = finished && finished >= started ? finished : Date.now();
   return `${Math.max(0, Math.round((end - started) / 1000))}s`;
-}
-
-function getRunTone(value?: string | null): "soft" | "success" | "warning" | "danger" {
-  const normalized = (value || "").toLowerCase();
-  if (normalized === "completed") return "success";
-  if (normalized === "manual_review" || normalized === "running" || normalized === "queued") return "warning";
-  if (normalized === "blocked" || normalized === "failed") return "danger";
-  return "soft";
 }
 
 function getAgentTone(value?: string | null): "soft" | "success" | "warning" | "danger" {
@@ -768,32 +751,45 @@ type TZPRCheckerProps = {
 
 export function TZPRChecker({ recentScope }: TZPRCheckerProps) {
   const [taskKey, setTaskKey] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [moduleError, setModuleError] = useState<ModuleRunErrorPayload | null>(null);
-  const [result, setResult] = useState<TZPRAnalysisResult | null>(null);
-  const [activeRun, setActiveRun] = useState<TZPRRunSnapshot | null>(null);
-  const { recent, addRecent, removeRecent } = useRecentRuns(MODULE_KEY, recentScope);
-  const openRunStorageKey = getOpenRunStorageKey(MODULE_KEY, recentScope);
   const [requirementFilter, setRequirementFilter] = useState<RequirementFilter>("all");
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
-  const [startStatus, setStartStatus] = useState<ModuleStartStatus | null>(null);
 
-  // Modul ochilganda (va har run'dan keyin) credential + Gemini kvota holatini olish.
-  const refreshStartStatus = useCallback(async () => {
-    try {
-      const res = await fetch("/api/tzpr/start-status", { cache: "no-store" });
-      if (!res.ok) return;
-      const data = (await res.json()) as ModuleStartStatus;
-      if (data && typeof data === "object" && data.module_key) setStartStatus(data);
-    } catch {
-      /* status olinmasa gating ko'rsatilmaydi (backend baribir bloklaydi). */
-    }
-  }, []);
-
-  useEffect(() => {
-    void refreshStartStatus();
-  }, [refreshStartStatus]);
+  const {
+    activeRun,
+    setActiveRun,
+    result,
+    setResult,
+    error,
+    setError,
+    moduleError,
+    setModuleError,
+    submitting,
+    setSubmitting,
+    startStatus,
+    refreshStartStatus,
+    recent,
+    runInProgress,
+    applyRunSnapshot,
+    rememberRun,
+  } = useRunPolling<TZPRAnalysisResult, TZPRRunSnapshot>({
+    moduleKey: MODULE_KEY,
+    recentScope,
+    apiBasePath: "/api/tzpr",
+    taskKey,
+    isTerminalRunState,
+    deriveResultError,
+    // Checker snapshot error_message'ni har doim (trim qilib) ko'rsatadi.
+    getSnapshotErrorMessage: (snapshot) => snapshot.error_message?.trim() || null,
+    getRememberedRunState: (snapshot) =>
+      snapshot.run_state || snapshot.final_result?.run_state || undefined,
+    onBeforeReopen: (entry) => {
+      setRequirementFilter("all");
+      setTaskKey(entry.task_key);
+    },
+    pollErrorMessage: "Checker run polling xatosi.",
+    pollFailureMessage: "Checker run polling vaqtida xato yuz berdi.",
+    reopenFailureMessage: "Eski runni yuklashda xato yuz berdi.",
+  });
 
   const resultHasAgentRunData = Boolean(
     result?.run_id
@@ -821,7 +817,6 @@ export function TZPRChecker({ recentScope }: TZPRCheckerProps) {
       }
       : null
   );
-  const runInProgress = Boolean(activeRun?.run_id) && !isResolvedRunSnapshot(activeRun);
   const progress = getRunProgress(agentPanelRun, result);
   const counts = getRequirementCounts(result);
   const summaryLines = getSummaryLines(result);
@@ -831,141 +826,8 @@ export function TZPRChecker({ recentScope }: TZPRCheckerProps) {
   const canCopyDebug = Boolean(agentPanelRun || result || moduleError || error);
 
   useEffect(() => {
-    const runId = activeRun?.run_id;
-    if (!runId || isResolvedRunSnapshot(activeRun)) return undefined;
-
-    let cancelled = false;
-    const intervalId = window.setInterval(async () => {
-      try {
-        const response = await fetch(`/api/tzpr/runs/${encodeURIComponent(runId)}`, {
-          cache: "no-store",
-        });
-        const payload = (await response.json().catch(() => null)) as
-          | (TZPRRunSnapshot & { error?: string })
-          | null;
-
-        if (!response.ok) {
-          if (!cancelled) setError(payload?.error || "Checker run polling xatosi.");
-          return;
-        }
-        if (!payload || cancelled) return;
-
-        applyRunSnapshot(payload, {
-          persistFinal: isResolvedRunSnapshot(payload) || isTerminalRunState(payload.run_state),
-        });
-      } catch (pollError) {
-        if (!cancelled) {
-          setError(
-            pollError instanceof Error
-              ? pollError.message
-              : "Checker run polling vaqtida xato yuz berdi.",
-          );
-        }
-      }
-    }, RUN_POLL_INTERVAL_MS);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-    };
-  }, [activeRun?.run_id, activeRun?.run_state, activeRun?.finished_at, Boolean(activeRun?.final_result)]);
-
-  useEffect(() => {
     setCopyState("idle");
   }, [agentPanelRun?.run_id, agentPanelRun?.updated_at, result?.task_key, moduleError?.error, error]);
-
-  useEffect(() => {
-    try {
-      const raw = window.sessionStorage.getItem(openRunStorageKey);
-      if (!raw) return;
-      window.sessionStorage.removeItem(openRunStorageKey);
-      const entry = JSON.parse(raw) as RecentRun | null;
-      if (entry?.run_id?.trim()) {
-        void reopenRun(entry);
-      }
-    } catch {
-      /* Historydan auto-open bo'lmasa, sahifa oddiy holatda qoladi. */
-    }
-  }, [openRunStorageKey]);
-
-  function rememberRun(snapshot: TZPRRunSnapshot) {
-    const runId = snapshot.run_id?.trim();
-    const runTaskKey = (snapshot.task_key || snapshot.final_result?.task_key || taskKey).trim().toUpperCase();
-    if (!runId || !runTaskKey) return;
-    addRecent({
-      run_id: runId,
-      task_key: runTaskKey,
-      saved_at: Date.now(),
-      run_state: snapshot.run_state || snapshot.final_result?.run_state || undefined,
-    });
-  }
-
-  function applyRunSnapshot(snapshot: TZPRRunSnapshot, options?: { persistFinal?: boolean }) {
-    setModuleError(null);
-    setActiveRun(snapshot);
-
-    // Run yaratilishi/yangilanishi bilanoq recent ro'yxatga yoziladi (dedupe hook ichida).
-    rememberRun(snapshot);
-
-    const finalResult = snapshot.final_result || null;
-    if (finalResult) {
-      setResult(finalResult);
-      setError(deriveResultError(finalResult));
-      return;
-    }
-
-    if (options?.persistFinal && snapshot.error_message?.trim()) {
-      setError(snapshot.error_message.trim());
-      return;
-    }
-
-    if (snapshot.error_message?.trim()) {
-      setError(snapshot.error_message.trim());
-    }
-  }
-
-  async function reopenRun(entry: RecentRun) {
-    if (submitting || runInProgress) return;
-    setSubmitting(true);
-    setError(null);
-    setModuleError(null);
-    setResult(null);
-    setActiveRun(null);
-    setRequirementFilter("all");
-    setTaskKey(entry.task_key);
-
-    try {
-      const response = await fetch(`/api/tzpr/runs/${encodeURIComponent(entry.run_id)}`, {
-        cache: "no-store",
-      });
-      const payload = (await response.json().catch(() => null)) as
-        | (TZPRRunSnapshot & { error?: string })
-        | null;
-      if (!response.ok) {
-        if (response.status === 403 || response.status === 404) {
-          removeRecent(entry.run_id);
-        }
-        setError(payload?.error || "Eski runni yuklab bo'lmadi.");
-        return;
-      }
-      if (!payload) {
-        setError("Eski run uchun bo'sh javob qaytdi.");
-        return;
-      }
-      // applyRunSnapshot activeRun'ni o'rnatadi → terminal bo'lmasa polling effekti davom etadi.
-      applyRunSnapshot(payload, {
-        persistFinal: isResolvedRunSnapshot(payload) || isTerminalRunState(payload.run_state),
-      });
-    } catch (reopenError) {
-      setError(
-        reopenError instanceof Error
-          ? reopenError.message
-          : "Eski runni yuklashda xato yuz berdi.",
-      );
-    } finally {
-      setSubmitting(false);
-    }
-  }
 
   async function copyDebugJson() {
     const debugPayload = agentPanelRun || result || moduleError || (

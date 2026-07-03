@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
 import {
   Activity,
@@ -33,19 +33,13 @@ import { Notice } from "@/components/ui/notice";
 import { SectionHeader } from "@/components/ui/section-header";
 import { Textarea } from "@/components/ui/textarea";
 import { SettingsBaseCard } from "@/components/settings/base-card-system";
+import { useRunPolling } from "@/hooks/use-run-polling";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { cn } from "@/lib/cn";
 import { getModuleRunErrorMessage, normalizeModuleRunErrorPayload } from "@/lib/module-errors";
-import {
-  getOpenRunStorageKey,
-  useRecentRuns,
-  type RecentRun,
-  type RecentRunScope,
-} from "@/lib/use-recent-runs";
+import { type RecentRunScope } from "@/lib/use-recent-runs";
 import type {
   GeneratedTestCase,
-  ModuleRunErrorPayload,
-  ModuleStartStatus,
   TestCaseGenerationResult,
   TestcaseScenario,
   TestcaseRunSnapshot,
@@ -55,7 +49,6 @@ import type {
 
 type PipelineState = "pending" | "running" | "completed" | "failed";
 
-const RUN_POLL_INTERVAL_MS = 2000;
 const MODULE_KEY = "testcase_generator";
 
 const FALLBACK_TESTCASE_AGENTS: TZPRAgentRunSnapshot[] = [
@@ -683,126 +676,53 @@ type TestCaseGeneratorProps = {
 export function TestCaseGenerator({ recentScope }: TestCaseGeneratorProps) {
   const [taskKey, setTaskKey] = useState("");
   const [customContext, setCustomContext] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [moduleError, setModuleError] = useState<ModuleRunErrorPayload | null>(null);
-  const [result, setResult] = useState<TestCaseGenerationResult | null>(null);
   const [coverageFilter, setCoverageFilter] = useState<CoverageFilter>("all");
-  const [activeRun, setActiveRun] = useState<TestcaseRunSnapshot | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
-  const [startStatus, setStartStatus] = useState<ModuleStartStatus | null>(null);
 
-  // Modul ochilganda (va har run'dan keyin) credential + Gemini kvota holatini olish.
-  const refreshStartStatus = useCallback(async () => {
-    try {
-      const res = await fetch("/api/testcase/start-status", { cache: "no-store" });
-      if (!res.ok) return;
-      const data = (await res.json()) as ModuleStartStatus;
-      if (data && typeof data === "object" && data.module_key) setStartStatus(data);
-    } catch {
-      /* status olinmasa gating ko'rsatilmaydi (backend baribir bloklaydi). */
-    }
-  }, []);
-
-  useEffect(() => {
-    void refreshStartStatus();
-  }, [refreshStartStatus]);
-
-  const { recent, addRecent, removeRecent } = useRecentRuns(MODULE_KEY, recentScope);
-  const openRunStorageKey = getOpenRunStorageKey(MODULE_KEY, recentScope);
+  const {
+    activeRun,
+    setActiveRun,
+    result,
+    setResult,
+    error,
+    setError,
+    moduleError,
+    setModuleError,
+    submitting,
+    setSubmitting,
+    startStatus,
+    refreshStartStatus,
+    recent,
+    runInProgress,
+    applyRunSnapshot,
+    rememberRun,
+  } = useRunPolling<TestCaseGenerationResult, TestcaseRunSnapshot>({
+    moduleKey: MODULE_KEY,
+    recentScope,
+    apiBasePath: "/api/testcase",
+    taskKey,
+    isTerminalRunState,
+    deriveResultError,
+    // Testcase snapshot error_message'ni faqat terminal (persistFinal) holatda ko'rsatadi.
+    getSnapshotErrorMessage: (snapshot, persistFinal) =>
+      persistFinal && snapshot.error_message?.trim() ? snapshot.error_message : null,
+    onBeforeReopen: (entry) => {
+      setCoverageFilter("all");
+      setTaskKey(entry.task_key);
+    },
+    pollErrorMessage: "Testcase run polling xatosi.",
+    pollFailureMessage: "Testcase run polling vaqtida xato yuz berdi.",
+    reopenFailureMessage: "Eski runni yuklashda xato.",
+  });
 
   const agentPanelRun = activeRun;
-  const runInProgress = Boolean(activeRun?.run_id) && !isResolvedRunSnapshot(activeRun);
   const progress = getRunProgress(agentPanelRun, result);
   const runEvents = agentPanelRun?.run_events || [];
   const canCopyDebug = Boolean(agentPanelRun || result || moduleError || error);
 
   useEffect(() => {
-    const runId = activeRun?.run_id;
-    if (!runId || isResolvedRunSnapshot(activeRun)) return undefined;
-
-    let cancelled = false;
-    const intervalId = window.setInterval(async () => {
-      try {
-        const response = await fetch(`/api/testcase/runs/${encodeURIComponent(runId)}`, {
-          cache: "no-store",
-        });
-        const payload = (await response.json().catch(() => null)) as
-          | (TestcaseRunSnapshot & { error?: string })
-          | null;
-
-        if (!response.ok) {
-          if (!cancelled) setError(payload?.error || "Testcase run polling xatosi.");
-          return;
-        }
-        if (!payload || cancelled) return;
-
-        applyRunSnapshot(payload, {
-          persistFinal: isResolvedRunSnapshot(payload) || isTerminalRunState(payload.run_state),
-        });
-      } catch (pollError) {
-        if (!cancelled) {
-          setError(
-            pollError instanceof Error
-              ? pollError.message
-              : "Testcase run polling vaqtida xato yuz berdi.",
-          );
-        }
-      }
-    }, RUN_POLL_INTERVAL_MS);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-    };
-  }, [activeRun?.run_id, activeRun?.run_state, activeRun?.finished_at, Boolean(activeRun?.final_result)]);
-
-  useEffect(() => {
     setCopyState("idle");
   }, [agentPanelRun?.run_id, agentPanelRun?.updated_at, result?.task_key, moduleError?.error, error]);
-
-  useEffect(() => {
-    try {
-      const raw = window.sessionStorage.getItem(openRunStorageKey);
-      if (!raw) return;
-      window.sessionStorage.removeItem(openRunStorageKey);
-      const entry = JSON.parse(raw) as RecentRun | null;
-      if (entry?.run_id?.trim()) {
-        void reopenRun(entry);
-      }
-    } catch {
-      /* Historydan auto-open bo'lmasa, sahifa oddiy holatda qoladi. */
-    }
-  }, [openRunStorageKey]);
-
-  function rememberRun(snapshot: TestcaseRunSnapshot) {
-    const runId = snapshot.run_id?.trim();
-    const runTaskKey = (snapshot.task_key || snapshot.final_result?.task_key || taskKey).trim().toUpperCase();
-    if (!runId || !runTaskKey) return;
-    addRecent({
-      run_id: runId,
-      task_key: runTaskKey,
-      saved_at: Date.now(),
-      run_state: snapshot.run_state || undefined,
-    });
-  }
-
-  function applyRunSnapshot(snapshot: TestcaseRunSnapshot, options?: { persistFinal?: boolean }) {
-    setModuleError(null);
-    setActiveRun(snapshot);
-    rememberRun(snapshot);
-
-    const finalResult = snapshot.final_result || null;
-    if (finalResult) {
-      setResult(finalResult);
-      setError(deriveResultError(finalResult));
-      return;
-    }
-
-    if (options?.persistFinal && snapshot.error_message?.trim()) {
-      setError(snapshot.error_message);
-    }
-  }
 
   async function startRun() {
     if (submitting || runInProgress) return;
@@ -902,47 +822,6 @@ export function TestCaseGenerator({ recentScope }: TestCaseGeneratorProps) {
     setError(null);
     setCoverageFilter("all");
     setCopyState("idle");
-  }
-
-  async function reopenRun(entry: RecentRun) {
-    if (submitting || runInProgress) return;
-    setSubmitting(true);
-    setError(null);
-    setModuleError(null);
-    setResult(null);
-    setCoverageFilter("all");
-    setActiveRun(null);
-    setTaskKey(entry.task_key);
-    try {
-      const response = await fetch(`/api/testcase/runs/${encodeURIComponent(entry.run_id)}`, {
-        cache: "no-store",
-      });
-      const payload = (await response.json().catch(() => null)) as
-        | (TestcaseRunSnapshot & { error?: string })
-        | null;
-      if (!response.ok) {
-        if (response.status === 403 || response.status === 404) {
-          removeRecent(entry.run_id);
-        }
-        setError(payload?.error || "Eski runni yuklab bo'lmadi.");
-        return;
-      }
-      if (!payload) {
-        setError("Eski run uchun bo'sh javob qaytdi.");
-        return;
-      }
-      applyRunSnapshot(payload, {
-        persistFinal: isResolvedRunSnapshot(payload) || isTerminalRunState(payload.run_state),
-      });
-    } catch (reopenError) {
-      setError(
-        reopenError instanceof Error
-          ? reopenError.message
-          : "Eski runni yuklashda xato.",
-      );
-    } finally {
-      setSubmitting(false);
-    }
   }
 
   const total = result?.requirement_coverage?.total_requirements ?? result?.requirements?.length ?? 0;
