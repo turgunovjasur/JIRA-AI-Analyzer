@@ -237,20 +237,49 @@ router/NAT orqali internetga port-forwarding QILMANG.
 ## 8. JIRA webhook sozlash
 
 1. Tizimga super-admin bilan kirib, kompaniya yarating — kompaniyaga
-   `company_code` va avtomatik **webhook_secret** beriladi (admin panelda ko'rinadi).
-2. JIRA'da: **Settings → System → WebHooks → Create a WebHook**:
-   - **URL**: `https://<DOMEN>/webhook/jira/<company_code>`
-     (7.1-bo'limdagi reverse proxy domeni; LAN rejimida —
-     `http://<SERVER_IP>:8000/webhook/jira/<company_code>`)
-   - **Header**: `X-Webhook-Secret: <admin_paneldan_olingan_secret>`
+   `company_code` va avtomatik **webhook_secret** beriladi.
+2. Kompaniya admini bilan kirib **Settings → Webhook** tabini oching — eng
+   yuqorida tayyor **📡 JIRA Webhook URL** bloki turadi. **"URL'ni nusxalash"**
+   tugmasini bosing (token URL ichida birga olinadi).
+3. JIRA'da: **Settings → System → WebHooks → Create a WebHook**:
+   - **URL**: nusxalangan URL —
+     `https://<DOMEN>/webhook/jira/<company_code>?token=<webhook_secret>`
    - **Events**: Issue → *updated*
-3. JIRA Cloud ishlatilsa, server internetdan ko'rinishi shart — bu FAQAT
+   > JIRA'ning oddiy system webhook'i custom header yubora olmaydi, shuning
+   > uchun secret `?token=` sifatida URL tarkibida yuboriladi.
+4. JIRA Cloud ishlatilsa, server internetdan ko'rinishi shart — bu FAQAT
    7.1-bo'limdagi TLS reverse proxy orqali bo'lishi kerak. Backend portini (8000)
    to'g'ridan-to'g'ri internetga ochish yoki routerda port-forwarding qilish
    TAQIQLANADI — secret va parollar shifrlanmagan holda tarmoqqa chiqadi.
 
 Test: JIRA da biror taskni **Testing** statusga o'tkazing → `QA-Backend` oynasida
 webhook logi ko'rinadi → bir necha daqiqada JIRA taskka `[AI_S1]` comment tushadi.
+
+### 8.1 Legacy rejim — JIRA webhook URL'ini o'zgartirib bo'lmasa
+
+Eski monolitdan o'tish davrida JIRA'dagi mavjud webhook (`/webhook/jira`,
+parolsiz) URL'iga tegish imkoni bo'lmasa, yangi servis VAQTINCHA eski signalni
+monolitdagidek — parolsiz — qabul qilishi mumkin:
+
+1. `.env` da: `APP_WEBHOOK_REQUIRE_SECRET=false`
+2. Kompaniya yaratilganda avto-berilgan parolni bo'shating (CMD):
+
+   ```cmd
+   psql -U postgres -d jira_ai_analyzer -c "UPDATE company_settings SET webhook_secret='' WHERE company_id=(SELECT id FROM companies WHERE company_code='<company_code>');"
+   ```
+
+3. Backend'ni qayta ishga tushiring (`stop.bat` → `start.bat`).
+4. Kompaniya sozlamalarida **JIRA Project Keys** ga eski monolit ishlagan
+   project key'larni kiriting — legacy `/webhook/jira` endpoint kompaniyani
+   shu mapping orqali topadi.
+
+Endi cutover shunchaki: **eski servisni to'xtatish → yangisini o'sha portda
+ishga tushirish**. Rollback — teskarisi. JIRA'ga hech kim tegmaydi.
+
+⚠️ Bu rejimda webhook endpoint parolsiz ochiq — URL'ni bilgan har kim soxta
+signal yubora oladi. Test davri tugagach xavfsizlikni yoqing:
+Settings → Webhook'dagi **"Parol yaratish"** tugmasi → JIRA URL'iga `?token=`
+qo'shish (JIRA admin/DevOps) → `.env` da `APP_WEBHOOK_REQUIRE_SECRET=true`.
 
 ---
 
