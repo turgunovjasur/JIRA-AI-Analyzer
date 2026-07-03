@@ -1,0 +1,13 @@
+{
+  "task_key": "EVAL-303",
+  "summary": "Ombor qoldiqlari hisobotini Excelga eksport qilish",
+  "pr_title": "feat(warehouse): qoldiqlarni xlsx eksport qilish",
+  "is_recheck": true,
+  "return_reason": "WARN_LOW_SCORE",
+  "dev_comments": [
+    {
+      "author": "Bekzod Dev",
+      "body": "export_log yozuvi umumiy audit-trail taskida (DEV-9012) qilinyapti, u PR hali reviewda. Bu PR scope'ida faqat eksport funksiyasi bor."
+    }
+  ]
+}

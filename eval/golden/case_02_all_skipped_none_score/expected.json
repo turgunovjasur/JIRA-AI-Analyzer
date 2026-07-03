@@ -1,0 +1,20 @@
+{
+  "verdict": "manual_review",
+  "run_state": "manual_review",
+  "compliance_score": null,
+  "completed": [],
+  "failed": [],
+  "skipped": ["REQ-1", "REQ-2", "REQ-3"],
+  "technical": [],
+  "extra_code_risk": "none",
+  "requirement_statuses": {
+    "REQ-1": "skipped",
+    "REQ-2": "skipped",
+    "REQ-3": "skipped"
+  },
+  "analysis_text_contains": [
+    "COMPLIANCE_SCORE: N/A",
+    "Skip sababi",
+    "Dev izohi (skip asosi)"
+  ]
+}

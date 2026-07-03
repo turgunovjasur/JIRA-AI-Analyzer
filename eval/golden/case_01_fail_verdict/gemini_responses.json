@@ -1,0 +1,55 @@
+{
+  "agent1": "```json\n{\n  \"requirements\": [\n    {\"id\": \"REQ-1\", \"text\": \"Mijoz balansi -50 000 so'mdan past bo'lsa, har kuni soat 09:00 da SMS ogohlantirish yuborilishi kerak.\", \"source\": \"tz\"},\n    {\"id\": \"REQ-2\", \"text\": \"SMS matni sms_templates jadvalidagi shablondan olinib, mijoz ismi bilan to'ldirilishi kerak.\", \"source\": \"tz\"},\n    {\"id\": \"REQ-3\", \"text\": \"Har bir yuborilgan SMS sms_log jadvaliga yuborilgan vaqt va status bilan yozilishi kerak.\", \"source\": \"tz\"},\n    {\"id\": \"REQ-4\", \"text\": \"Qarzdorlik limitidan oshgan mijozlarga kunlik ogohlantirish xabari yuborilishi shart.\", \"source\": \"tz\"}\n  ]\n}\n```",
+  "agent1b": {
+    "requirements": [
+      {
+        "text": "Balansi -50 000 so'mdan past (qarzdorlik limitidan oshgan) mijozlarga har kuni soat 09:00 da SMS ogohlantirish yuborilishi kerak.",
+        "source": "tz",
+        "members": ["REQ-1", "REQ-4"]
+      },
+      {
+        "text": "SMS matni sms_templates jadvalidagi shablondan olinib, mijoz ismi bilan to'ldirilishi kerak.",
+        "source": "tz",
+        "members": ["REQ-2"]
+      },
+      {
+        "text": "Har bir yuborilgan SMS sms_log jadvaliga yuborilgan vaqt va status bilan yozilishi kerak.",
+        "source": "tz",
+        "members": ["REQ-3"]
+      }
+    ]
+  },
+  "agent2.REQ-1": {
+    "id": "REQ-1",
+    "status": "completed",
+    "evidence": "Sms_Alert.Send_Debt_Sms balance < -50000 mijozlarni tanlaydi; jobs.sql da DEBT_SMS_DAILY job FREQ=DAILY;BYHOUR=9 bilan yaratilgan.",
+    "sources": [
+      {"type": "code", "file": "main/oracle/billing/sms_alert.pkb", "symbol": "Send_Debt_Sms", "note": "Balans sharti va SMS yuborish shu procedureda."},
+      {"type": "code", "file": "main/oracle/billing/jobs.sql", "symbol": "DEBT_SMS_DAILY", "note": "Kunlik 09:00 schedule."}
+    ]
+  },
+  "agent2.REQ-2": {
+    "id": "REQ-2",
+    "status": "completed",
+    "evidence": "sms_templates jadvalidan DEBT_ALERT shablon o'qiladi va replace(v_template, '{name}', r_client.name) orqali mijoz ismi qo'yiladi.",
+    "sources": [
+      {"type": "code", "file": "main/oracle/billing/sms_alert.pkb", "symbol": "Send_Debt_Sms", "note": "Shablon lookup va name replace."}
+    ]
+  },
+  "agent2.REQ-3": {
+    "id": "REQ-3",
+    "status": "failed",
+    "evidence": "PR diffida sms_log jadvaliga insert topilmadi; Send_Debt_Sms faqat Sms_Gateway.Send chaqiradi, yuborilgan vaqt va status hech qayerga yozilmaydi.",
+    "sources": [
+      {"type": "manual", "note": "sms_log ga yozish logikasi qo'shilishi kerak."}
+    ]
+  },
+  "agent2.extra_scan": {
+    "extra": []
+  },
+  "agent3": {
+    "summary": "REQ-1 va REQ-2 bajarilgan: kunlik 09:00 job va shablon bilan SMS yuborish implement qilingan. REQ-3 bajarilmagan: sms_log jadvaliga yozish PRda yo'q.",
+    "risks": ["SMS yuborilgani log qilinmagani uchun auditda yuborilgan xabarlarni isbotlab bo'lmaydi."],
+    "recommendation": "REQ-3 (sms_log yozuvi) qo'shilishi uchun task developerga qaytarilsin."
+  }
+}

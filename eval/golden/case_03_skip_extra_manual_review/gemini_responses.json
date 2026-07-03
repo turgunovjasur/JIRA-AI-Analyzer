@@ -1,0 +1,59 @@
+{
+  "agent1": {
+    "requirements": [
+      {"id": "REQ-1", "text": "Ombor qoldiqlari sahifasida 'Excelga eksport' tugmasi bosilganda joriy filtr bo'yicha ma'lumot .xlsx faylga yuklanishi kerak.", "source": "tz"},
+      {"id": "REQ-2", "text": "Eksport faylida ustunlar mahsulot kodi, nomi, ombor, qoldiq miqdori, o'lchov birligi tartibida bo'lishi kerak.", "source": "tz"},
+      {"id": "REQ-3", "text": "Eksport tarixi (kim, qachon, nechta qator) export_log jadvaliga yozilishi kerak.", "source": "tz"}
+    ]
+  },
+  "agent1b": {
+    "requirements": [
+      {"text": "Ombor qoldiqlari sahifasida 'Excelga eksport' tugmasi bosilganda joriy filtr bo'yicha ma'lumot .xlsx faylga yuklanishi kerak.", "source": "tz", "members": ["REQ-1"]},
+      {"text": "Eksport faylida ustunlar mahsulot kodi, nomi, ombor, qoldiq miqdori, o'lchov birligi tartibida bo'lishi kerak.", "source": "tz", "members": ["REQ-2"]},
+      {"text": "Eksport tarixi (kim, qachon, nechta qator) export_log jadvaliga yozilishi kerak.", "source": "tz", "members": ["REQ-3"]}
+    ]
+  },
+  "agent2.REQ-1": {
+    "id": "REQ-1",
+    "status": "completed",
+    "evidence": "Stock_Export.Export_Xlsx p_filter bo'yicha v_stock_balance dan tanlab Xlsx_Builder orqali blob qaytaradi — filtrlangan .xlsx eksport implement qilingan.",
+    "sources": [
+      {"type": "code", "file": "main/oracle/warehouse/stock_export.pkb", "symbol": "Export_Xlsx", "note": "Filtrli eksport funksiyasi."}
+    ]
+  },
+  "agent2.REQ-2": {
+    "id": "REQ-2",
+    "status": "completed",
+    "evidence": "Add_Header ustunlari 'Mahsulot kodi', 'Nomi', 'Ombor', 'Qoldiq', 'O'lchov' tartibida; Add_Row ham shu tartibda product_code, product_name, warehouse, quantity, uom yozadi.",
+    "sources": [
+      {"type": "code", "file": "main/oracle/warehouse/stock_export.pkb", "symbol": "Export_Xlsx", "note": "Ustun tartibi header va row da bir xil."}
+    ]
+  },
+  "agent2.REQ-3": {
+    "id": "REQ-3",
+    "status": "failed",
+    "evidence": "export_log jadvaliga insert PR diffida topilmadi; Export_Xlsx hech qanday tarix yozmaydi.",
+    "sources": [
+      {"type": "manual", "note": "Eksport tarixini yozish logikasi yo'q."}
+    ]
+  },
+  "agent2.extra_scan": {
+    "extra": [
+      {
+        "text": "roles.sql da WAREHOUSE_VIEWER roliga yangi STOCK_EXPORT_XLSX permission berilgan — TZda ruxsatlar haqida talab yo'q, access scope kengaygan.",
+        "risk": "medium"
+      }
+    ]
+  },
+  "agent3": {
+    "summary": "REQ-1 va REQ-2 bajarilgan: filtrli xlsx eksport va ustun tartibi implement qilingan. REQ-3 (export_log) dev izohiga ko'ra alohida audit-trail taskida (DEV-9012) — skip, QA manual kuzatsin. Qo'shimcha: WAREHOUSE_VIEWER roliga yangi eksport permission berilgan, access scope reviewi kerak.",
+    "risks": [
+      "WAREHOUSE_VIEWER roliga yangi permission access scope'ni kengaytiradi — security review kerak.",
+      "export_log yozuvi DEV-9012 merge bo'lmaguncha auditda bo'shliq qoladi."
+    ],
+    "recommendation": "Skip qilingan REQ-3 ni QA DEV-9012 bilan birga manual tekshirsin; permission o'zgarishi security review qilinsin.",
+    "skipped": [
+      {"id": "REQ-3", "reason": "Dev: export_log yozuvi alohida audit-trail taskida (DEV-9012), bu PR scope'idan tashqarida."}
+    ]
+  }
+}

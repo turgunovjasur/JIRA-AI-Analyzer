@@ -1,0 +1,10 @@
+FILE: main/oracle/orders/order_cancel_config.sql
+STATUS: added
+PATCH:
+@@ -0,0 +1,8 @@
++insert into cancel_reasons (code, name_uz, is_active)
++values ('CLIENT_REFUSED', 'Mijoz rad etdi', 'Y');
++insert into cancel_reasons (code, name_uz, is_active)
++values ('ADDRESS_WRONG', 'Manzil noto''g''ri', 'Y');
++insert into cancel_reasons (code, name_uz, is_active)
++values ('OUT_OF_STOCK', 'Mahsulot qolmagan', 'Y');

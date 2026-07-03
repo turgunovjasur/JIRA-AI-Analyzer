@@ -1,0 +1,26 @@
+FILE: main/oracle/warehouse/stock_export.pkb
+STATUS: added
+PATCH:
+@@ -0,0 +1,22 @@
++create or replace package body Stock_Export is
++
++  function Export_Xlsx(p_filter in varchar2) return blob is
++    v_book Xlsx_Builder.t_book;
++  begin
++    Xlsx_Builder.Add_Header(v_book,
++      t_columns('Mahsulot kodi', 'Nomi', 'Ombor', 'Qoldiq', 'O''lchov'));
++    for r in (select * from v_stock_balance where dyn_filter(p_filter) = 1) loop
++      Xlsx_Builder.Add_Row(v_book,
++        t_values(r.product_code, r.product_name, r.warehouse, r.quantity, r.uom));
++    end loop;
++    return Xlsx_Builder.To_Blob(v_book);
++  end;
++
++end Stock_Export;
+
+FILE: main/oracle/warehouse/roles.sql
+STATUS: modified
+PATCH:
+@@ -4,2 +4,5 @@
++insert into role_permissions (role_code, permission_code)
++values ('WAREHOUSE_VIEWER', 'STOCK_EXPORT_XLSX');

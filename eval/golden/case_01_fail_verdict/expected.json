@@ -1,0 +1,19 @@
+{
+  "verdict": "fail",
+  "run_state": "completed",
+  "compliance_score": 67,
+  "completed": ["REQ-1", "REQ-2"],
+  "failed": ["REQ-3"],
+  "skipped": [],
+  "technical": [],
+  "extra_code_risk": "none",
+  "requirement_statuses": {
+    "REQ-1": "completed",
+    "REQ-2": "completed",
+    "REQ-3": "failed"
+  },
+  "analysis_text_contains": [
+    "COMPLIANCE_SCORE: 67%",
+    "sms_log jadvaliga insert topilmadi"
+  ]
+}

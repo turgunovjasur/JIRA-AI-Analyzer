@@ -12,6 +12,9 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+# Prompt matni o'zgarsa bump qiling (format: YYYY.MM.DD-N) va eval o'tkazing.
+PROMPT_VERSION = "2026.07.03-1"
+
 
 RESPONSE_SCHEMA = {
     "type": "object",

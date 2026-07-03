@@ -1,0 +1,12 @@
+{
+  "task_key": "EVAL-202",
+  "summary": "Mobil ilovada buyurtma bekor qilish oqimi",
+  "pr_title": "chore(orders): bekor qilish sabablari konfiguratsiyasi",
+  "agent2_extra_scan_enabled": false,
+  "dev_comments": [
+    {
+      "author": "Aziz Dev",
+      "body": "UI oqimining uchala talabi ham kuryer mobil ilovasida — smartup_mobile repoda, alohida PR (MOB-431) ochilgan. Bu PR faqat backend cancel_reasons konfiguratsiyasi."
+    }
+  ]
+}

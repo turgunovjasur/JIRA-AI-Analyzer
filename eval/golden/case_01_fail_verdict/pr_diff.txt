@@ -1,0 +1,38 @@
+FILE: main/oracle/billing/sms_alert.pkb
+STATUS: added
+PATCH:
+@@ -0,0 +1,28 @@
++create or replace package body Sms_Alert is
++
++  procedure Send_Debt_Sms is
++    v_template varchar2(4000);
++  begin
++    for r_client in (
++      select c.id, c.name, c.balance
++        from clients c
++       where c.balance < -50000
++    ) loop
++      select t.body
++        into v_template
++        from sms_templates t
++       where t.code = 'DEBT_ALERT';
++
++      Sms_Gateway.Send(
++        p_client_id => r_client.id,
++        p_text      => replace(v_template, '{name}', r_client.name)
++      );
++    end loop;
++  end;
++
++end Sms_Alert;
+
+FILE: main/oracle/billing/jobs.sql
+STATUS: modified
+PATCH:
+@@ -10,3 +10,9 @@
++begin
++  dbms_scheduler.create_job(
++    job_name        => 'DEBT_SMS_DAILY',
++    repeat_interval => 'FREQ=DAILY;BYHOUR=9;BYMINUTE=0',
++    job_action      => 'Sms_Alert.Send_Debt_Sms;');
++end;

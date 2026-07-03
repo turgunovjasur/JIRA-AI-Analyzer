@@ -1,0 +1,50 @@
+{
+  "agent1": {
+    "requirements": [
+      {"id": "REQ-1", "text": "Buyurtma kartochkasida 'Bekor qilish' tugmasi faqat new va accepted statuslarda ko'rinishi kerak.", "source": "tz"},
+      {"id": "REQ-2", "text": "Bekor qilishda kuryer sabab tanlashi majburiy; sabab tanlanmasa tasdiqlash tugmasi bosilmasin.", "source": "tz"},
+      {"id": "REQ-3", "text": "Bekor qilingan buyurtma ro'yxatda kulrang rangda va 'Bekor qilindi' belgisi bilan ko'rsatilishi kerak.", "source": "tz"}
+    ]
+  },
+  "agent1b": {
+    "requirements": [
+      {"text": "Buyurtma kartochkasida 'Bekor qilish' tugmasi faqat new va accepted statuslarda ko'rinishi kerak.", "source": "tz", "members": ["REQ-1"]},
+      {"text": "Bekor qilishda kuryer sabab tanlashi majburiy; sabab tanlanmasa tasdiqlash tugmasi bosilmasin.", "source": "tz", "members": ["REQ-2"]},
+      {"text": "Bekor qilingan buyurtma ro'yxatda kulrang rangda va 'Bekor qilindi' belgisi bilan ko'rsatilishi kerak.", "source": "tz", "members": ["REQ-3"]}
+    ]
+  },
+  "agent2.REQ-1": {
+    "id": "REQ-1",
+    "status": "failed",
+    "evidence": "PR diffida mobil UI kodi yo'q; faqat cancel_reasons konfiguratsiya insertlari bor. Tugma ko'rinish sharti bu PRda tasdiqlanmadi.",
+    "sources": [
+      {"type": "manual", "note": "Mobil ilova kodi bu repoda emas, manual tekshiruv kerak."}
+    ]
+  },
+  "agent2.REQ-2": {
+    "id": "REQ-2",
+    "status": "failed",
+    "evidence": "Sabab tanlash majburiyligi bo'yicha UI validatsiya kodi PR diffida topilmadi; faqat sabab ro'yxati ma'lumotlari qo'shilgan.",
+    "sources": [
+      {"type": "manual", "note": "Majburiy sabab tanlash validatsiyasi mobil ilovada tekshirilishi kerak."}
+    ]
+  },
+  "agent2.REQ-3": {
+    "id": "REQ-3",
+    "status": "failed",
+    "evidence": "Bekor qilingan buyurtmani kulrang ko'rsatish bo'yicha hech qanday kod PR diffida yo'q.",
+    "sources": [
+      {"type": "manual", "note": "Ro'yxat rendering logikasi mobil ilovada."}
+    ]
+  },
+  "agent3": {
+    "summary": "Uchala talab ham kuryer mobil ilovasiga tegishli. Dev izohiga ko'ra mobil kod smartup_mobile repoda, alohida PR (MOB-431) da — bu PR faqat backend cancel_reasons konfiguratsiyasi. Uchala talab skip qilindi, QA mobil PRda manual tekshirsin.",
+    "risks": ["Mobil PR (MOB-431) alohida tekshirilmasa UI oqimi sifatsiz chiqishi mumkin."],
+    "recommendation": "Skip qilingan talablarni QA smartup_mobile PR (MOB-431) ustida manual tekshirsin.",
+    "skipped": [
+      {"id": "REQ-1", "reason": "Dev: tugma UI logikasi smartup_mobile repoda (MOB-431), bu PR scope'idan tashqarida."},
+      {"id": "REQ-2", "reason": "Dev: sabab tanlash validatsiyasi mobil ilovada, alohida PRda."},
+      {"id": "REQ-3", "reason": "Dev: ro'yxat rendering mobil ilovada, bu PR faqat backend konfiguratsiya."}
+    ]
+  }
+}

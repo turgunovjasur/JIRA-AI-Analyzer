@@ -1,0 +1,21 @@
+{
+  "verdict": "manual_review",
+  "run_state": "manual_review",
+  "compliance_score": 100,
+  "completed": ["REQ-1", "REQ-2"],
+  "failed": [],
+  "skipped": ["REQ-3"],
+  "technical": [],
+  "extra_code_risk": "medium",
+  "requirement_statuses": {
+    "REQ-1": "completed",
+    "REQ-2": "completed",
+    "REQ-3": "skipped"
+  },
+  "analysis_text_contains": [
+    "COMPLIANCE_SCORE: 100%",
+    "Extra code change",
+    "STOCK_EXPORT_XLSX",
+    "Skip sababi"
+  ]
+}

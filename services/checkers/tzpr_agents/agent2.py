@@ -6,6 +6,8 @@ import re
 from difflib import SequenceMatcher
 from typing import Any
 
+# Prompt matni o'zgarsa bump qiling (format: YYYY.MM.DD-N) va eval o'tkazing.
+PROMPT_VERSION = "2026.07.03-1"
 
 VALID_STATUSES = {"completed", "failed"}
 VALID_EXTRA_RISKS = {"low", "medium", "high"}
