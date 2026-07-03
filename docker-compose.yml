@@ -1,3 +1,10 @@
+# Barcha servislar uchun umumiy log cheklovi: har container max 3 x 10MB json log
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -14,6 +21,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    logging: *default-logging
 
   backend:
     build:
@@ -32,7 +40,18 @@ services:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
       - app_data:/app/data
+    # /health endpoint DB/servis holatini tekshiradi (unhealthy bo'lsa 503 qaytaradi)
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    mem_limit: 1g
+    logging: *default-logging
 
+  # Gorizontal scale: docker compose up -d --scale worker=3 (batafsil: docs/SCALING.md)
+  # container_name YO'Q va port ochilmagan — replikalar to'qnashmaydi.
   worker:
     build:
       context: .
@@ -52,6 +71,16 @@ services:
         condition: service_healthy
     volumes:
       - app_data:/app/data
+    # Liveness: worker loop har ~60s heartbeat faylga touch qiladi (container-lokal /tmp).
+    # Uzun job paytida (~8 daqiqa) heartbeat yangilanmaydi — shu uchun chegara 15 daqiqa.
+    healthcheck:
+      test: ["CMD-SHELL", "find /tmp/qa_worker_heartbeat -mmin -15 2>/dev/null | grep -q ."]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    mem_limit: 2g
+    logging: *default-logging
 
   frontend:
     build:
@@ -65,6 +94,7 @@ services:
       - backend
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
+    logging: *default-logging
 
 volumes:
   postgres_data:

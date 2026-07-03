@@ -6,8 +6,13 @@ Windows CMD-friendly, strukturali, o'qish oson
 import logging
 import sys
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional
+
+# Log fayl rotatsiyasi: har fayl max 10MB, 5 ta backup (webhook.log.1 ... .5)
+LOG_MAX_BYTES = 10 * 1024 * 1024
+LOG_BACKUP_COUNT = 5
 
 # Task/so'rov ajratuvchi matn — ketma-ket takrorlanmasligi uchun ishlatiladi
 SEPARATOR_MSG = "-" * 60
@@ -72,8 +77,11 @@ class ColoredFormatter(logging.Formatter):
         return super().format(record)
 
 
-class _FlushingFileHandler(logging.FileHandler):
-    """Har bir log yozuvidan keyin faylni flush qiladi — RDP/background CMD da ham data/webhook.log darhol yangilanadi."""
+class _FlushingFileHandler(RotatingFileHandler):
+    """Har bir log yozuvidan keyin faylni flush qiladi — RDP/background CMD da ham data/webhook.log darhol yangilanadi.
+
+    RotatingFileHandler: fayl LOG_MAX_BYTES dan oshsa avtomatik rotatsiya
+    (webhook.log -> webhook.log.1 ...), disk cheksiz to'lmaydi."""
 
     def emit(self, record):
         super().emit(record)
@@ -109,7 +117,12 @@ class StructuredLogger:
             _project_root = Path(__file__).parent.parent
             log_file = _project_root / "data" / "webhook.log"
             log_file.parent.mkdir(exist_ok=True)
-            file_handler = _FlushingFileHandler(log_file, encoding='utf-8')
+            file_handler = _FlushingFileHandler(
+                log_file,
+                maxBytes=LOG_MAX_BYTES,
+                backupCount=LOG_BACKUP_COUNT,
+                encoding='utf-8',
+            )
             file_handler.setFormatter(ColoredFormatter(use_colors=False))
 
             self._real_logger.addHandler(console)

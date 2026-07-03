@@ -10,8 +10,10 @@ import asyncio
 import json
 import os
 import signal
+import socket
 from contextlib import suppress
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from config.app_settings import get_app_settings, get_app_settings_for_company
@@ -46,7 +48,27 @@ JOB_TESTCASE_MULTI_AGENT_RUN = "testcase_multi_agent_run"
 
 
 def _worker_name() -> str:
-    return (os.getenv("APP_WORKER_NAME") or "worker-1").strip() or "worker-1"
+    """Worker nomi. APP_WORKER_NAME berilmasa hostname qo'shiladi —
+    `docker compose --scale worker=N` da har replika (container id) unikal nom oladi."""
+    explicit = (os.getenv("APP_WORKER_NAME") or "").strip()
+    if explicit:
+        return explicit
+    return f"worker-{socket.gethostname()}"
+
+
+def _heartbeat_file_path() -> Path:
+    return Path(os.getenv("APP_WORKER_HEARTBEAT_FILE") or "/tmp/qa_worker_heartbeat")
+
+
+def _touch_heartbeat_file() -> None:
+    """Docker healthcheck uchun container-lokal liveness fayli.
+
+    DB heartbeat (core/watchdog) monitoring uchun; bu fayl esa compose
+    healthcheck `find -mmin` tekshiruvi uchun — DB'siz ham ishlaydi."""
+    try:
+        _heartbeat_file_path().touch()
+    except Exception:
+        pass
 
 
 def _poll_interval_seconds() -> int:
@@ -254,6 +276,7 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
                 record_worker_heartbeat(worker_name)
             except Exception:
                 pass
+            _touch_heartbeat_file()
             last_heartbeat = now
 
         now = datetime.now()

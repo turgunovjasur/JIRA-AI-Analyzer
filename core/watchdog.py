@@ -175,7 +175,7 @@ def _send_alert(subject: str, body: str) -> None:
     if not recipient:
         return
     try:
-        from utils.email.email_sender import send_email, is_email_configured
+        from utils.email.email_sender import is_email_configured, send_email
         if not is_email_configured():
             return
         html = (
