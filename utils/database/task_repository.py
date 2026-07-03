@@ -7,12 +7,38 @@ ajratish uchun repository qatlam.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Callable
+from typing import Any, Callable, Dict, List, Optional
+
+from core.task_state import STATUS_FIELDS, validate_transition
+from utils.database.repository_common import (
+    execute as _execute,
+)
 from utils.database.repository_common import (
     prepare_query as _prepare_query,
-    execute as _execute,
+)
+from utils.database.repository_common import (
     row_to_dict as _row_to_dict,
 )
+
+_UPSERT_SELECT_COLUMNS = "id, task_status, service1_status, service2_status"
+
+
+def _existing_row_state(exists: Any) -> tuple:
+    """SELECT natijasidan (id, joriy status qiymatlari) ni ajratish.
+
+    Qator tuple yoki dict bo'lishi mumkin; eski test fake'lari qisqa tuple
+    qaytarishi mumkin — yetishmagan ustunlar None (validation o'tkazib yuboriladi).
+    """
+    if isinstance(exists, dict):
+        existing_id = exists.get("id")
+        current = {field: exists.get(field) for field in STATUS_FIELDS}
+    else:
+        existing_id = exists[0]
+        current = {
+            field: (exists[i + 1] if len(exists) > i + 1 else None)
+            for i, field in enumerate(STATUS_FIELDS)
+        }
+    return existing_id, current
 
 
 def fetch_task_by_id(
@@ -59,17 +85,30 @@ def upsert_task_record(
     conn = connect_processing(timeout=timeout)
     cursor = conn.cursor()
     if scoped_company_id is None:
-        cursor.execute(_prepare_query(conn, "SELECT id FROM task_processing WHERE task_id = ?"), [task_id])
+        cursor.execute(
+            _prepare_query(conn, f"SELECT {_UPSERT_SELECT_COLUMNS} FROM task_processing WHERE task_id = ?"),
+            [task_id],
+        )
     else:
         cursor.execute(
-            _prepare_query(conn, "SELECT id FROM task_processing WHERE task_id = ? AND company_id = ?"),
+            _prepare_query(
+                conn,
+                f"SELECT {_UPSERT_SELECT_COLUMNS} FROM task_processing WHERE task_id = ? AND company_id = ?",
+            ),
             [task_id, scoped_company_id],
         )
     exists = cursor.fetchone()
     payload["updated_at"] = datetime.now().isoformat()
 
     if exists:
-        existing_id = exists[0] if not isinstance(exists, dict) else exists.get("id")
+        existing_id, current_state = _existing_row_state(exists)
+        try:
+            for field in STATUS_FIELDS:
+                if field in payload:
+                    validate_transition(field, current_state.get(field), payload[field], task_id=task_id)
+        except Exception:
+            conn.close()
+            raise
         set_clause = ", ".join(f"{key} = %s" for key in payload.keys())
         values = list(payload.values()) + [existing_id]
         cursor.execute(
