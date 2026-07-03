@@ -5,7 +5,7 @@ Barcha testlar pure unit — DB kerak emas.
 from __future__ import annotations
 
 import asyncio
-import os
+
 import pytest
 
 pytestmark = pytest.mark.no_db
@@ -74,6 +74,7 @@ class TestRateLimit:
 
     def test_allows_under_limit(self):
         import importlib
+
         import services.api.rate_limit as rl
         importlib.reload(rl)
 
@@ -82,8 +83,10 @@ class TestRateLimit:
             asyncio.get_event_loop().run_until_complete(rl.check_rate_limit(req))
 
     def test_blocks_over_limit(self):
-        from fastapi import HTTPException
         import importlib
+
+        from fastapi import HTTPException
+
         import services.api.rate_limit as rl
         importlib.reload(rl)
 
@@ -97,6 +100,7 @@ class TestRateLimit:
 
     def test_different_ips_are_independent(self):
         import importlib
+
         import services.api.rate_limit as rl
         importlib.reload(rl)
 
@@ -111,9 +115,11 @@ class TestRateLimit:
 
 class TestSecurityHeaders:
     def test_security_headers_present(self):
-        from unittest.mock import AsyncMock, MagicMock
-        from starlette.responses import Response
         import importlib
+        from unittest.mock import AsyncMock, MagicMock
+
+        from starlette.responses import Response
+
         import services.webhook.jira_webhook_handler as handler
         importlib.reload(handler)
 

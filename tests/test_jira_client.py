@@ -78,7 +78,7 @@ def _make_issue(issue_id: str = "10001"):
         labels=["Patch"],
         components=[SimpleNamespace(name="Mobile")],
     )
-    setattr(fields, "customfield_10016", 3)
+    fields.customfield_10016 = 3
     return SimpleNamespace(id=issue_id, key="DEV-1", fields=fields)
 
 

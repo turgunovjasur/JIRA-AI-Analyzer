@@ -28,8 +28,8 @@ def isolate_test_databases(monkeypatch, request):
     monkeypatch.setattr(runtime, "DB_BACKEND", "postgres", raising=False)
     monkeypatch.setattr(runtime, "POSTGRES_DSN", test_dsn, raising=False)
 
-    import utils.database.task_db as task_db
     import utils.auth.auth_db as auth_db
+    import utils.database.task_db as task_db
 
     task_db = importlib.reload(task_db)
     auth_db = importlib.reload(auth_db)
@@ -81,9 +81,9 @@ def ensure_db(isolate_test_databases):
     task_db = isolate_test_databases["task_db"]
 
     from utils.auth.auth_db import (
-        init_auth_db,
         create_company,
         get_company_by_code,
+        init_auth_db,
         save_company_settings,
         save_company_webhook_module_settings,
     )
@@ -100,6 +100,8 @@ def ensure_db(isolate_test_databases):
 
     if not save_company_settings(company["id"], {
         "webhook_project_keys": "TEST",
+        "jira_project_keys": "TEST",
+        "webhook_secret": "pytest-webhook-secret",
         "webhook_trigger_status": "READY TO TEST",
         "webhook_trigger_aliases": "READY TO TEST,Ready To Test",
     }):

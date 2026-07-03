@@ -2,8 +2,8 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
-from services.checkers.tzpr_models import TZPRAnalysisResult
 from services.checkers.tz_pr_checker import TZPRService
+from services.checkers.tzpr_models import TZPRAnalysisResult
 from services.webhook.error_handler import _classify_error
 from services.webhook.jira_webhook_handler import _is_allowed_issue_type
 
@@ -14,17 +14,19 @@ def test_allowed_issue_type_match_is_case_insensitive():
     assert _is_allowed_issue_type("Story", "DEV-BUG,DEV-TECHTASK") is False
 
 
-def test_tz_min_length_uses_summary_and_description_together():
+def test_tz_min_length_uses_description_only():
+    # min_tz_description_chars FAQAT description uzunligini o'lchaydi —
+    # summary hisobga olinmaydi (tzpr_data_fetch._get_tz_length_chars)
     service = TZPRService()
 
     assert service._is_tz_too_short(
         {"summary": "A" * 30, "description": "B" * 25},
         min_chars=50,
-    ) is False
-    assert service._is_tz_too_short(
-        {"summary": "Short", "description": "Tiny"},
-        min_chars=20,
     ) is True
+    assert service._is_tz_too_short(
+        {"summary": "Short", "description": "B" * 60},
+        min_chars=50,
+    ) is False
 
 
 
@@ -37,12 +39,11 @@ def test_error_classification_treats_full_analysis_overload_as_retryable():
 
 def test_service1_does_not_mark_returned_when_jira_transition_fails(monkeypatch):
     import config.app_settings as app_settings_module
-    from services.webhook import service_runner
-    import services.checkers.tz_pr_checker as tzpr_module
     import services.webhook.error_handler as error_handler_module
     import services.webhook.jira_webhook_handler as webhook_module
     import utils.auth.auth_db as auth_db
     import utils.jira.jira_comment_writer as jira_comment_writer
+    from services.webhook import service_runner
 
     task_key = "TEST-RETURN-GUARD-001"
     result = TZPRAnalysisResult(
@@ -52,12 +53,6 @@ def test_service1_does_not_mark_returned_when_jira_transition_fails(monkeypatch)
         compliance_score=40,
     )
 
-    class FakeService:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def analyze_task(self, *args, **kwargs):
-            return result
 
     settings = SimpleNamespace(
         auto_return_enabled=True,
@@ -68,16 +63,17 @@ def test_service1_does_not_mark_returned_when_jira_transition_fails(monkeypatch)
     mark_returned = MagicMock()
     set_return_reason = MagicMock()
 
-    monkeypatch.setattr(service_runner, "get_task", lambda key: {"service1_status": "pending"})
+    monkeypatch.setattr(
+        service_runner, "get_task",
+        lambda key, company_id=None: {"service1_status": "pending", "return_count": 0},
+    )
     monkeypatch.setattr(service_runner, "set_service1_done", MagicMock())
     monkeypatch.setattr(service_runner, "mark_returned", mark_returned)
     monkeypatch.setattr(service_runner, "set_return_reason", set_return_reason)
     monkeypatch.setattr(service_runner, "_handle_auto_return", AsyncMock(return_value=False))
-    monkeypatch.setattr(
-        tzpr_module,
-        "TZPRService",
-        FakeService,
-    )
+    import services.checkers.tzpr_multi_agent as tzpr_ma
+    monkeypatch.setattr(tzpr_ma, "create_multi_agent_run", lambda **kwargs: {"run_id": 1})
+    monkeypatch.setattr(tzpr_ma, "run_multi_agent_for_webhook", lambda run_id: result)
     monkeypatch.setattr(
         error_handler_module,
         "_write_success_comment",

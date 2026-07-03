@@ -19,24 +19,43 @@ Pytest class tuzilmasi:
 - TestSettingsManagement  - test_7 (settings), resilience test_2
 - TestDebugCapability     - test_10 (debug info)
 - TestBlockedRetry        - test_11 (blocked status), resilience test_3
-- TestGeminiKeyFallback   - test_12 (key freeze)
+- TestService1ErrorService2Flow - test_12 (S1 error → S2 flow)
 - TestDeleteAndWebhook    - test_webhook_after_delete
 - TestSystemResilience    - resilience test_5, test_6
 
 Author: Test Suite (Consolidated)
 Date: 2026-02-20
 """
-import sys
-import os
-import json
 import asyncio
-import time
+import json
 import logging
-import pytest
+import os
+import sys
 from datetime import datetime, timedelta
-from unittest.mock import patch, MagicMock, AsyncMock
-from dataclasses import asdict
-from typing import List, Dict, Any
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+# conftest fixture pytestco kompaniyasiga shu secretni saqlaydi
+WEBHOOK_HEADERS = {"X-Webhook-Secret": "pytest-webhook-secret"}
+
+
+def _mock_agent_responses(agent2_payload):
+    """Multi-agent testcase oqimi uchun mock javoblar: agent1 -> agent2 -> agent3."""
+    tcs = agent2_payload["test_cases"]
+    return [
+        json.dumps({"requirements": [{"id": "REQ-1", "text": "Foydalanuvchi tizimga kira olishi kerak", "source": "tz"}]}),
+        json.dumps(agent2_payload),
+        json.dumps({
+            "test_scenarios": [{
+                "scenario_title": "Audit scenario",
+                "screen_or_flow": "Main flow",
+                "requirement_ids": ["REQ-1"],
+                "test_cases": tcs,
+            }],
+            "audit_findings": [],
+        }),
+    ]
 
 # Loyiha root path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -65,8 +84,8 @@ class TestServiceUnit:
     """
 
     def test_tzpr_service_inherits_base_service(self):
-        from services.checkers.tz_pr_checker import TZPRService
         from core.base_service import BaseService
+        from services.checkers.tz_pr_checker import TZPRService
         service = TZPRService()
         assert isinstance(service, BaseService)
 
@@ -90,13 +109,13 @@ class TestServiceUnit:
 
 
     def test_testcase_generator_inherits_base_service(self):
-        from services.generators.testcase_generator import TestCaseGeneratorService
         from core.base_service import BaseService
+        from services.generators.testcase_generator import TestCaseGeneratorService
         service = TestCaseGeneratorService()
         assert isinstance(service, BaseService)
 
     def test_testcase_generator_success(self):
-        from services.generators.testcase_generator import TestCaseGeneratorService, TestCaseGenerationResult
+        from services.generators.testcase_generator import TestCaseGenerationResult, TestCaseGeneratorService
         service = TestCaseGeneratorService()
         mock_jira = MagicMock()
         mock_jira.get_task_details.return_value = {
@@ -107,7 +126,7 @@ class TestServiceUnit:
             'comments': []
         }
         mock_gemini = MagicMock()
-        mock_gemini.analyze.side_effect = [json.dumps({"requirements": [{"id": "REQ-1", "text": "Foydalanuvchi tizimga kira olishi kerak", "source": "tz"}]}), json.dumps({
+        mock_gemini.analyze.side_effect = _mock_agent_responses({
             "test_cases": [
                 {
                     "id": "TC-001",
@@ -119,6 +138,7 @@ class TestServiceUnit:
                     "test_type": "positive",
                     "priority": "High",
                     "severity": "Critical",
+                    "requirement_ids": ["REQ-1"],
                     "tags": ["login", "auth"]
                 },
                 {
@@ -131,10 +151,11 @@ class TestServiceUnit:
                     "test_type": "negative",
                     "priority": "High",
                     "severity": "Major",
+                    "requirement_ids": ["REQ-1"],
                     "tags": ["login", "security"]
                 }
             ]
-        })]
+        })
         mock_pr_helper = MagicMock()
         mock_pr_helper.get_pr_full_info.return_value = None
         service._jira_client = mock_jira
@@ -158,7 +179,7 @@ class TestServiceUnit:
             'comments': []
         }
         mock_gemini = MagicMock()
-        mock_gemini.analyze.side_effect = [json.dumps({"requirements": [{"id": "REQ-1", "text": "Foydalanuvchi tizimga kira olishi kerak", "source": "tz"}]}), json.dumps({
+        mock_gemini.analyze.side_effect = _mock_agent_responses({
             "test_cases": [
                 {
                     "id": "TC-001",
@@ -170,6 +191,7 @@ class TestServiceUnit:
                     "test_type": "positive",
                     "priority": "High",
                     "severity": "Critical",
+                    "requirement_ids": ["REQ-1"],
                     "tags": ["login"]
                 },
                 {
@@ -182,10 +204,11 @@ class TestServiceUnit:
                     "test_type": "negative",
                     "priority": "High",
                     "severity": "Major",
+                    "requirement_ids": ["REQ-1"],
                     "tags": ["login"]
                 }
             ]
-        })]
+        })
         mock_pr_helper = MagicMock()
         mock_pr_helper.get_pr_full_info.return_value = None
         service._jira_client = mock_jira
@@ -208,7 +231,7 @@ class TestServiceUnit:
             'comments': []
         }
         mock_gemini = MagicMock()
-        mock_gemini.analyze.side_effect = [json.dumps({"requirements": [{"id": "REQ-1", "text": "Foydalanuvchi tizimga kira olishi kerak", "source": "tz"}]}), json.dumps({
+        mock_gemini.analyze.side_effect = _mock_agent_responses({
             "test_cases": [
                 {
                     "id": "TC-001",
@@ -220,10 +243,11 @@ class TestServiceUnit:
                     "test_type": "positive",
                     "priority": "High",
                     "severity": "Critical",
+                    "requirement_ids": ["REQ-1"],
                     "tags": []
                 }
             ]
-        })]
+        })
         mock_pr_helper = MagicMock()
         mock_pr_helper.get_pr_full_info.return_value = None
         service._jira_client = mock_jira
@@ -246,7 +270,7 @@ class TestServiceUnit:
             'comments': []
         }
         mock_gemini = MagicMock()
-        mock_gemini.analyze.side_effect = [json.dumps({"requirements": [{"id": "REQ-1", "text": "Foydalanuvchi tizimga kira olishi kerak", "source": "tz"}]}), json.dumps({
+        mock_gemini.analyze.side_effect = _mock_agent_responses({
             "test_cases": [
                 {
                     "id": "TC-001",
@@ -258,10 +282,11 @@ class TestServiceUnit:
                     "test_type": "positive",
                     "priority": "High",
                     "severity": "Critical",
+                    "requirement_ids": ["REQ-1"],
                     "tags": []
                 }
             ]
-        })]
+        })
         mock_pr_helper = MagicMock()
         mock_pr_helper.get_pr_full_info.return_value = None
         service._jira_client = mock_jira
@@ -274,8 +299,7 @@ class TestServiceUnit:
             custom_context="Product: ACME Widget, Narx: $99.99"
         )
         assert result.custom_context_used
-        call_args = mock_gemini.analyze.call_args
-        assert "ACME Widget" in str(call_args)
+        assert any("ACME Widget" in str(c) for c in mock_gemini.analyze.call_args_list)
 
     # --- BaseService tests (test_9) ---
 
@@ -362,6 +386,7 @@ class TestWebhookEndpoint:
 
     def test_health_check_endpoint(self):
         from fastapi.testclient import TestClient
+
         from services.webhook.jira_webhook_handler import app
         client = TestClient(app)
         response = client.get("/health")
@@ -369,6 +394,7 @@ class TestWebhookEndpoint:
 
     def test_root_endpoint_status_running(self):
         from fastapi.testclient import TestClient
+
         from services.webhook.jira_webhook_handler import app
         client = TestClient(app)
         response = client.get("/")
@@ -378,6 +404,7 @@ class TestWebhookEndpoint:
 
     def test_wrong_event_type_ignored(self):
         from fastapi.testclient import TestClient
+
         from services.webhook.jira_webhook_handler import app
         client = TestClient(app)
         payload = {
@@ -385,12 +412,13 @@ class TestWebhookEndpoint:
             "issue": {"key": "TEST-100"},
             "changelog": {}
         }
-        response = client.post("/webhook/jira", json=payload)
+        response = client.post("/webhook/jira", json=payload, headers=WEBHOOK_HEADERS)
         data = response.json()
         assert data.get('status') == 'ignored'
 
     def test_no_status_change_ignored(self):
         from fastapi.testclient import TestClient
+
         from services.webhook.jira_webhook_handler import app
         client = TestClient(app)
         payload = {
@@ -402,13 +430,14 @@ class TestWebhookEndpoint:
                 ]
             }
         }
-        response = client.post("/webhook/jira", json=payload)
+        response = client.post("/webhook/jira", json=payload, headers=WEBHOOK_HEADERS)
         data = response.json()
         assert data.get('status') == 'ignored'
         assert 'status not changed' in data.get('reason', '')
 
     def test_non_target_status_ignored(self):
         from fastapi.testclient import TestClient
+
         from services.webhook.jira_webhook_handler import app
         client = TestClient(app)
         payload = {
@@ -420,12 +449,13 @@ class TestWebhookEndpoint:
                 ]
             }
         }
-        response = client.post("/webhook/jira", json=payload)
+        response = client.post("/webhook/jira", json=payload, headers=WEBHOOK_HEADERS)
         data = response.json()
         assert data.get('status') == 'ignored'
 
     def test_correct_status_processing(self):
         from fastapi.testclient import TestClient
+
         from services.webhook.jira_webhook_handler import app
         client = TestClient(app)
         payload = {
@@ -440,12 +470,13 @@ class TestWebhookEndpoint:
         with patch('services.webhook.jira_webhook_handler.check_tz_pr_and_comment', new_callable=AsyncMock):
             with patch('services.webhook.jira_webhook_handler._run_testcase_generation', new_callable=AsyncMock):
                 with patch('services.webhook.jira_webhook_handler._run_task_group', new_callable=AsyncMock):
-                    response = client.post("/webhook/jira", json=payload)
+                    response = client.post("/webhook/jira", json=payload, headers=WEBHOOK_HEADERS)
                     data = response.json()
                     assert data.get('status') == 'processing'
 
     def test_correct_status_task_key_returned(self):
         from fastapi.testclient import TestClient
+
         from services.webhook.jira_webhook_handler import app
         client = TestClient(app)
         payload = {
@@ -460,12 +491,13 @@ class TestWebhookEndpoint:
         with patch('services.webhook.jira_webhook_handler.check_tz_pr_and_comment', new_callable=AsyncMock):
             with patch('services.webhook.jira_webhook_handler._run_testcase_generation', new_callable=AsyncMock):
                 with patch('services.webhook.jira_webhook_handler._run_task_group', new_callable=AsyncMock):
-                    response = client.post("/webhook/jira", json=payload)
+                    response = client.post("/webhook/jira", json=payload, headers=WEBHOOK_HEADERS)
                     data = response.json()
                     assert data.get('task_key') == 'TEST-WEBHOOK-001'
 
     def test_duplicate_event_ignored(self):
         from fastapi.testclient import TestClient
+
         from services.webhook.jira_webhook_handler import app
         client = TestClient(app)
         task_key = "TEST-WEBHOOK-DUP-001"
@@ -482,14 +514,15 @@ class TestWebhookEndpoint:
             with patch('services.webhook.jira_webhook_handler._run_testcase_generation', new_callable=AsyncMock):
                 with patch('services.webhook.jira_webhook_handler._run_task_group', new_callable=AsyncMock):
                     # First request
-                    client.post("/webhook/jira", json=payload)
+                    client.post("/webhook/jira", json=payload, headers=WEBHOOK_HEADERS)
                     # Duplicate request
-                    response2 = client.post("/webhook/jira", json=payload)
+                    response2 = client.post("/webhook/jira", json=payload, headers=WEBHOOK_HEADERS)
                     data2 = response2.json()
                     assert data2.get('status') == 'ignored'
 
     def test_no_task_key_returns_error(self):
         from fastapi.testclient import TestClient
+
         from services.webhook.jira_webhook_handler import app
         client = TestClient(app)
         payload = {
@@ -497,12 +530,13 @@ class TestWebhookEndpoint:
             "issue": {},
             "changelog": {}
         }
-        response = client.post("/webhook/jira", json=payload)
+        response = client.post("/webhook/jira", json=payload, headers=WEBHOOK_HEADERS)
         data = response.json()
         assert data.get('status') == 'error' or 'no task key' in data.get('reason', '')
 
     def test_settings_endpoint(self):
         from fastapi.testclient import TestClient
+
         from services.webhook.jira_webhook_handler import app
         client = TestClient(app)
         response = client.get("/settings")
@@ -512,8 +546,9 @@ class TestWebhookEndpoint:
 
     def test_20_fake_webhooks_all_responded(self):
         from fastapi.testclient import TestClient
+
         from services.webhook.jira_webhook_handler import app
-        from utils.database.task_db import get_task, init_db
+        from utils.database.task_db import init_db
         init_db()
         client = TestClient(app)
         task_keys = [f"TEST-WEBHOOK-{i:03d}" for i in range(1, 21)]
@@ -545,7 +580,7 @@ class TestWebhookEndpoint:
                 with patch('services.webhook.jira_webhook_handler._run_task_group', new_callable=AsyncMock):
                     success_count = 0
                     for payload in webhook_payloads:
-                        response = client.post("/webhook/jira", json=payload)
+                        response = client.post("/webhook/jira", json=payload, headers=WEBHOOK_HEADERS)
                         if response.status_code == 200:
                             data = response.json()
                             if data.get('status') in ('processing', 'ignored'):
@@ -554,6 +589,7 @@ class TestWebhookEndpoint:
 
     def test_20_fake_webhooks_written_to_db(self):
         from fastapi.testclient import TestClient
+
         from services.webhook.jira_webhook_handler import app
         from utils.database.task_db import get_task, init_db
         init_db()
@@ -579,7 +615,7 @@ class TestWebhookEndpoint:
             with patch('services.webhook.jira_webhook_handler._run_testcase_generation', new_callable=AsyncMock):
                 with patch('services.webhook.jira_webhook_handler._run_task_group', new_callable=AsyncMock):
                     for payload in webhook_payloads:
-                        client.post("/webhook/jira", json=payload)
+                        client.post("/webhook/jira", json=payload, headers=WEBHOOK_HEADERS)
                     db_tasks_found = sum(1 for k in task_keys if get_task(k) is not None)
                     assert db_tasks_found == 20
 
@@ -598,7 +634,7 @@ class TestConcurrency:
     """
 
     def test_queue_lock_singleton(self):
-        from services.webhook.jira_webhook_handler import _get_ai_queue_lock
+        from services.webhook.queue_manager import _get_ai_queue_lock
         lock1 = _get_ai_queue_lock()
         lock2 = _get_ai_queue_lock()
         assert lock1 is lock2
@@ -626,9 +662,7 @@ class TestConcurrency:
             assert task['compliance_score'] == expected_score
 
     def test_concurrent_tasks_all_completed(self):
-        from utils.database.task_db import (
-            get_task, mark_progressing, set_service1_done, set_service2_done
-        )
+        from utils.database.task_db import get_task, mark_progressing, set_service1_done, set_service2_done
         task_keys = [f"TEST-CONC-COMP-{i}" for i in range(1, 6)]
         for key in task_keys:
             mark_progressing(key, "READY TO TEST", datetime.now())
@@ -641,7 +675,7 @@ class TestConcurrency:
             assert task['task_status'] == 'completed'
 
     def test_queue_lock_sequential_workers(self):
-        from services.webhook.jira_webhook_handler import _get_ai_queue_lock
+        from services.webhook.queue_manager import _get_ai_queue_lock
 
         async def run_test():
             lock = _get_ai_queue_lock()
@@ -778,7 +812,7 @@ class TestDatabaseOperations:
         assert task['task_status'] == 'completed'
 
     def test_mark_returned(self):
-        from utils.database.task_db import get_task, mark_progressing, set_service1_done, mark_returned
+        from utils.database.task_db import get_task, mark_progressing, mark_returned, set_service1_done
         test_key = "TEST-DB-004"
         mark_progressing(test_key, "READY TO TEST")
         set_service1_done(test_key, compliance_score=40)
@@ -787,7 +821,7 @@ class TestDatabaseOperations:
         assert task['task_status'] == 'returned'
 
     def test_increment_return_count(self):
-        from utils.database.task_db import get_task, mark_progressing, increment_return_count
+        from utils.database.task_db import get_task, increment_return_count, mark_progressing
         test_key = "TEST-DB-005"
         mark_progressing(test_key, "READY TO TEST")
         increment_return_count(test_key)
@@ -799,8 +833,11 @@ class TestDatabaseOperations:
 
     def test_reset_service_statuses(self):
         from utils.database.task_db import (
-            get_task, mark_progressing, set_service1_done,
-            mark_returned, reset_service_statuses
+            get_task,
+            mark_progressing,
+            mark_returned,
+            reset_service_statuses,
+            set_service1_done,
         )
         test_key = "TEST-DB-006"
         mark_progressing(test_key, "READY TO TEST")
@@ -836,7 +873,7 @@ class TestDatabaseOperations:
         assert task is None
 
     def test_mark_error(self):
-        from utils.database.task_db import get_task, mark_progressing, mark_error
+        from utils.database.task_db import get_task, mark_error, mark_progressing
         test_key = "TEST-DB-009"
         mark_progressing(test_key, "READY TO TEST")
         mark_error(test_key, "Critical system failure")
@@ -846,8 +883,11 @@ class TestDatabaseOperations:
 
     def test_state_machine_full_flow(self):
         from utils.database.task_db import (
-            get_task, mark_progressing, set_service1_done,
-            set_service2_done, mark_completed
+            get_task,
+            mark_completed,
+            mark_progressing,
+            set_service1_done,
+            set_service2_done,
         )
         test_key = "TEST-DB-010"
         mark_progressing(test_key, "READY TO TEST")
@@ -889,8 +929,8 @@ class TestDatabaseOperations:
     # --- test_delete_task_flow tests ---
 
     def test_delete_task_then_get_returns_none(self):
-        from utils.database.task_db import get_task, delete_task, mark_progressing
         from utils.database.runtime import connect_processing_db
+        from utils.database.task_db import delete_task, get_task, mark_progressing
         task_key = "TEST-DELETE-001"
         mark_progressing(task_key, "Ready to Test", datetime.now())
         task = get_task(task_key)
@@ -909,7 +949,7 @@ class TestDatabaseOperations:
         assert row is None
 
     def test_delete_then_recreate_as_new(self):
-        from utils.database.task_db import get_task, delete_task, mark_progressing
+        from utils.database.task_db import delete_task, get_task, mark_progressing
         task_key = "TEST-DELETE-RECREATE"
         mark_progressing(task_key, "Ready to Test", datetime.now())
         delete_task(task_key)
@@ -920,7 +960,7 @@ class TestDatabaseOperations:
         assert task_new['return_count'] == 0
 
     def test_multiple_delete_calls_safe(self):
-        from utils.database.task_db import get_task, delete_task, mark_progressing
+        from utils.database.task_db import delete_task, mark_progressing
         task_key = "TEST-DELETE-MULTI"
         mark_progressing(task_key, "Ready to Test", datetime.now())
         success1 = delete_task(task_key)
@@ -931,7 +971,7 @@ class TestDatabaseOperations:
         assert success3 is False
 
     def test_delete_with_concurrent_access_pattern(self):
-        from utils.database.task_db import get_task, delete_task, mark_progressing
+        from utils.database.task_db import delete_task, get_task, mark_progressing
         task_key = "TEST-DELETE-CONC"
         mark_progressing(task_key, "Ready to Test", datetime.now())
         success = delete_task(task_key)
@@ -967,8 +1007,8 @@ class TestServiceOrchestration:
         assert task['service1_status'] == 'done'
 
     def test_low_score_should_block_service2(self):
-        from utils.database.task_db import get_task, mark_progressing, set_service1_done
         from config.app_settings import get_app_settings
+        from utils.database.task_db import get_task, mark_progressing, set_service1_done
         settings = get_app_settings()
         test_key = "TEST-ORDER-002"
         mark_progressing(test_key, "READY TO TEST")
@@ -985,7 +1025,7 @@ class TestServiceOrchestration:
         assert task['service1_status'] == 'pending'
 
     def test_returned_task_service2_not_run(self):
-        from utils.database.task_db import get_task, mark_progressing, set_service1_done, mark_returned
+        from utils.database.task_db import get_task, mark_progressing, mark_returned, set_service1_done
         test_key = "TEST-ORDER-004"
         mark_progressing(test_key, "READY TO TEST")
         set_service1_done(test_key, compliance_score=30)
@@ -995,8 +1035,11 @@ class TestServiceOrchestration:
 
     def test_recheck_flow_reset_to_progressing(self):
         from utils.database.task_db import (
-            get_task, mark_progressing, set_service1_done,
-            mark_returned, reset_service_statuses
+            get_task,
+            mark_progressing,
+            mark_returned,
+            reset_service_statuses,
+            set_service1_done,
         )
         test_key = "TEST-ORDER-005"
         mark_progressing(test_key, "READY TO TEST")
@@ -1027,8 +1070,8 @@ class TestServiceOrchestration:
     # --- test_8 testcase webhook handler ---
 
     def test_testcase_trigger_status_ready_to_test(self):
-        from services.webhook.testcase_webhook_handler import is_testcase_trigger_status
         from config.app_settings import get_app_settings
+        from services.webhook.testcase_webhook_handler import is_testcase_trigger_status
         settings = get_app_settings(force_reload=True)
         if settings.testcase_generator.auto_comment_enabled:
             assert is_testcase_trigger_status("READY TO TEST") is True
@@ -1160,25 +1203,25 @@ class TestErrorHandling:
 
     def test_webhook_invalid_payload_no_crash(self):
         from fastapi.testclient import TestClient
+
         from services.webhook.jira_webhook_handler import app
         client = TestClient(app)
-        response = client.post("/webhook/jira", json={"random": "data"})
+        response = client.post("/webhook/jira", json={"random": "data"}, headers=WEBHOOK_HEADERS)
         assert response.status_code in [200, 422]
 
     def test_webhook_empty_payload_no_crash(self):
         from fastapi.testclient import TestClient
+
         from services.webhook.jira_webhook_handler import app
         client = TestClient(app)
-        response = client.post("/webhook/jira", json={})
+        response = client.post("/webhook/jira", json={}, headers=WEBHOOK_HEADERS)
         assert response.status_code in [200, 422]
 
     # --- Resilience test_4: both keys error retry ---
 
     def test_service1_blocked_retry_flow(self):
-        from utils.database.task_db import (
-            mark_progressing, set_service1_blocked, get_task, upsert_task
-        )
-        from services.webhook.jira_webhook_handler import _retry_blocked_task
+        from services.webhook.retry_scheduler import _retry_blocked_task
+        from utils.database.task_db import get_task, mark_progressing, set_service1_blocked, upsert_task
         task_key = "TEST-RETRY-KEY1-001"
         mark_progressing(task_key, "READY TO TEST")
         set_service1_blocked(task_key, "AI timeout: 429 rate limit", retry_minutes=0)
@@ -1197,10 +1240,14 @@ class TestErrorHandling:
                 loop.close()
 
     def test_service2_blocked_retry_flow(self):
+        from services.webhook.retry_scheduler import _retry_blocked_task
         from utils.database.task_db import (
-            mark_progressing, set_service1_done, set_service2_blocked, get_task, upsert_task
+            get_task,
+            mark_progressing,
+            set_service1_done,
+            set_service2_blocked,
+            upsert_task,
         )
-        from services.webhook.jira_webhook_handler import _retry_blocked_task
         task_key = "TEST-RETRY-KEY2-001"
         mark_progressing(task_key, "READY TO TEST")
         set_service1_done(task_key, compliance_score=80)
@@ -1220,11 +1267,14 @@ class TestErrorHandling:
                 loop.close()
 
     def test_both_keys_error_service1_stays_blocked_on_retry(self):
+        from services.webhook.retry_scheduler import _retry_blocked_task
         from utils.database.task_db import (
-            mark_progressing, set_service1_blocked, set_service2_blocked,
-            get_task, upsert_task
+            get_task,
+            mark_progressing,
+            set_service1_blocked,
+            set_service2_blocked,
+            upsert_task,
         )
-        from services.webhook.jira_webhook_handler import _retry_blocked_task
         task_key = "TEST-RETRY-BOTH-001"
         mark_progressing(task_key, "READY TO TEST")
         set_service1_blocked(task_key, "AI timeout: ikkala key ham ishlamadi", retry_minutes=0)
@@ -1253,6 +1303,7 @@ class TestErrorHandling:
 
     def test_webhook_null_task_key_graceful(self):
         from fastapi.testclient import TestClient
+
         from services.webhook.jira_webhook_handler import app
         client = TestClient(app)
         payload = {
@@ -1260,7 +1311,7 @@ class TestErrorHandling:
             "issue": {"key": None},
             "changelog": {}
         }
-        response = client.post("/webhook/jira", json=payload)
+        response = client.post("/webhook/jira", json=payload, headers=WEBHOOK_HEADERS)
         if response.status_code == 200:
             data = response.json()
             assert data.get('status') in ['error', 'ignored']
@@ -1326,7 +1377,7 @@ class TestSettingsManagement:
         assert s1 is s2
 
     def test_force_reload_returns_app_settings(self):
-        from config.app_settings import get_app_settings, AppSettings
+        from config.app_settings import AppSettings, get_app_settings
         s3 = get_app_settings(force_reload=True)
         assert isinstance(s3, AppSettings)
 
@@ -1419,7 +1470,7 @@ class TestDebugCapability:
 
 
     def test_db_error_message_saved(self):
-        from utils.database.task_db import mark_error, get_task, mark_progressing
+        from utils.database.task_db import get_task, mark_error, mark_progressing
         mark_progressing("TEST-DEBUG-002", "READY TO TEST")
         mark_error("TEST-DEBUG-002", "Gemini API xatosi: rate limit exceeded")
         task = get_task("TEST-DEBUG-002")
@@ -1427,14 +1478,14 @@ class TestDebugCapability:
         assert task['error_message'] == "Gemini API xatosi: rate limit exceeded"
 
     def test_service1_error_saved_separately(self):
-        from utils.database.task_db import mark_progressing, set_service1_error, get_task
+        from utils.database.task_db import get_task, mark_progressing, set_service1_error
         mark_progressing("TEST-DEBUG-003", "READY TO TEST")
         set_service1_error("TEST-DEBUG-003", "PR fetch timeout: 30s")
         task = get_task("TEST-DEBUG-003")
         assert task['service1_error'] == "PR fetch timeout: 30s"
 
     def test_service2_error_saved_separately(self):
-        from utils.database.task_db import mark_progressing, set_service1_error, set_service2_error, get_task
+        from utils.database.task_db import get_task, mark_progressing, set_service1_error, set_service2_error
         mark_progressing("TEST-DEBUG-004", "READY TO TEST")
         set_service1_error("TEST-DEBUG-004", "PR fetch timeout: 30s")
         set_service2_error("TEST-DEBUG-004", "JSON parse xatosi")
@@ -1442,7 +1493,7 @@ class TestDebugCapability:
         assert task['service2_error'] == "JSON parse xatosi"
 
     def test_updated_at_timestamp_present(self):
-        from utils.database.task_db import mark_progressing, set_service2_error, get_task, set_service1_error
+        from utils.database.task_db import get_task, mark_progressing, set_service1_error, set_service2_error
         mark_progressing("TEST-DEBUG-005", "READY TO TEST")
         set_service1_error("TEST-DEBUG-005", "err")
         set_service2_error("TEST-DEBUG-005", "JSON parse xatosi")
@@ -1450,7 +1501,7 @@ class TestDebugCapability:
         assert task.get('updated_at') is not None
 
     def test_last_processed_at_present(self):
-        from utils.database.task_db import mark_progressing, get_task
+        from utils.database.task_db import get_task, mark_progressing
         mark_progressing("TEST-DEBUG-006", "READY TO TEST")
         task = get_task("TEST-DEBUG-006")
         assert task.get('last_processed_at') is not None
@@ -1502,22 +1553,22 @@ class TestBlockedRetry:
     """
 
     def test_classify_error_from_webhook_handler(self):
-        from services.webhook.jira_webhook_handler import _classify_error
+        from services.webhook.error_handler import _classify_error
         result = _classify_error("PR topilmadi: no PR found")
         assert result == 'pr_not_found'
 
     def test_classify_error_timeout_from_handler(self):
-        from services.webhook.jira_webhook_handler import _classify_error
+        from services.webhook.error_handler import _classify_error
         result = _classify_error("AI timeout: 429 rate limit exceeded")
         assert result == 'ai_timeout'
 
     def test_classify_error_both_keys_from_handler(self):
-        from services.webhook.jira_webhook_handler import _classify_error
+        from services.webhook.error_handler import _classify_error
         result = _classify_error("AI xatolik: ikkala key ham ishlamadi")
         assert result == 'ai_timeout'
 
     def test_mark_blocked_task_status(self):
-        from utils.database.task_db import mark_progressing, mark_blocked, get_task
+        from utils.database.task_db import get_task, mark_blocked, mark_progressing
         task_id = "TEST-BLOCKED-001"
         mark_progressing(task_id, "READY TO TEST")
         mark_blocked(task_id, "AI timeout: 60s", retry_minutes=5)
@@ -1526,7 +1577,7 @@ class TestBlockedRetry:
         assert task['task_status'] == 'blocked'
 
     def test_mark_blocked_reason_saved(self):
-        from utils.database.task_db import mark_progressing, mark_blocked, get_task
+        from utils.database.task_db import get_task, mark_blocked, mark_progressing
         task_id = "TEST-BLOCKED-002"
         mark_progressing(task_id, "READY TO TEST")
         mark_blocked(task_id, "AI timeout: 60s", retry_minutes=5)
@@ -1534,7 +1585,7 @@ class TestBlockedRetry:
         assert task.get('block_reason') == 'AI timeout: 60s'
 
     def test_mark_blocked_blocked_at_saved(self):
-        from utils.database.task_db import mark_progressing, mark_blocked, get_task
+        from utils.database.task_db import get_task, mark_blocked, mark_progressing
         task_id = "TEST-BLOCKED-003"
         mark_progressing(task_id, "READY TO TEST")
         mark_blocked(task_id, "AI timeout: 60s", retry_minutes=5)
@@ -1542,7 +1593,7 @@ class TestBlockedRetry:
         assert task.get('blocked_at') is not None
 
     def test_mark_blocked_retry_at_saved(self):
-        from utils.database.task_db import mark_progressing, mark_blocked, get_task
+        from utils.database.task_db import get_task, mark_blocked, mark_progressing
         task_id = "TEST-BLOCKED-004"
         mark_progressing(task_id, "READY TO TEST")
         mark_blocked(task_id, "AI timeout: 60s", retry_minutes=5)
@@ -1550,7 +1601,7 @@ class TestBlockedRetry:
         assert task.get('blocked_retry_at') is not None
 
     def test_set_service1_blocked_status(self):
-        from utils.database.task_db import mark_progressing, set_service1_blocked, get_task
+        from utils.database.task_db import get_task, mark_progressing, set_service1_blocked
         task_id = "TEST-BLOCKED-005"
         mark_progressing(task_id, "READY TO TEST")
         set_service1_blocked(task_id, "429 rate limit", retry_minutes=3)
@@ -1558,7 +1609,7 @@ class TestBlockedRetry:
         assert task['service1_status'] == 'blocked'
 
     def test_set_service1_blocked_service2_stays_pending(self):
-        from utils.database.task_db import mark_progressing, set_service1_blocked, get_task
+        from utils.database.task_db import get_task, mark_progressing, set_service1_blocked
         task_id = "TEST-BLOCKED-006"
         mark_progressing(task_id, "READY TO TEST")
         set_service1_blocked(task_id, "429 rate limit", retry_minutes=3)
@@ -1566,7 +1617,7 @@ class TestBlockedRetry:
         assert task['service2_status'] == 'pending'
 
     def test_set_service1_blocked_task_becomes_blocked(self):
-        from utils.database.task_db import mark_progressing, set_service1_blocked, get_task
+        from utils.database.task_db import get_task, mark_progressing, set_service1_blocked
         task_id = "TEST-BLOCKED-007"
         mark_progressing(task_id, "READY TO TEST")
         set_service1_blocked(task_id, "429 rate limit", retry_minutes=3)
@@ -1574,9 +1625,7 @@ class TestBlockedRetry:
         assert task['task_status'] == 'blocked'
 
     def test_set_service2_blocked_service1_stays_done(self):
-        from utils.database.task_db import (
-            mark_progressing, set_service1_done, set_service2_blocked, get_task
-        )
+        from utils.database.task_db import get_task, mark_progressing, set_service1_done, set_service2_blocked
         task_id = "TEST-BLOCKED-008"
         mark_progressing(task_id, "READY TO TEST")
         set_service1_done(task_id, compliance_score=80)
@@ -1585,9 +1634,7 @@ class TestBlockedRetry:
         assert task['service1_status'] == 'done'
 
     def test_set_service2_blocked_status(self):
-        from utils.database.task_db import (
-            mark_progressing, set_service1_done, set_service2_blocked, get_task
-        )
+        from utils.database.task_db import get_task, mark_progressing, set_service1_done, set_service2_blocked
         task_id = "TEST-BLOCKED-009"
         mark_progressing(task_id, "READY TO TEST")
         set_service1_done(task_id, compliance_score=80)
@@ -1596,7 +1643,7 @@ class TestBlockedRetry:
         assert task['service2_status'] == 'blocked'
 
     def test_set_service1_skip_status(self):
-        from utils.database.task_db import mark_progressing, set_service1_skip, get_task
+        from utils.database.task_db import get_task, mark_progressing, set_service1_skip
         task_id = "TEST-BLOCKED-010"
         mark_progressing(task_id, "READY TO TEST")
         set_service1_skip(task_id)
@@ -1604,7 +1651,7 @@ class TestBlockedRetry:
         assert task['service1_status'] == 'skip'
 
     def test_set_service1_skip_score_100(self):
-        from utils.database.task_db import mark_progressing, set_service1_skip, get_task
+        from utils.database.task_db import get_task, mark_progressing, set_service1_skip
         task_id = "TEST-BLOCKED-011"
         mark_progressing(task_id, "READY TO TEST")
         set_service1_skip(task_id)
@@ -1612,7 +1659,7 @@ class TestBlockedRetry:
         assert task.get('compliance_score') == 100
 
     def test_set_service1_skip_flag(self):
-        from utils.database.task_db import mark_progressing, set_service1_skip, get_task
+        from utils.database.task_db import get_task, mark_progressing, set_service1_skip
         task_id = "TEST-BLOCKED-012"
         mark_progressing(task_id, "READY TO TEST")
         set_service1_skip(task_id)
@@ -1620,7 +1667,7 @@ class TestBlockedRetry:
         assert task.get('skip_detected') == 1
 
     def test_set_service1_error_keep_service2_pending(self):
-        from utils.database.task_db import mark_progressing, set_service1_error, get_task
+        from utils.database.task_db import get_task, mark_progressing, set_service1_error
         task_id = "TEST-BLOCKED-013"
         mark_progressing(task_id, "READY TO TEST")
         set_service1_error(task_id, "PR topilmadi", keep_service2_pending=True)
@@ -1629,9 +1676,7 @@ class TestBlockedRetry:
         assert task['service2_status'] == 'pending'
 
     def test_mark_returned_service2_stays_pending(self):
-        from utils.database.task_db import (
-            mark_progressing, set_service1_done, mark_returned, get_task
-        )
+        from utils.database.task_db import get_task, mark_progressing, mark_returned, set_service1_done
         task_id = "TEST-BLOCKED-014"
         mark_progressing(task_id, "READY TO TEST")
         set_service1_done(task_id, compliance_score=40)
@@ -1642,7 +1687,10 @@ class TestBlockedRetry:
 
     def test_get_blocked_tasks_ready_for_retry(self):
         from utils.database.task_db import (
-            mark_progressing, mark_blocked, get_blocked_tasks_ready_for_retry, upsert_task
+            get_blocked_tasks_ready_for_retry,
+            mark_blocked,
+            mark_progressing,
+            upsert_task,
         )
         task_id = "TEST-BLOCKED-015"
         mark_progressing(task_id, "READY TO TEST")
@@ -1654,7 +1702,7 @@ class TestBlockedRetry:
         assert found
 
     def test_delete_task_removes_from_db(self):
-        from utils.database.task_db import mark_progressing, delete_task, get_task
+        from utils.database.task_db import delete_task, get_task, mark_progressing
         task_id = "TEST-BLOCKED-016"
         mark_progressing(task_id, "READY TO TEST")
         assert get_task(task_id) is not None
@@ -1721,7 +1769,7 @@ class TestBlockedRetry:
     # --- Resilience test_3: blocked tasks key1/key2 ---
 
     def test_service1_blocked_key1_error_simulation(self):
-        from utils.database.task_db import mark_progressing, set_service1_blocked, get_task
+        from utils.database.task_db import get_task, mark_progressing, set_service1_blocked
         task_key = "TEST-BLOCKED-KEY1-001"
         mark_progressing(task_key, "READY TO TEST")
         set_service1_blocked(task_key, "AI timeout: 429 rate limit exceeded", retry_minutes=1)
@@ -1731,9 +1779,7 @@ class TestBlockedRetry:
         assert task['task_status'] == 'blocked'
 
     def test_service2_blocked_key2_error_simulation(self):
-        from utils.database.task_db import (
-            mark_progressing, set_service1_done, set_service2_blocked, get_task
-        )
+        from utils.database.task_db import get_task, mark_progressing, set_service1_done, set_service2_blocked
         task_key = "TEST-BLOCKED-KEY2-001"
         mark_progressing(task_key, "READY TO TEST")
         set_service1_done(task_key, compliance_score=80)
@@ -1743,9 +1789,7 @@ class TestBlockedRetry:
         assert task['service2_status'] == 'blocked'
 
     def test_both_keys_error_both_blocked(self):
-        from utils.database.task_db import (
-            mark_progressing, set_service1_blocked, set_service2_blocked, get_task
-        )
+        from utils.database.task_db import get_task, mark_progressing, set_service1_blocked, set_service2_blocked
         task_key = "TEST-BLOCKED-BOTH-001"
         mark_progressing(task_key, "READY TO TEST")
         set_service1_blocked(task_key, "AI timeout: 429 rate limit", retry_minutes=1)
@@ -1756,9 +1800,7 @@ class TestBlockedRetry:
         assert task['service2_status'] == 'blocked'
 
     def test_blocked_retry_at_is_in_future(self):
-        from utils.database.task_db import (
-            mark_progressing, set_service1_blocked, set_service2_blocked, get_task
-        )
+        from utils.database.task_db import get_task, mark_progressing, set_service1_blocked, set_service2_blocked
         task_key = "TEST-BLOCKED-FUTURE-001"
         mark_progressing(task_key, "READY TO TEST")
         set_service1_blocked(task_key, "AI timeout", retry_minutes=5)
@@ -1771,8 +1813,11 @@ class TestBlockedRetry:
 
     def test_get_blocked_tasks_includes_past_retry(self):
         from utils.database.task_db import (
-            mark_progressing, set_service1_blocked, set_service2_blocked,
-            get_blocked_tasks_ready_for_retry, upsert_task
+            get_blocked_tasks_ready_for_retry,
+            mark_progressing,
+            set_service1_blocked,
+            set_service2_blocked,
+            upsert_task,
         )
         task_key1 = "TEST-BLOCKED-PAST-001"
         task_key2 = "TEST-BLOCKED-PAST-002"
@@ -1789,117 +1834,19 @@ class TestBlockedRetry:
 
 
 # ============================================================================
-# CLASS 10: TestGeminiKeyFallback
+# CLASS 10: TestService1ErrorService2Flow
 # ============================================================================
 
-class TestGeminiKeyFallback:
+class TestService1ErrorService2Flow:
     """
-    Gemini Key Freeze logikasi va Service2 TZ-only flow (test_12)
-    - GeminiHelper KEY_1 freeze logikasi
-    - KEY_1 unfreeze (muddat tugashi)
+    Service2 TZ-only flow (test_12)
     - Service1 error → Service2 pending holat
+    (Eski MockGeminiHelper testlari o'chirildi: ular allaqachon o'chirilgan
+    2-kalitli freeze dizaynini tekshirardi; joriy GeminiHelper N-kalit modelida.)
     """
-
-    class MockGeminiHelper:
-        KEY1_FREEZE_DURATION = 600
-
-        def __init__(self):
-            self.api_key_1 = "test_key_1"
-            self.api_key_2 = "test_key_2"
-            self.current_key = self.api_key_1
-            self.using_fallback = False
-            self._key1_frozen_until = None
-
-        def _is_key1_frozen(self):
-            if self._key1_frozen_until is None:
-                return False
-            return time.time() < self._key1_frozen_until
-
-        def _freeze_key1(self):
-            self._key1_frozen_until = time.time() + self.KEY1_FREEZE_DURATION
-
-        def _unfreeze_key1(self):
-            self._key1_frozen_until = None
-            self.using_fallback = False
-            self.current_key = self.api_key_1
-
-        def _switch_to_fallback(self):
-            if not self.api_key_2 or self.using_fallback:
-                return False
-            self.current_key = self.api_key_2
-            self.using_fallback = True
-            return True
-
-    def test_key1_not_frozen_initially(self):
-        helper = self.MockGeminiHelper()
-        assert not helper._is_key1_frozen()
-
-    def test_key1_frozen_after_freeze(self):
-        helper = self.MockGeminiHelper()
-        helper._freeze_key1()
-        assert helper._is_key1_frozen()
-
-    def test_frozen_until_timestamp_saved(self):
-        helper = self.MockGeminiHelper()
-        helper._freeze_key1()
-        assert helper._key1_frozen_until is not None
-
-    def test_switch_to_fallback_success(self):
-        helper = self.MockGeminiHelper()
-        helper._freeze_key1()
-        assert helper._switch_to_fallback() is True
-
-    def test_current_key_is_key2_after_fallback(self):
-        helper = self.MockGeminiHelper()
-        helper._freeze_key1()
-        helper._switch_to_fallback()
-        assert helper.current_key == "test_key_2"
-
-    def test_using_fallback_true_after_switch(self):
-        helper = self.MockGeminiHelper()
-        helper._freeze_key1()
-        helper._switch_to_fallback()
-        assert helper.using_fallback is True
-
-    def test_repeated_fallback_blocked(self):
-        helper = self.MockGeminiHelper()
-        helper._freeze_key1()
-        helper._switch_to_fallback()
-        assert helper._switch_to_fallback() is False
-
-    def test_key1_unfrozen_after_unfreeze(self):
-        helper = self.MockGeminiHelper()
-        helper._freeze_key1()
-        helper._unfreeze_key1()
-        assert not helper._is_key1_frozen()
-
-    def test_returns_to_key1_after_unfreeze(self):
-        helper = self.MockGeminiHelper()
-        helper._freeze_key1()
-        helper._switch_to_fallback()
-        helper._unfreeze_key1()
-        assert helper.current_key == "test_key_1"
-        assert helper.using_fallback is False
-
-    def test_freeze_duration_expiry(self):
-        helper = self.MockGeminiHelper()
-        helper._freeze_key1()
-        helper._key1_frozen_until = time.time() - 1  # Expired
-        assert not helper._is_key1_frozen()
-
-    def test_no_key2_blocks_fallback(self):
-        helper = self.MockGeminiHelper()
-        helper.api_key_2 = None
-        helper._freeze_key1()
-        assert helper._switch_to_fallback() is False
-
-    def test_freeze_duration_constant(self):
-        assert self.MockGeminiHelper.KEY1_FREEZE_DURATION == 600
-
-    # --- Service2 TZ-only flow ---
 
     def test_service1_error_pr_not_found_keeps_s2_pending(self):
-        from utils.database.task_db import mark_progressing, set_service1_error, get_task
+        from utils.database.task_db import get_task, mark_progressing, set_service1_error
         task_key = "TEST-FREEZE-001"
         mark_progressing(task_key, "READY TO TEST", datetime.now())
         set_service1_error(task_key, "PR topilmadi: no PR found for branch", keep_service2_pending=True)
@@ -1908,7 +1855,7 @@ class TestGeminiKeyFallback:
         assert task_data['service2_status'] == 'pending'
 
     def test_service1_error_unknown_sets_s2_error(self):
-        from utils.database.task_db import mark_progressing, set_service1_error, get_task
+        from utils.database.task_db import get_task, mark_progressing, set_service1_error
         task_key = "TEST-FREEZE-002"
         mark_progressing(task_key, "READY TO TEST", datetime.now())
         set_service1_error(task_key, "Unknown critical error")
@@ -1916,9 +1863,7 @@ class TestGeminiKeyFallback:
         assert task_data['service2_status'] == 'error'
 
     def test_service1_error_pr_then_service2_done_completes(self):
-        from utils.database.task_db import (
-            mark_progressing, set_service1_error, set_service2_done, get_task
-        )
+        from utils.database.task_db import get_task, mark_progressing, set_service1_error, set_service2_done
         task_key = "TEST-FREEZE-003"
         mark_progressing(task_key, "READY TO TEST", datetime.now())
         set_service1_error(task_key, "PR topilmadi", keep_service2_pending=True)
@@ -1961,9 +1906,7 @@ class TestDeleteAndWebhook:
         return "unknown"
 
     def test_webhook_after_manual_delete_should_process(self):
-        from utils.database.task_db import (
-            get_task, delete_task, mark_progressing, mark_completed
-        )
+        from utils.database.task_db import delete_task, get_task, mark_completed, mark_progressing
         task_key = "TEST-WEBHOOK-AFTERDEL-001"
         status = "Ready to Test"
         mark_progressing(task_key, status, datetime.now())
@@ -1979,9 +1922,7 @@ class TestDeleteAndWebhook:
         delete_task(task_key)
 
     def test_webhook_completed_task_without_delete_is_duplicate(self):
-        from utils.database.task_db import (
-            get_task, delete_task, mark_progressing, mark_completed
-        )
+        from utils.database.task_db import delete_task, get_task, mark_completed, mark_progressing
         task_key = "TEST-WEBHOOK-AFTERDEL-002"
         status = "Ready to Test"
         mark_progressing(task_key, status, datetime.now())
@@ -1994,9 +1935,7 @@ class TestDeleteAndWebhook:
         delete_task(task_key)
 
     def test_real_problem_scenario_delete_then_webhook(self):
-        from utils.database.task_db import (
-            get_task, delete_task, mark_progressing, mark_completed
-        )
+        from utils.database.task_db import delete_task, get_task, mark_completed, mark_progressing
         task_key = "TEST-WEBHOOK-AFTERDEL-003"
         status = "Ready to Test"
         mark_progressing(task_key, status, datetime.now())
@@ -2225,7 +2164,11 @@ class TestReturnedReentry:
 
     def test_returned_reentry_increments_return_count(self):
         from utils.database.task_db import (
-            get_task, mark_progressing, set_service1_done, mark_returned, increment_return_count
+            get_task,
+            increment_return_count,
+            mark_progressing,
+            mark_returned,
+            set_service1_done,
         )
         task_key = "TEST-REENTRY-001"
         mark_progressing(task_key, "READY TO TEST")
@@ -2237,8 +2180,11 @@ class TestReturnedReentry:
 
     def test_returned_reentry_reset_then_progressing(self):
         from utils.database.task_db import (
-            get_task, mark_progressing, set_service1_done, mark_returned,
-            reset_service_statuses
+            get_task,
+            mark_progressing,
+            mark_returned,
+            reset_service_statuses,
+            set_service1_done,
         )
         task_key = "TEST-REENTRY-002"
         mark_progressing(task_key, "READY TO TEST")
@@ -2252,9 +2198,7 @@ class TestReturnedReentry:
         assert task['service2_status'] == 'pending'
 
     def test_mark_returned_pr_not_merged_task_status(self):
-        from utils.database.task_db import (
-            get_task, mark_progressing, mark_returned_pr_not_merged
-        )
+        from utils.database.task_db import get_task, mark_progressing, mark_returned_pr_not_merged
         task_key = "TEST-REENTRY-003"
         mark_progressing(task_key, "READY TO TEST")
         mark_returned_pr_not_merged(task_key)
@@ -2263,9 +2207,7 @@ class TestReturnedReentry:
 
     def test_mark_returned_pr_not_merged_s1_pending(self):
         # PR merged emas: service1 pending qoladi (qaytib kelganda re-check qiladi)
-        from utils.database.task_db import (
-            get_task, mark_progressing, mark_returned_pr_not_merged
-        )
+        from utils.database.task_db import get_task, mark_progressing, mark_returned_pr_not_merged
         task_key = "TEST-REENTRY-004"
         mark_progressing(task_key, "READY TO TEST")
         mark_returned_pr_not_merged(task_key)
@@ -2273,9 +2215,7 @@ class TestReturnedReentry:
         assert task['service1_status'] == 'pending'
 
     def test_mark_returned_pr_not_merged_score_cleared(self):
-        from utils.database.task_db import (
-            get_task, mark_progressing, set_service1_done, mark_returned_pr_not_merged
-        )
+        from utils.database.task_db import get_task, mark_progressing, mark_returned_pr_not_merged, set_service1_done
         task_key = "TEST-REENTRY-005"
         mark_progressing(task_key, "READY TO TEST")
         set_service1_done(task_key, compliance_score=45)
@@ -2285,9 +2225,7 @@ class TestReturnedReentry:
 
     def test_mark_returned_service1_done_s2_pending(self):
         # Score past → service1=done, service2=pending (kutilgan biznes-mantiq)
-        from utils.database.task_db import (
-            get_task, mark_progressing, set_service1_done, mark_returned
-        )
+        from utils.database.task_db import get_task, mark_progressing, mark_returned, set_service1_done
         task_key = "TEST-REENTRY-006"
         mark_progressing(task_key, "READY TO TEST")
         set_service1_done(task_key, compliance_score=30)
@@ -2300,15 +2238,16 @@ class TestReturnedReentry:
     def test_returned_task_webhook_reentry_flow(self):
         # Webhook: returned task qayta kelganda to'g'ri holat o'tishi
         from fastapi.testclient import TestClient
+
         from services.webhook.jira_webhook_handler import app
-        from utils.database.task_db import (
-            get_task, mark_progressing, set_service1_done, mark_returned
-        )
+        from utils.auth.auth_db import get_company_by_code
+        from utils.database.task_db import get_task, mark_progressing, mark_returned, set_service1_done
+        company_id = get_company_by_code("pytestco")["id"]
         task_key = "TEST-REENTRY-WEBHOOK-001"
-        mark_progressing(task_key, "READY TO TEST")
-        set_service1_done(task_key, compliance_score=30)
-        mark_returned(task_key)
-        assert get_task(task_key)['task_status'] == 'returned'
+        mark_progressing(task_key, "READY TO TEST", company_id=company_id)
+        set_service1_done(task_key, compliance_score=30, company_id=company_id)
+        mark_returned(task_key, company_id=company_id)
+        assert get_task(task_key, company_id=company_id)['task_status'] == 'returned'
 
         client = TestClient(app)
         payload = {
@@ -2319,10 +2258,10 @@ class TestReturnedReentry:
             }
         }
         with patch('services.webhook.jira_webhook_handler._run_task_group', new_callable=AsyncMock):
-            response = client.post("/webhook/jira", json=payload)
+            response = client.post("/webhook/jira", json=payload, headers=WEBHOOK_HEADERS)
         data = response.json()
         assert data.get('status') == 'processing'
-        task = get_task(task_key)
+        task = get_task(task_key, company_id=company_id)
         assert task['task_status'] == 'progressing'
         assert task['return_count'] >= 1
 
@@ -2452,7 +2391,7 @@ class TestSkipCodeDetection:
         from services.webhook.skip_detector import _check_skip_code
         writer = self._make_writer_with_comments([self._make_comment("AI_SKIP")])
         with patch('config.app_settings.get_app_settings') as mock_fn:
-            mock_fn.return_value.tz_pr_checker.max_skip_check_comments = 5
+            mock_fn.return_value.webhook_tz_pr.max_skip_check_comments = 5
             result = self._run_async(_check_skip_code("TEST-SK-001", "AI_SKIP", writer))
         assert result is True
 
@@ -2460,7 +2399,7 @@ class TestSkipCodeDetection:
         from services.webhook.skip_detector import _check_skip_code
         writer = self._make_writer_with_comments([self._make_comment("Normal comment")])
         with patch('config.app_settings.get_app_settings') as mock_fn:
-            mock_fn.return_value.tz_pr_checker.max_skip_check_comments = 5
+            mock_fn.return_value.webhook_tz_pr.max_skip_check_comments = 5
             result = self._run_async(_check_skip_code("TEST-SK-002", "AI_SKIP", writer))
         assert result is False
 
@@ -2468,7 +2407,7 @@ class TestSkipCodeDetection:
         from services.webhook.skip_detector import _check_skip_code
         writer = self._make_writer_with_comments([self._make_comment("ai_skip")])
         with patch('config.app_settings.get_app_settings') as mock_fn:
-            mock_fn.return_value.tz_pr_checker.max_skip_check_comments = 5
+            mock_fn.return_value.webhook_tz_pr.max_skip_check_comments = 5
             result = self._run_async(_check_skip_code("TEST-SK-003", "AI_SKIP", writer))
         assert result is True
 
@@ -2480,16 +2419,17 @@ class TestSkipCodeDetection:
         assert result is False
 
     def test_skip_code_only_checks_last_n_comments(self):
-        # max_skip_check_comments=2: skip code 3-chi commentda — topilmasligi kerak
+        # max_skip_check_comments=2: skip code ESKI (birinchi) commentda —
+        # faqat OXIRGI 2 ta comment tekshirilgani uchun topilmasligi kerak
         from services.webhook.skip_detector import _check_skip_code
         comments = [
+            self._make_comment("AI_SKIP"),  # eng eski — oynadan tashqarida
             self._make_comment("Normal 1"),
             self._make_comment("Normal 2"),
-            self._make_comment("AI_SKIP"),  # 3rd — max_comments=2 da ko'rinmaydi
         ]
         writer = self._make_writer_with_comments(comments)
         with patch('config.app_settings.get_app_settings') as mock_fn:
-            mock_fn.return_value.tz_pr_checker.max_skip_check_comments = 2
+            mock_fn.return_value.webhook_tz_pr.max_skip_check_comments = 2
             result = self._run_async(_check_skip_code("TEST-SK-005", "AI_SKIP", writer))
         assert result is False
 
@@ -2516,6 +2456,7 @@ class TestWebhookMultiAgentEngine:
 
     def test_webhook_disabled_module_ignored(self):
         from fastapi.testclient import TestClient
+
         from services.webhook.jira_webhook_handler import app
         client = TestClient(app)
         payload = {
@@ -2527,7 +2468,7 @@ class TestWebhookMultiAgentEngine:
         }
         with patch('utils.auth.auth_db.get_effective_company_modules',
                    return_value={"webhook": False, "monitoring": False}):
-            response = client.post("/webhook/jira", json=payload)
+            response = client.post("/webhook/jira", json=payload, headers=WEBHOOK_HEADERS)
         data = response.json()
         assert data.get("status") == "ignored"
         assert data.get("reason") == "webhook_module_disabled"
@@ -2535,9 +2476,10 @@ class TestWebhookMultiAgentEngine:
     def test_checker_webhook_uses_multi_agent_run(self):
         import asyncio
         from datetime import datetime
+
         from services.checkers.tzpr_models import TZPRAnalysisResult
         from services.webhook.service_runner import check_tz_pr_and_comment
-        from utils.database.task_db import mark_progressing, get_task
+        from utils.database.task_db import get_task, mark_progressing
 
         task_key = "TEST-WH-ENGINE-001"
         company_id = self._company_id()
@@ -2567,6 +2509,7 @@ class TestWebhookMultiAgentEngine:
 
     def test_testcase_webhook_uses_run_engine(self):
         import asyncio
+
         from services.webhook.testcase_webhook_handler import check_and_generate_testcases
 
         task_key = "TEST-WH-ENGINE-002"
@@ -2602,6 +2545,7 @@ class TestWebhookMultiAgentEngine:
     def test_auto_return_uses_notification_text(self):
         # Auto-return comment'i settings.return_notification_text'ni ishlatishi kerak
         import asyncio
+
         from services.webhook.service_runner import _handle_auto_return
 
         custom_text = "Maxsus qaytarish xabari — TZ ni qayta ko'ring."

@@ -2,7 +2,6 @@ import pytest
 
 from utils.ai.usage_cost import estimate_gemini_usage_cost
 
-
 pytestmark = pytest.mark.no_db
 
 

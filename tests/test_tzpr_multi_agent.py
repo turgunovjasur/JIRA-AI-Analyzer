@@ -1,10 +1,10 @@
-import pytest
 from pathlib import Path
 
+import pytest
+
+from services.checkers.tzpr_agents import agent1, agent2, agent3
 from services.checkers.tzpr_preflight import Agent1RulesConfig, build_agent1_sanitized_input
 from services.checkers.tzpr_presenters import calculate_compliance_score_from_agent3
-from services.checkers.tzpr_agents import agent1, agent2, agent3
-
 
 pytestmark = pytest.mark.no_db
 
@@ -123,7 +123,9 @@ def test_agent1_json_validator_wraps_requirement_array_and_renumbers():
     assert result["warnings"]
 
 
-def test_agent2_json_validator_retries_on_id_mismatch_and_empty_evidence():
+def test_agent2_json_validator_backfills_id_and_retries_on_empty_evidence():
+    # Single rejimda expected_id ma'lum: id mismatch rad etilmaydi,
+    # warning bilan backfill qilinadi (REQ uchun verify yo'qolib qolmasin)
     mismatch = agent2.validate_agent2_json(
         {"id": "REQ-2", "status": "completed", "evidence": "Dalil bor."},
         expected_id="REQ-1",
@@ -133,9 +135,11 @@ def test_agent2_json_validator_retries_on_id_mismatch_and_empty_evidence():
         expected_id="REQ-1",
     )
 
-    assert mismatch["ok"] is False
-    assert mismatch["retryable"] is True
+    assert mismatch["ok"] is True
+    assert mismatch["verification"]["id"] == "REQ-1"
+    assert any(w.startswith("agent2_id_backfilled") for w in mismatch["warnings"])
     assert empty_evidence["ok"] is False
+    assert empty_evidence["retryable"] is True
     assert empty_evidence["error"] == "agent2_missing_evidence"
 
 

@@ -1,13 +1,14 @@
-import pytest
 from types import SimpleNamespace
 
+import pytest
+
 from core.tz_helper import TZHelper
+from services.checkers.tz_pr_checker import TZPRService
 from services.checkers.tzpr_models import (
     TZPRAnalysisOverview,
     TZPRAnalysisResult,
     TZPRAnalysisSection,
 )
-from services.checkers.tz_pr_checker import TZPRService
 from utils.jira.jira_adf_formatter import JiraADFFormatter
 
 

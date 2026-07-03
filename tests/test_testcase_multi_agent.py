@@ -193,7 +193,7 @@ def test_build_agent1_input_excludes_comments_and_adds_figma(monkeypatch):
 
 
 def test_finalize_dedup_and_renumber():
-    from services.generators.testcase_generator import TestCaseGeneratorService, TestCase
+    from services.generators.testcase_generator import TestCase, TestCaseGeneratorService
 
     service = TestCaseGeneratorService()
     tcs = [
@@ -217,7 +217,9 @@ def test_finalize_dedup_and_renumber():
 
 def test_enforce_max_three_per_requirement():
     from services.generators.testcase_generator import (
-        TestCaseGeneratorService, TestCase, MAX_TC_PER_REQ,
+        MAX_TC_PER_REQ,
+        TestCase,
+        TestCaseGeneratorService,
     )
 
     service = TestCaseGeneratorService()

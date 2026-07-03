@@ -6,24 +6,26 @@ Monitoring dashboard'ni test qilish uchun fake task ma'lumotlari yaratish.
 Author: JASUR TURGUNOV
 Version: 1.0
 """
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.database.task_db import (
-    mark_progressing,
-    mark_completed,
-    mark_returned,
-    mark_error,
-    set_service1_done,
-    set_service2_done,
-    set_service1_error,
-    set_service2_error,
-    increment_return_count,
-    set_skip_detected
-)
-from datetime import datetime, timedelta
 import random
+from datetime import datetime, timedelta
+
+from utils.database.task_db import (
+    increment_return_count,
+    mark_completed,
+    mark_error,
+    mark_progressing,
+    mark_returned,
+    set_service1_done,
+    set_service1_error,
+    set_service2_done,
+    set_service2_error,
+    set_skip_detected,
+)
 
 
 def generate_test_tasks(count: int = 20):

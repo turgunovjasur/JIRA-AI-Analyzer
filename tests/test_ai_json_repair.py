@@ -2,7 +2,6 @@ import pytest
 
 from utils.ai.gemini_json import parse_gemini_json
 
-
 pytestmark = pytest.mark.no_db
 
 
