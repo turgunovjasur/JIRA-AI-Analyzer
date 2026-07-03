@@ -270,31 +270,27 @@ Manual UI'da `1234` kabi raqamli input faqat `jira_project_keys` settingdan proj
 
 ---
 
-## UI Progress animatsiyasi (`ui/components/loading.py`)
+## Frontend (Next.js 16 + FastAPI BFF)
 
-`ProgressManager` — barcha AI sahifalarida ishlatiladigan animatsiyali progress widget.
+Eski Streamlit UI TO'LIQ olib tashlangan (`ui/` papka yo'q). Hozirgi frontend —
+`frontend/` da Next.js 16 (App Router) + TypeScript.
 
-```python
-progress = ProgressManager(
-    total_steps=4,
-    step_labels=["JIRA ma'lumot", "PR qidirish", "AI tahlil", "Natija"]
-)
-progress.update(1, "JIRA task olinmoqda...")   # step ko'rsatadi
-progress.update(3, "AI tahlil qilinmoqda...")  # oldingi steplar ✓ bo'ladi
-progress.clear()
-```
+**BFF pattern:** brauzer FastAPI'ga to'g'ridan-to'g'ri murojaat qilmaydi.
+`frontend/src/app/api/*` route handler'lari sessiya + rol + modul access
+tekshiradi, so'ng `frontend/src/lib/backend.ts` orqali FastAPI'ga proxy qiladi.
+Sessiya httpOnly cookie (`qa_backend_session`, `frontend/src/lib/session.ts`) da —
+token va API secretlar brauzerga hech qachon yetib bormaydi.
 
-- `st.components.v1.html()` ishlatadi → JavaScript timer (real-time sekundomer)
-- Har step: ✓ yashil (bajarildi) / ↻ aylanuvchi (jarayonda) / raqam kulrang (kutilmoqda)
-- Qadamlar orasida chiziq rangi: yashil → gradient → kulrang
+**Asosiy komponentlar (`frontend/src/components/`):**
+- `tzpr-checker.tsx` — Servis-1 (checker) manual run UI
+- `testcase-generator.tsx` — Servis-2 (testcase) manual run UI
+- `settings-panel.tsx` — kompaniya/user sozlamalari
+- `super-admin-panel.tsx` — super-admin boshqaruvi
 
-**Servislar `update_status("progress", msg)` chaqirishi shart:**
-- `core/setup_checks/checks.py` — JIRA, PR, Figma, TZ build bosqichlarida
-- `testcase_generator.py` — agent bosqichlari va validation paytida
-- `tzpr_orchestrator.py` — multi-agent run holatlari uchun
-- `pr_helper.py` — PR tahlil bosqichida
-
-Sahifa callbacklari `msg.lower()` orqali qaysi stepga tegishliligini aniqlaydi.
+**Run progress polling:** run yaratilgach komponent `useEffect` ichida
+`setInterval` bilan har 2s (`RUN_POLL_INTERVAL_MS`) `/api/tzpr/runs/{runId}` yoki
+`/api/testcase/runs/{runId}` dan run snapshot (`run_state`, `agent_runs`,
+`run_events`) oladi va terminal holatga yetganda pollingni to'xtatadi.
 
 ---
 

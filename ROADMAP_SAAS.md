@@ -1,6 +1,12 @@
 # QA-Assistant SaaS Roadmap
 
-Bu hujjat loyihani ichki `Streamlit` vositasidan to'liq sotuvga tayyor SaaS mahsulotga aylantirish uchun asosiy roadmap hisoblanadi.
+Bu hujjat loyihani to'liq sotuvga tayyor SaaS mahsulotga aylantirish uchun asosiy roadmap hisoblanadi.
+
+> **Holat (2026-07):** `Streamlit` → SaaS migratsiyasi YAKUNLANGAN. Frontend —
+> Next.js 16 (App Router) + FastAPI BFF; eski Streamlit UI to'liq olib tashlangan.
+> `Bug Analyzer` va `Sprint Statistics` modullari mahsulotdan o'chirilgan va
+> roadmapdan chiqarilgan. Quyidagi bosqichlardan arxitektura/migratsiya qismi
+> bajarilgan; hujjat qolgan dolzarb bandlar uchun saqlanadi.
 
 ## Maqsad
 
@@ -58,7 +64,7 @@ Chiqish natijasi:
 Maqsad: production SaaS uchun to'g'ri texnik asos yaratish.
 
 Must Have:
-- `Streamlit`ning kelajakdagi rolini belgilash
+- `Streamlit`dan chiqish strategiyasini belgilash (bajarildi — to'liq olib tashlandi)
 - Customer-facing ilova arxitekturasini tanlash
 - Backend framework tanlash
 - Frontend framework tanlash
@@ -66,10 +72,10 @@ Must Have:
 - API boundary va servislar chegarasini chizish
 - Multi-tenant request lifecycle ni hujjatlashtirish
 
-Tavsiya:
-- `Streamlit` faqat internal admin yoki ops panel sifatida qoldiriladi
+Holat: bajarildi (2026)
 - Asosiy product backend: `FastAPI`
-- Asosiy product frontend: `Next.js` yoki `React`
+- Asosiy product frontend: `Next.js 16` (App Router, BFF pattern)
+- `Streamlit` to'liq olib tashlandi (internal panel sifatida ham qolmadi)
 
 Chiqish natijasi:
 - target architecture diagram
@@ -227,7 +233,6 @@ Chiqish natijasi:
 Maqsad: asosiy modullar ishonchli va aniq ishlashi.
 
 Must Have:
-- Bug Analyzer natijalarini tekshirish
 - TZ-PR Checker sifatini oshirish
 - Test Case Generator sifatini oshirish
 - Sprint Report aniqligini tekshirish
@@ -366,8 +371,8 @@ Chiqish natijasi:
 ### P0 - Sotuvga chiqishdan oldin shart
 
 - Product scope
-- Target architecture
-- PostgreSQL migration
+- Target architecture (bajarildi, 2026)
+- PostgreSQL migration (bajarildi, 2026)
 - Multi-tenant isolation
 - Auth va roles
 - Secret encryption

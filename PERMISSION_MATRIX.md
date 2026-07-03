@@ -16,8 +16,6 @@ Bu hujjat loyiha ichidagi rollar va ularning modul hamda boshqaruv huquqlarini b
 | `Test Case Generator` | Ha | Ha | Ha |
 | `Monitoring` | Ha | Ha, agar `Webhook` yoqilgan bo'lsa | Yo'q |
 | `Webhook` | Ha | Ha, agar kompaniyaga addon yoqilgan bo'lsa | Yo'q |
-| `Bug Analyzer` | Support/test uchun | Agar yoqilgan bo'lsa | Agar yoqilgan bo'lsa |
-| `Sprint Statistics` | Support/test uchun | Agar yoqilgan bo'lsa | Agar yoqilgan bo'lsa |
 | `Sprint Report` | Support/test uchun | Agar yoqilgan bo'lsa | Agar yoqilgan bo'lsa |
 
 Eslatma:
