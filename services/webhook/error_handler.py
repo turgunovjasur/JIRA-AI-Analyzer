@@ -10,41 +10,47 @@ Bu modul webhook oqimida yuz beradigan barcha xatolarni boshqaradi:
 
 Barcha comment yozish funksiyalari shu modulda to'plangan (DRY printsipi).
 """
-from typing import TYPE_CHECKING, Any
 from datetime import datetime
+from typing import TYPE_CHECKING, Any
 
+from core.constants import ERR_UNKNOWN, WARN_AI_TIMEOUT, WARN_MIN_TZ, WARN_NO_PR, WARN_PR_NOT_MERGED
+from core.errors import QAServiceError
 from core.logger import get_logger
-from core.constants import (
-    WARN_NO_PR, WARN_PR_NOT_MERGED, WARN_MIN_TZ,
-    WARN_AI_TIMEOUT, ERR_UNKNOWN
-)
 
 if TYPE_CHECKING:
     from config.app_settings import TZPRCheckerSettings
-    from utils.jira.jira_comment_writer import JiraCommentWriter
     from utils.jira.jira_adf_formatter import JiraADFFormatter
+    from utils.jira.jira_comment_writer import JiraCommentWriter
 
 log = get_logger("webhook.error_handler")
 
 
-def _classify_error(error_msg: str) -> str:
+def _classify_error(error) -> str:
     """
-    Xato xabarini turiga qarab ajratish.
+    Xatoni turiga qarab ajratish.
 
-    Webhook oqimida uch turdagi xatolar mavjud:
-    1. 'pr_not_found' — GitHub'da PR topilmadi (Service2 baribir ishlashi mumkin)
-    2. 'ai_timeout'   — Google Gemini API ishlamadi (rate limit, 429, quota)
-                        Bu holda task 'blocked' holatga tushadi va keyinroq qayta uriniladi
-    3. 'unknown'      — Boshqa turdagi xatolar (DB, JIRA, network, kod xatolari)
+    Avval typed exception tekshiriladi (core/errors.py — QAServiceError.error_type),
+    keyin legacy string matching fallback.
 
-    Mantiq: string matching orqali — keyword'lar bo'yicha kategoriyalash.
+    Webhook oqimidagi turlar:
+    - 'pr_not_found'  — GitHub'da PR topilmadi (Service2 baribir ishlashi mumkin)
+    - 'pr_not_merged' — PR bor, lekin merged emas
+    - 'tz_too_short'  — TZ (description) minimal chegaradan qisqa
+    - 'ai_timeout'    — Gemini API ishlamadi (rate limit, 429, quota) → 'blocked' + retry
+    - 'unknown'       — Boshqa xatolar (DB, JIRA, network, kod xatolari)
 
     Args:
-        error_msg: Xato xabari (Exception string)
+        error: Typed exception (QAServiceError) yoki xato xabari (str/Exception)
 
     Returns:
-        'pr_not_found' | 'ai_timeout' | 'unknown'
+        'pr_not_found' | 'pr_not_merged' | 'tz_too_short' | 'ai_timeout' | 'unknown'
     """
+    if isinstance(error, QAServiceError):
+        return error.error_type
+
+    # DEPRECATED: string matching — faqat typed exception yetib kelmagan legacy
+    # yo'llar uchun fallback. Yangi kod xato manbasida typed exception bersin.
+    error_msg = str(error) if isinstance(error, BaseException) else error
     if not error_msg:
         return 'unknown'
     msg_lower = error_msg.lower()
@@ -260,7 +266,6 @@ async def _write_timeout_error_comment(task_key: str, timeout_seconds: int, comp
     try:
         from services.webhook.jira_webhook_handler import get_adf_formatter
         from utils.jira.jira_comment_writer import JiraCommentWriter
-        from utils.auth.auth_db import get_company_credentials
         adf_formatter = get_adf_formatter()
         from utils.auth.auth_db import get_company_webhook_credentials
         creds = get_company_webhook_credentials(company_id)
