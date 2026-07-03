@@ -5,9 +5,8 @@ UI qatlamidan SQL querylarni ajratish uchun vaqtinchalik repository.
 Keyingi bosqichda shu modul `PostgreSQL` backendga ko'chiriladi.
 """
 import pandas as pd
+
 from utils.database.repository_common import (
-    uses_postgres_params as _uses_postgres_params,
-    prepare_query as _prepare_query,
     execute as _execute,
 )
 
@@ -79,11 +78,7 @@ def get_service_status_counts_df(conn, company_id):
     return _fetch_df(conn, query, params=params)
 
 
-def get_recent_tasks_df(conn, company_id, selected_status: str):
-    base_cols = """
-        task_id, task_status, service1_status, service2_status,
-        compliance_score, return_count, skip_detected, last_processed_at, updated_at
-    """
+def _recent_tasks_filter(company_id, selected_status: str) -> tuple[str, list]:
     conditions = []
     params = []
     if company_id is not None:
@@ -92,10 +87,31 @@ def get_recent_tasks_df(conn, company_id, selected_status: str):
     if selected_status != 'Barchasi':
         conditions.append("task_status = ?")
         params.append(selected_status)
-
     where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    return where_clause, params
+
+
+def get_recent_tasks_df(conn, company_id, selected_status: str, limit: int = None, offset: int = 0):
+    base_cols = """
+        task_id, task_status, service1_status, service2_status,
+        compliance_score, return_count, skip_detected, last_processed_at, updated_at
+    """
+    where_clause, params = _recent_tasks_filter(company_id, selected_status)
     query = f"SELECT {base_cols} FROM task_processing {where_clause} ORDER BY updated_at DESC"
+    if limit is not None:
+        query += " LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
     return _fetch_df(conn, query, params=params)
+
+
+def get_recent_tasks_total(conn, company_id, selected_status: str) -> int:
+    where_clause, params = _recent_tasks_filter(company_id, selected_status)
+    row = _fetch_one_dict(
+        conn,
+        f"SELECT COUNT(*) AS total FROM task_processing {where_clause}",
+        params,
+    )
+    return int(row["total"]) if row and row.get("total") is not None else 0
 
 
 def get_errors_log_df(conn, company_id):
@@ -120,7 +136,7 @@ def get_errors_log_df(conn, company_id):
     return _fetch_df(conn, query, params=params)
 
 
-def get_blocked_tasks_df(conn, company_id):
+def get_blocked_tasks_df(conn, company_id, limit: int = None):
     cid_clause = "AND company_id = ?" if company_id is not None else ""
     params = [company_id] if company_id is not None else []
     query = f"""
@@ -137,6 +153,9 @@ def get_blocked_tasks_df(conn, company_id):
     {cid_clause}
     ORDER BY blocked_retry_at ASC
     """
+    if limit is not None:
+        query += " LIMIT ?"
+        params.append(limit)
     return _fetch_df(conn, query, params=params)
 
 

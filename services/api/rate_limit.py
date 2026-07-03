@@ -5,9 +5,11 @@ Auth endpointlar (login, password-reset) uchun brute-force himoya.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from collections import defaultdict
-from fastapi import Request, HTTPException
+
+from fastapi import HTTPException, Request
 
 _WINDOW_SECONDS = 60
 _MAX_REQUESTS = 10
@@ -17,9 +19,16 @@ _lock = asyncio.Lock()
 
 
 def _client_ip(request: Request) -> str:
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
+    # X-Forwarded-For faqat APP_TRUSTED_PROXY=1 bo'lganda hisobga olinadi —
+    # aks holda mijoz headerni spoof qilib limitni aylanib o'tishi mumkin.
+    # Taxmin: bitta ishonchli reverse-proxy bor; u haqiqiy client IP ni
+    # ro'yxat OXIRIGA qo'shadi (chapdagi qiymatlar mijoz nazoratida),
+    # shuning uchun eng o'ngdagi entry olinadi.
+    if os.getenv("APP_TRUSTED_PROXY", "0").strip() == "1":
+        forwarded_for = request.headers.get("X-Forwarded-For", "")
+        hops = [part.strip() for part in forwarded_for.split(",") if part.strip()]
+        if hops:
+            return hops[-1]
     return request.client.host if request.client else "unknown"
 
 

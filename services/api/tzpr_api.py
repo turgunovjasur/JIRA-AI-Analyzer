@@ -12,15 +12,15 @@ from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from core.module_start_preflight import run_start_preflight, get_module_start_status
+from core.module_start_preflight import get_module_start_status, run_start_preflight
+from services.api.session_scope import load_api_session, require_customer_scope
+from services.api.task_key_normalizer import MissingProjectKeySetting, normalize_manual_task_key
 from services.checkers.tzpr_multi_agent import (
     create_multi_agent_run,
     execute_multi_agent_run,
     is_stalled_multi_agent_run,
     recover_stalled_multi_agent_run,
 )
-from services.api.session_scope import load_api_session, require_customer_scope
-from services.api.task_key_normalizer import MissingProjectKeySetting, normalize_manual_task_key
 from utils.database.checker_run_db import get_checker_run_snapshot
 from utils.database.task_db import enqueue_background_job
 

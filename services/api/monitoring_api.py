@@ -1,8 +1,9 @@
 """
 Internal monitoring API endpoints.
 
-These endpoints are primarily intended to help split the current Streamlit UI
-from backend persistence without changing business logic.
+These endpoints serve monitoring views for the Next.js frontend (via the BFF
+proxy in frontend/src/app/api/*) so the frontend never touches backend
+persistence directly.
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ from utils.database.monitoring_repository import (
     get_errors_log_df,
     get_overall_stats_df,
     get_recent_tasks_df,
+    get_recent_tasks_total,
     get_service_status_counts_df,
     get_task_for_delete_check,
     get_task_status_counts_df,
@@ -62,6 +64,8 @@ def get_monitoring_source_info(
 def get_monitoring_snapshot(
     company_id: Optional[int] = Query(default=None, ge=1),
     status: str = Query(default="Barchasi"),
+    limit: int = Query(default=200, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
     x_session_id: str | None = Header(default=None, alias="X-Session-ID"),
 ):
     _ensure_monitoring_storage_ready()
@@ -74,9 +78,10 @@ def get_monitoring_snapshot(
         overall_stats = get_overall_stats_df(conn, scoped_company_id)
         task_status_counts = get_task_status_counts_df(conn, scoped_company_id)
         service_status_counts = get_service_status_counts_df(conn, scoped_company_id)
-        recent_tasks = get_recent_tasks_df(conn, scoped_company_id, status)
+        recent_tasks = get_recent_tasks_df(conn, scoped_company_id, status, limit=limit, offset=offset)
+        recent_tasks_total = get_recent_tasks_total(conn, scoped_company_id, status)
         errors_log = get_errors_log_df(conn, scoped_company_id)
-        blocked_tasks = get_blocked_tasks_df(conn, scoped_company_id)
+        blocked_tasks = get_blocked_tasks_df(conn, scoped_company_id, limit=limit)
 
         payload = {
             **_build_source_info(),
@@ -86,6 +91,10 @@ def get_monitoring_snapshot(
             "recent_tasks": _df_records(recent_tasks),
             "errors_log": _df_records(errors_log),
             "blocked_tasks": _df_records(blocked_tasks),
+            # Additive pagination maydonlari (recent_tasks bo'yicha).
+            "total": recent_tasks_total,
+            "limit": limit,
+            "offset": offset,
         }
         conn.close()
         return payload

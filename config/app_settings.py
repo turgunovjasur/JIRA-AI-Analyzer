@@ -4,8 +4,6 @@ Yagona Tizim Sozlamalari
 
 Barcha modullar uchun yagona sozlamalar:
 - Modul ko'rinishi (yoqish/o'chirish)
-- Bug Analyzer sozlamalari
-- Statistics sozlamalari
 - TZ-PR Checker sozlamalari
 - Testcase Generator sozlamalari
 
@@ -14,17 +12,22 @@ Har bir sozlama uchun yordam matni mavjud.
 Author: JASUR TURGUNOV
 Version: 1.0
 """
+import copy
 import json
 import os
-from dataclasses import dataclass, field, asdict, replace as dc_replace
-from typing import Optional, List
-from core.logger import get_logger
+import threading
+import time
+from dataclasses import asdict, dataclass, field
+from dataclasses import replace as dc_replace
+from typing import List, Optional
+
 from config.token_limits import (
     AI_MAX_INPUT_TOKENS,
     CHARS_PER_TOKEN,
     CHECKER_MAX_OUTPUT_TOKENS,
     TESTCASE_MAX_OUTPUT_TOKENS,
 )
+from core.logger import get_logger
 
 log = get_logger("config.settings")
 
@@ -50,44 +53,12 @@ OLD_SETTINGS_FILE = os.path.join(
 @dataclass
 class ModuleVisibility:
     """Modullarni ko'rsatish/berkitish sozlamalari"""
-    bug_analyzer_enabled: bool = True
-    statistics_enabled: bool = True
     tz_pr_checker_enabled: bool = True
     testcase_generator_enabled: bool = True
 
     # Yordam matnlari
-    bug_analyzer_help: str = "Embedding model va VectorDB yuklanadi. Katta hajmli resurs."
-    statistics_help: str = "Sprint statistikasi. Minimal resurs."
     tz_pr_checker_help: str = "TZ-PR moslik tekshirish. Gemini API ishlatadi."
     testcase_generator_help: str = "Test case generator. Gemini API ishlatadi."
-
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# BUG ANALYZER SOZLAMALARI
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-@dataclass
-class BugAnalyzerSettings:
-    """Bug Analyzer modul sozlamalari"""
-    default_top_n: int = 5
-    default_min_similarity: int = 75  # foiz
-
-    # Yordam matnlari
-    top_n_help: str = "Eng yuqori o'xshashlikdagi topilgan tasklar soni (1-10)"
-    min_similarity_help: str = "Minimal o'xshashlik foizi. Past qiymat - ko'proq natija, lekin kam aniqlik"
-
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# STATISTICS SOZLAMALARI
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-@dataclass
-class StatisticsSettings:
-    """Statistics modul sozlamalari"""
-    default_chart_theme: str = "Dark"
-
-    # Yordam matnlari
-    chart_theme_help: str = "Grafik uchun rang sxemasi: Dark yoki Light"
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -604,8 +575,6 @@ class QueueSettings:
 class AppSettings:
     """Yagona tizim sozlamalari"""
     modules: ModuleVisibility = field(default_factory=ModuleVisibility)
-    bug_analyzer: BugAnalyzerSettings = field(default_factory=BugAnalyzerSettings)
-    statistics: StatisticsSettings = field(default_factory=StatisticsSettings)
     tz_pr_checker: TZPRCheckerSettings = field(default_factory=TZPRCheckerSettings)
     # Webhook orqali TZ-PR tekshiruvi uchun alohida sozlamalar.
     # tz_pr_checker — standalone modul (alohida sotiladi), webhook_tz_pr — webhook trigger (alohida sotiladi).
@@ -757,8 +726,9 @@ class AppSettingsManager:
                         data[testcase_key] = testcase_data
 
                 # Saqlangan dict'da olib tashlangan/eski kalitlar bo'lishi mumkin
-                # (masalan eski ai_max_retries/db_busy_timeout). Faqat dataclass tan
-                # oladigan maydonlarni o'tkazamiz — aks holda butun blok default'ga tushadi.
+                # (masalan eski bug_analyzer/statistics bo'limlari yoki
+                # modules.bug_analyzer_enabled). Faqat dataclass tan oladigan
+                # maydonlarni o'tkazamiz — aks holda butun blok default'ga tushadi.
                 def _kw(cls, key):
                     raw = data.get(key, {})
                     if not isinstance(raw, dict):
@@ -769,8 +739,6 @@ class AppSettingsManager:
                 # Nested dataclass'larni yaratish
                 settings = AppSettings(
                     modules=ModuleVisibility(**_kw(ModuleVisibility, 'modules')),
-                    bug_analyzer=BugAnalyzerSettings(**_kw(BugAnalyzerSettings, 'bug_analyzer')),
-                    statistics=StatisticsSettings(**_kw(StatisticsSettings, 'statistics')),
                     tz_pr_checker=TZPRCheckerSettings(**_kw(TZPRCheckerSettings, 'tz_pr_checker')),
                     webhook_tz_pr=TZPRCheckerSettings(**_kw(TZPRCheckerSettings, 'webhook_tz_pr')),
                     testcase_generator=TestcaseGeneratorSettings(**_kw(TestcaseGeneratorSettings, 'testcase_generator')),
@@ -793,8 +761,6 @@ class AppSettingsManager:
 
         return {
             'modules': clean_dict(asdict(settings.modules)),
-            'bug_analyzer': clean_dict(asdict(settings.bug_analyzer)),
-            'statistics': clean_dict(asdict(settings.statistics)),
             'tz_pr_checker': clean_dict(asdict(settings.tz_pr_checker)),
             'webhook_tz_pr': clean_dict(asdict(settings.webhook_tz_pr)),
             'testcase_generator': clean_dict(asdict(settings.testcase_generator)),
@@ -823,14 +789,14 @@ class AppSettingsManager:
 
     def get_settings(self, force_reload: bool = False) -> AppSettings:
         """Joriy sozlamalarni olish
-        
+
         Args:
             force_reload: Agar True bo'lsa, cache'ni tozalab fayldan o'qiydi
         """
         if force_reload or self._settings is None:
             self._settings = self._load_settings()
         return self._settings
-    
+
     def reload_settings(self) -> AppSettings:
         """Sozlamalarni qayta yuklash (cache'ni tozalash)"""
         self._settings = None
@@ -840,8 +806,6 @@ class AppSettingsManager:
         """Modul yoqilganligini tekshirish"""
         settings = self.get_settings()
         module_map = {
-            'bug_analyzer': settings.modules.bug_analyzer_enabled,
-            'statistics': settings.modules.statistics_enabled,
             'tz_pr_checker': settings.modules.tz_pr_checker_enabled,
             'testcase_generator': settings.modules.testcase_generator_enabled
         }
@@ -1003,18 +967,78 @@ def _apply_global_testcase_overrides(settings: AppSettings) -> AppSettings:
     return settings
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# IN-PROCESS TTL CACHE
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# get_app_settings_for_company har webhookda ~12 DB SELECT qiladi
+# (global override'lar + company settings). TTL cache shu round-trip'larni
+# qisqartiradi. ESLATMA: worker jarayonlari alohida process bo'lgani uchun
+# saqlangan o'zgarishni ko'pi bilan TTL kechikish bilan ko'radi.
+# APP_SETTINGS_CACHE_TTL (sekund, default 30; 0 — cache o'chirilgan).
+
+_SETTINGS_CACHE: dict = {}
+_SETTINGS_CACHE_LOCK = threading.Lock()
+_settings_cache_hits = 0
+
+
+def _settings_cache_ttl() -> float:
+    try:
+        return float(os.getenv("APP_SETTINGS_CACHE_TTL", "30"))
+    except (TypeError, ValueError):
+        return 30.0
+
+
+def _settings_cache_get(key, share: bool = False) -> Optional[AppSettings]:
+    global _settings_cache_hits
+    if _settings_cache_ttl() <= 0:
+        return None
+    with _SETTINGS_CACHE_LOCK:
+        entry = _SETTINGS_CACHE.get(key)
+        if entry is None:
+            return None
+        expires_at, value = entry
+        if time.monotonic() >= expires_at:
+            _SETTINGS_CACHE.pop(key, None)
+            return None
+        _settings_cache_hits += 1
+        # share=True: get_app_settings() azaldan bir xil obyekt qaytargan
+        # (singleton semantika) — identity saqlanadi. Aks holda deepcopy —
+        # caller mutatsiyasi cache'ni buzmasligi uchun.
+        return value if share else copy.deepcopy(value)
+
+
+def _settings_cache_put(key, value: AppSettings, share: bool = False) -> None:
+    ttl = _settings_cache_ttl()
+    if ttl <= 0:
+        return
+    with _SETTINGS_CACHE_LOCK:
+        _SETTINGS_CACHE[key] = (time.monotonic() + ttl, value if share else copy.deepcopy(value))
+
+
+def invalidate_app_settings_cache() -> None:
+    """Sozlama saqlanganda chaqiriladi — TTL cache to'liq tozalanadi."""
+    with _SETTINGS_CACHE_LOCK:
+        _SETTINGS_CACHE.clear()
+
+
 def get_app_settings(force_reload: bool = False) -> AppSettings:
     """Tizim sozlamalarini olish (global funksiya)
-    
+
     Args:
         force_reload: Agar True bo'lsa, cache'ni tozalab fayldan o'qiydi.
                      Webhook service uchun har safar fayldan o'qish uchun True qiling.
     """
     global _settings_manager
+    if not force_reload:
+        cached = _settings_cache_get(("global",), share=True)
+        if cached is not None:
+            return cached
     if _settings_manager is None:
         _settings_manager = AppSettingsManager()
     settings = _settings_manager.get_settings(force_reload=force_reload)
-    return _apply_global_testcase_overrides(_apply_global_checker_overrides(_apply_global_queue_overrides(settings)))
+    settings = _apply_global_testcase_overrides(_apply_global_checker_overrides(_apply_global_queue_overrides(settings)))
+    _settings_cache_put(("global",), settings, share=True)
+    return settings
 
 
 def save_app_settings(settings: AppSettings) -> bool:
@@ -1022,7 +1046,10 @@ def save_app_settings(settings: AppSettings) -> bool:
     global _settings_manager
     if _settings_manager is None:
         _settings_manager = AppSettingsManager()
-    return _settings_manager.save_settings(settings)
+    saved = _settings_manager.save_settings(settings)
+    if saved:
+        invalidate_app_settings_cache()
+    return saved
 
 
 def get_settings_manager() -> AppSettingsManager:
@@ -1053,7 +1080,13 @@ def get_app_settings_for_company(company_id: int) -> AppSettings:
 
     Agar kompaniyada modul sozlamalari bo'lmasa — global default qaytariladi.
     """
-    from dataclasses import replace as dc_replace, fields as dc_fields
+    from dataclasses import fields as dc_fields
+    from dataclasses import replace as dc_replace
+
+    cache_key = ("company", company_id)
+    cached = _settings_cache_get(cache_key)
+    if cached is not None:
+        return cached
 
     base = get_app_settings(force_reload=False)
 
@@ -1061,9 +1094,11 @@ def get_app_settings_for_company(company_id: int) -> AppSettings:
         from utils.auth.auth_db import get_company_webhook_module_settings
         company_wh = get_company_webhook_module_settings(company_id)
     except Exception:
+        # DB o'qish xatosi — default qaytadi, lekin cache'lanmaydi (tez tiklanish uchun).
         return base
 
     if not company_wh:
+        _settings_cache_put(cache_key, base)
         return base
 
     def _merge(base_obj, override_dict: dict):
@@ -1094,15 +1129,15 @@ def get_app_settings_for_company(company_id: int) -> AppSettings:
 
     settings = AppSettings(
         modules=base.modules,
-        bug_analyzer=base.bug_analyzer,
-        statistics=base.statistics,
         tz_pr_checker=base.tz_pr_checker,
         webhook_tz_pr=merged_webhook_tz_pr,
         testcase_generator=base.testcase_generator,
         webhook_testcase=merged_webhook_testcase,
         queue=_merge(base.queue,                       _company_queue_overrides(company_wh.get('queue', {}))),
     )
-    return _enforce_token_policy(settings)
+    result = _enforce_token_policy(settings)
+    _settings_cache_put(cache_key, result)
+    return result
 
 
 def get_app_settings_for_user(user_id: int, company_id: int) -> AppSettings:
@@ -1110,14 +1145,20 @@ def get_app_settings_for_user(user_id: int, company_id: int) -> AppSettings:
     User uchun AppSettings olish (multi-tenant).
 
     Ishlash tartibi:
-    - Standalone modullar (tz_pr_checker, testcase_generator, bug_analyzer, statistics)
+    - Standalone modullar (tz_pr_checker, testcase_generator)
       → user_module_settings DB dan (har user izolyatsiyalangan)
     - Webhook modullar (webhook_tz_pr, webhook_testcase, queue tenant fieldlari)
       → company_settings.webhook_module_settings DB dan (kompaniya uchun umumiy)
     - Modul ko'rinishi → company enabled_modules dan
     - Agar DB da topilmasa → global default (app_settings.json) ishlatiladi
     """
-    from dataclasses import replace as dc_replace, fields as dc_fields
+    from dataclasses import fields as dc_fields
+    from dataclasses import replace as dc_replace
+
+    cache_key = ("user", user_id, company_id)
+    cached = _settings_cache_get(cache_key)
+    if cached is not None:
+        return cached
 
     base = get_app_settings(force_reload=False)
 
@@ -1144,8 +1185,8 @@ def get_app_settings_for_user(user_id: int, company_id: int) -> AppSettings:
 
     try:
         from utils.auth.auth_db import (
-            get_user_module_settings,
             get_company_webhook_module_settings,
+            get_user_module_settings,
         )
         user_mods    = get_user_module_settings(user_id)
         company_wh   = get_company_webhook_module_settings(company_id)
@@ -1159,12 +1200,12 @@ def get_app_settings_for_user(user_id: int, company_id: int) -> AppSettings:
 
     settings = AppSettings(
         modules=base.modules,
-        bug_analyzer=_merge(base.bug_analyzer,            user_mods.get('bug_analyzer', {})),
-        statistics=_merge(base.statistics,                user_mods.get('statistics', {})),
         tz_pr_checker=_merge(base.tz_pr_checker,          user_mods.get('tz_pr_checker', {})),
         webhook_tz_pr=merged_webhook_tz_pr,
         testcase_generator=_merge(base.testcase_generator, user_mods.get('testcase_generator', {})),
         webhook_testcase=merged_webhook_testcase,
         queue=_merge(base.queue,                          _company_queue_overrides(company_wh.get('queue', {}))),
     )
-    return _enforce_token_policy(settings)
+    result = _enforce_token_policy(settings)
+    _settings_cache_put(cache_key, result)
+    return result

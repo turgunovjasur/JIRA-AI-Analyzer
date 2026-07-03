@@ -9,16 +9,28 @@ from __future__ import annotations
 from typing import Any
 
 from core.logger import get_logger
-from utils.database.runtime import connect_processing_db
 from utils.database.checker_run_repository import (
     append_checker_run_event as repo_append_checker_run_event,
+)
+from utils.database.checker_run_repository import (
     build_checker_run_snapshot as repo_build_checker_run_snapshot,
+)
+from utils.database.checker_run_repository import (
     create_checker_run as repo_create_checker_run,
+)
+from utils.database.checker_run_repository import (
     save_checker_run_final_result as repo_save_checker_run_final_result,
+)
+from utils.database.checker_run_repository import (
     seed_checker_agent_runs as repo_seed_checker_agent_runs,
+)
+from utils.database.checker_run_repository import (
     update_checker_agent_run as repo_update_checker_agent_run,
+)
+from utils.database.checker_run_repository import (
     update_checker_run as repo_update_checker_run,
 )
+from utils.database.runtime import connect_processing_db
 from utils.database.task_db import _get_db_settings  # type: ignore
 
 log = get_logger("checker.run.db")

@@ -305,124 +305,126 @@ export default async function MonitoringPage({
 
   const health = await getBackendHealth().catch(() => null);
 
+  let snapshot: Awaited<ReturnType<typeof getMonitoringSnapshot>>;
   try {
-    const snapshot = await getMonitoringSnapshot({ companyId, status: selectedStatus });
-    const stats = snapshot.overall_stats?.[0] || {};
-    const service1 = groupServiceCounts(snapshot.service_status_counts || [], "service1_status");
-    const service2 = groupServiceCounts(snapshot.service_status_counts || [], "service2_status");
-
-    return (
-      <>
-        <div className="qa-page-intro">
-          <span className="qa-eyebrow">Operations</span>
-          <h2 className="qa-page-heading">Monitoring</h2>
-          <p className="qa-page-desc">Queue holati, xizmat ishlashi va so&apos;nggi tasklar real-time.</p>
-        </div>
-
-        <HealthCard health={health} />
-
-        <section className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          <MetricCard helper="Jami tasklar" label="Total" value={stats.total_tasks ?? 0} />
-          <MetricCard helper="Muvaffaqiyatli" label="Bajarildi" value={stats.completed ?? 0} />
-          <MetricCard helper="Jarayonda" label="Progressing" value={stats.progressing ?? 0} />
-          <MetricCard helper="Qaytarildi" label="Returned" value={stats.returned ?? 0} />
-          <MetricCard helper="Xato" label="Error" value={stats.error ?? 0} />
-          <MetricCard
-            helper="O&apos;rtacha moslik"
-            label="Avg Moslik"
-            value={
-              stats.avg_compliance != null
-                ? `${Number(stats.avg_compliance).toFixed(1)}%`
-                : "N/A"
-            }
-          />
-        </section>
-
-        <Card>
-          <SectionHeader eyebrow="Filter" title="Status bo&apos;yicha" />
-          <div className="mt-4 flex flex-wrap gap-2">
-            {FILTERS.map((filter) => {
-              const active = filter === selectedStatus;
-              const href = filter === "Barchasi" ? "/monitoring" : `/monitoring?status=${filter}`;
-              return (
-                <Link
-                  key={filter}
-                  href={href}
-                  className={
-                    active
-                      ? "inline-flex rounded-full border border-primary/15 bg-primary/10 px-3 py-1.5 text-sm font-semibold text-primary"
-                      : "inline-flex rounded-full border border-border bg-white px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
-                  }
-                >
-                  {filter}
-                </Link>
-              );
-            })}
-          </div>
-        </Card>
-
-        <section className="grid gap-4 lg:grid-cols-3">
-          <Card>
-            <SectionHeader eyebrow="Overview" title="Task holati" />
-            <div className="mt-5">
-              <OverallStats stats={stats} />
-            </div>
-          </Card>
-          <Card>
-            <SectionHeader eyebrow="Service 1" title="TZ-PR tahlil" />
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              {service1.map(([status, count]) => (
-                <BaseCard as="div" className="p-3" key={`s1-${status}`} padding="none" tone="soft">
-                  <StatusPill tone={statusTone(status)} value={status} />
-                  <strong className="mt-2 block text-xl font-bold">{count}</strong>
-                </BaseCard>
-              ))}
-            </div>
-          </Card>
-          <Card>
-            <SectionHeader eyebrow="Service 2" title="Test case" />
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              {service2.map(([status, count]) => (
-                <BaseCard as="div" className="p-3" key={`s2-${status}`} padding="none" tone="soft">
-                  <StatusPill tone={statusTone(status)} value={status} />
-                  <strong className="mt-2 block text-xl font-bold">{count}</strong>
-                </BaseCard>
-              ))}
-            </div>
-          </Card>
-        </section>
-
-        <Card>
-          <SectionHeader
-            eyebrow="Recent Tasks"
-            title="So&apos;nggi tasklar"
-            action={
-              <Badge tone="soft">
-                {snapshot.source_label || "DB"}
-                {snapshot.db_size_kb ? ` · ${snapshot.db_size_kb.toFixed(1)} KB` : ""}
-              </Badge>
-            }
-          />
-          <div className="mt-4">
-            <RecentTasksTable rows={snapshot.recent_tasks || []} />
-          </div>
-        </Card>
-
-        <Card>
-          <SectionHeader eyebrow="Errors" title="So&apos;nggi xatoliklar" />
-          <div className="mt-4"><ErrorList rows={snapshot.errors_log || []} /></div>
-        </Card>
-
-        <Card>
-          <SectionHeader eyebrow="Blocked Queue" title="Retry kutayotgan tasklar" />
-          <div className="mt-4"><BlockedList rows={snapshot.blocked_tasks || []} /></div>
-        </Card>
-
-        <MonitoringDeleteCard />
-      </>
-    );
+    snapshot = await getMonitoringSnapshot({ companyId, status: selectedStatus });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Monitoring ochilmadi.";
     return <Notice tone="error"><strong>Monitoring xatosi:</strong> {message}</Notice>;
   }
+
+  const stats = snapshot.overall_stats?.[0] || {};
+  const service1 = groupServiceCounts(snapshot.service_status_counts || [], "service1_status");
+  const service2 = groupServiceCounts(snapshot.service_status_counts || [], "service2_status");
+
+  return (
+    <>
+      <div className="qa-page-intro">
+        <span className="qa-eyebrow">Operations</span>
+        <h2 className="qa-page-heading">Monitoring</h2>
+        <p className="qa-page-desc">Queue holati, xizmat ishlashi va so&apos;nggi tasklar real-time.</p>
+      </div>
+
+      <HealthCard health={health} />
+
+      <section className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <MetricCard helper="Jami tasklar" label="Total" value={stats.total_tasks ?? 0} />
+        <MetricCard helper="Muvaffaqiyatli" label="Bajarildi" value={stats.completed ?? 0} />
+        <MetricCard helper="Jarayonda" label="Progressing" value={stats.progressing ?? 0} />
+        <MetricCard helper="Qaytarildi" label="Returned" value={stats.returned ?? 0} />
+        <MetricCard helper="Xato" label="Error" value={stats.error ?? 0} />
+        <MetricCard
+          helper="O&apos;rtacha moslik"
+          label="Avg Moslik"
+          value={
+            stats.avg_compliance != null
+              ? `${Number(stats.avg_compliance).toFixed(1)}%`
+              : "N/A"
+          }
+        />
+      </section>
+
+      <Card>
+        <SectionHeader eyebrow="Filter" title="Status bo&apos;yicha" />
+        <div className="mt-4 flex flex-wrap gap-2">
+          {FILTERS.map((filter) => {
+            const active = filter === selectedStatus;
+            const href = filter === "Barchasi" ? "/monitoring" : `/monitoring?status=${filter}`;
+            return (
+              <Link
+                key={filter}
+                href={href}
+                className={
+                  active
+                    ? "inline-flex rounded-full border border-primary/15 bg-primary/10 px-3 py-1.5 text-sm font-semibold text-primary"
+                    : "inline-flex rounded-full border border-border bg-white px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+                }
+              >
+                {filter}
+              </Link>
+            );
+          })}
+        </div>
+      </Card>
+
+      <section className="grid gap-4 lg:grid-cols-3">
+        <Card>
+          <SectionHeader eyebrow="Overview" title="Task holati" />
+          <div className="mt-5">
+            <OverallStats stats={stats} />
+          </div>
+        </Card>
+        <Card>
+          <SectionHeader eyebrow="Service 1" title="TZ-PR tahlil" />
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {service1.map(([status, count]) => (
+              <BaseCard as="div" className="p-3" key={`s1-${status}`} padding="none" tone="soft">
+                <StatusPill tone={statusTone(status)} value={status} />
+                <strong className="mt-2 block text-xl font-bold">{count}</strong>
+              </BaseCard>
+            ))}
+          </div>
+        </Card>
+        <Card>
+          <SectionHeader eyebrow="Service 2" title="Test case" />
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {service2.map(([status, count]) => (
+              <BaseCard as="div" className="p-3" key={`s2-${status}`} padding="none" tone="soft">
+                <StatusPill tone={statusTone(status)} value={status} />
+                <strong className="mt-2 block text-xl font-bold">{count}</strong>
+              </BaseCard>
+            ))}
+          </div>
+        </Card>
+      </section>
+
+      <Card>
+        <SectionHeader
+          eyebrow="Recent Tasks"
+          title="So&apos;nggi tasklar"
+          action={
+            <Badge tone="soft">
+              {snapshot.source_label || "DB"}
+              {snapshot.db_size_kb ? ` · ${snapshot.db_size_kb.toFixed(1)} KB` : ""}
+            </Badge>
+          }
+        />
+        <div className="mt-4">
+          <RecentTasksTable rows={snapshot.recent_tasks || []} />
+        </div>
+      </Card>
+
+      <Card>
+        <SectionHeader eyebrow="Errors" title="So&apos;nggi xatoliklar" />
+        <div className="mt-4"><ErrorList rows={snapshot.errors_log || []} /></div>
+      </Card>
+
+      <Card>
+        <SectionHeader eyebrow="Blocked Queue" title="Retry kutayotgan tasklar" />
+        <div className="mt-4"><BlockedList rows={snapshot.blocked_tasks || []} /></div>
+      </Card>
+
+      <MonitoringDeleteCard />
+    </>
+  );
 }

@@ -27,12 +27,12 @@ from services.api.session_scope import (
 )
 from utils.auth.auth_db import (
     debug_company_settings_save,
-    get_company_webhook_module_settings,
     get_company_settings,
-    get_user_module_settings,
+    get_company_webhook_module_settings,
     get_user_credentials,
-    save_company_webhook_module_settings,
+    get_user_module_settings,
     save_company_settings,
+    save_company_webhook_module_settings,
     save_user_credentials,
     save_user_module_settings,
 )

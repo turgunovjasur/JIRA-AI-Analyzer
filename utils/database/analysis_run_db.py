@@ -9,16 +9,28 @@ from __future__ import annotations
 from typing import Any
 
 from core.logger import get_logger
-from utils.database.runtime import connect_processing_db
 from utils.database.analysis_run_repository import (
     append_analysis_run_event as repo_append_analysis_run_event,
+)
+from utils.database.analysis_run_repository import (
     build_analysis_run_snapshot as repo_build_analysis_run_snapshot,
+)
+from utils.database.analysis_run_repository import (
     create_analysis_run as repo_create_analysis_run,
+)
+from utils.database.analysis_run_repository import (
     save_analysis_run_final_result as repo_save_analysis_run_final_result,
+)
+from utils.database.analysis_run_repository import (
     seed_analysis_agent_runs as repo_seed_analysis_agent_runs,
+)
+from utils.database.analysis_run_repository import (
     update_analysis_agent_run as repo_update_analysis_agent_run,
+)
+from utils.database.analysis_run_repository import (
     update_analysis_run as repo_update_analysis_run,
 )
+from utils.database.runtime import connect_processing_db
 from utils.database.task_db import _get_db_settings  # type: ignore
 
 log = get_logger("analysis.run.db")
