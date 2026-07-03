@@ -19,19 +19,25 @@ Ikkala servis ham DB'da holat saqlaydi va xatolikda mos holat qo'yadi.
 import os
 from typing import Any
 
-from config.app_settings import get_app_settings, TZPRCheckerSettings
+from config.app_settings import TZPRCheckerSettings, get_app_settings
+from core.constants import ERR_UNKNOWN, RECHECK_REASONS, WARN_AI_TIMEOUT, WARN_LOW_SCORE
 from core.logger import get_logger
-from core.constants import WARN_LOW_SCORE, WARN_AI_TIMEOUT, ERR_UNKNOWN, RECHECK_REASONS
 from core.setup_checks.checks import CHECK_REGISTRY
 from core.setup_checks.engine import SetupContext, run_setup_checks
 from core.setup_checks.profiles import CHECK_PROFILES
-from utils.database.task_db import (
-    get_task, mark_returned, mark_returned_pr_not_merged,
-    set_service1_done, set_service1_error, set_service1_blocked,
-    set_service2_done, set_service2_error, set_service2_blocked,
-    set_return_reason
-)
 from services.webhook.error_handler import _error_type_to_reason_code
+from utils.database.task_db import (
+    get_task,
+    mark_returned,
+    mark_returned_pr_not_merged,
+    set_return_reason,
+    set_service1_blocked,
+    set_service1_done,
+    set_service1_error,
+    set_service2_blocked,
+    set_service2_done,
+    set_service2_error,
+)
 
 log = get_logger("webhook.service_runner")
 
@@ -137,16 +143,19 @@ async def check_tz_pr_and_comment(
         app_settings = get_app_settings_for_company(company_id)
         settings = app_settings.webhook_tz_pr
 
-        from services.webhook.jira_webhook_handler import get_adf_formatter
-        from services.webhook.error_handler import (
-            _classify_error, _write_success_comment,
-            _write_error_comment, _write_critical_error
-        )
         from services.checkers.tzpr_multi_agent import (
-            create_multi_agent_run, run_multi_agent_for_webhook,
+            create_multi_agent_run,
+            run_multi_agent_for_webhook,
         )
-        from utils.jira.jira_comment_writer import JiraCommentWriter
+        from services.webhook.error_handler import (
+            _classify_error,
+            _write_critical_error,
+            _write_error_comment,
+            _write_success_comment,
+        )
+        from services.webhook.jira_webhook_handler import get_adf_formatter
         from utils.auth.auth_db import get_company_webhook_credentials
+        from utils.jira.jira_comment_writer import JiraCommentWriter
         creds = get_company_webhook_credentials(company_id)  # kalit yo'q bo'lsa RuntimeError
         comment_writer = JiraCommentWriter(
             server=creds['jira_server'],
@@ -297,8 +306,8 @@ async def check_tz_pr_and_comment(
             app_settings = get_app_settings_for_company(company_id)
             settings = app_settings.webhook_tz_pr
             from services.webhook.jira_webhook_handler import get_adf_formatter
-            from utils.jira.jira_comment_writer import JiraCommentWriter
             from utils.auth.auth_db import get_company_webhook_credentials
+            from utils.jira.jira_comment_writer import JiraCommentWriter
             _creds = get_company_webhook_credentials(company_id)
             _cw = JiraCommentWriter(server=_creds['jira_server'], email=_creds['jira_email'], token=_creds['jira_token'])
             await _write_critical_error(
@@ -361,8 +370,8 @@ async def _run_testcase_generation(task_key: str, new_status: str, company_id: i
             return
 
         # Testcase generation ishga tushirish
-        from services.webhook.testcase_webhook_handler import check_and_generate_testcases
         from services.webhook.error_handler import _classify_error
+        from services.webhook.testcase_webhook_handler import check_and_generate_testcases
 
         log.info(f"[{task_key}] Service2 ▶ check_and_generate_testcases() chaqirilmoqda...")
         success, message = await check_and_generate_testcases(task_key, new_status, company_id=company_id)
@@ -479,10 +488,10 @@ async def _handle_auto_return(
                 )
                 # Return haqida JIRA'ga qisqa Warning comment yozish
                 try:
-                    from services.webhook.jira_webhook_handler import get_adf_formatter
                     from services.webhook.error_handler import _build_warning_adf, format_warning_simple
-                    from utils.jira.jira_comment_writer import JiraCommentWriter
+                    from services.webhook.jira_webhook_handler import get_adf_formatter
                     from utils.auth.auth_db import get_company_webhook_credentials
+                    from utils.jira.jira_comment_writer import JiraCommentWriter
                     _creds = get_company_webhook_credentials(company_id)
                     comment_writer = JiraCommentWriter(server=_creds['jira_server'], email=_creds['jira_email'], token=_creds['jira_token'])
                     adf_formatter = get_adf_formatter()

@@ -28,8 +28,11 @@ from typing import Optional
 from config.app_settings import get_app_settings
 from core.logger import get_logger
 from utils.database.task_db import (
-    get_task, mark_progressing, mark_error,
-    get_blocked_tasks_ready_for_retry, upsert_task
+    get_blocked_tasks_ready_for_retry,
+    get_task,
+    mark_error,
+    mark_progressing,
+    upsert_task,
 )
 
 log = get_logger("webhook.retry_scheduler")

@@ -142,8 +142,8 @@ async def _run_task_group(
         task_key: JIRA task identifikatori
         new_status: JIRA yangi status (comment'larga yoziladi)
     """
-    from services.webhook.service_runner import check_tz_pr_and_comment, _run_testcase_generation
     from config.app_settings import get_app_settings_for_company
+    from services.webhook.service_runner import _run_testcase_generation, check_tz_pr_and_comment
 
     if company_id is not None:
         app_settings = get_app_settings_for_company(company_id)
@@ -227,8 +227,8 @@ async def _queued_check_tz_pr(
         task_key: JIRA task identifikatori
         new_status: JIRA yangi status
     """
-    from services.webhook.service_runner import check_tz_pr_and_comment
     from config.app_settings import get_app_settings_for_company
+    from services.webhook.service_runner import check_tz_pr_and_comment
 
     if company_id is not None:
         app_settings = get_app_settings_for_company(company_id)

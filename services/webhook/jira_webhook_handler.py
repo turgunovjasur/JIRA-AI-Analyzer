@@ -21,19 +21,21 @@ Author: JASUR TURGUNOV
 Version: 4.0 (Refactored)
 """
 import asyncio
+import json
 import logging
-import sys
 import os
 import secrets
+import sys
 from contextlib import suppress
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, BackgroundTasks, Header, HTTPException, Request, Response
+import uvicorn
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
-import uvicorn
 
 # Loyiha root path qo'shish (turli muhitlarda ishlashi uchun)
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -44,46 +46,40 @@ if sys.platform == 'win32':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
-from core.logger import get_logger
-from services.checkers.tz_pr_checker import TZPRService
-from utils.jira.jira_comment_writer import JiraCommentWriter
-from utils.jira.jira_adf_formatter import JiraADFFormatter
 from config.app_settings import get_app_settings
-from services.webhook.testcase_webhook_handler import is_testcase_trigger_status
-from utils.database.task_db import (
-    get_task, mark_progressing, mark_completed, mark_returned, mark_error,
-    mark_blocked, increment_return_count, set_skip_detected,
-    set_service1_done, set_service1_error, set_service1_skip, set_service1_blocked,
-    set_service2_done, set_service2_error, set_service2_blocked,
-    set_task_timeout_error, reset_service_statuses, get_blocked_tasks_ready_for_retry,
-    log_status_change, enqueue_background_job, get_background_queue_snapshot,
-)
+from core.logger import get_logger
+from services.api.session_scope import load_api_session, require_company_scope
+from services.checkers.tz_pr_checker import TZPRService
 
 # Yangi modullar (biznes logika shu fayllarda)
 from services.webhook.error_handler import (
-    _classify_error,
-    _write_success_comment,
-    _write_error_comment,
-    _write_critical_error,
     _write_skip_notification,
 )
-from services.webhook.skip_detector import check_skip_code_in_comments
-from services.webhook.service_runner import (
-    check_tz_pr_and_comment,
-    _run_testcase_generation,
-    _handle_auto_return,
-)
 from services.webhook.queue_manager import (
-    _get_ai_queue_lock,
-    _wait_for_ai_slot,
-    _run_task_group,
     _queued_check_tz_pr,
+    _run_task_group,
 )
 from services.webhook.retry_scheduler import (
-    _retry_blocked_task,
     _blocked_retry_scheduler,
 )
-from services.api.session_scope import load_api_session, require_company_scope
+from services.webhook.service_runner import (
+    _run_testcase_generation,
+    check_tz_pr_and_comment,
+)
+from services.webhook.skip_detector import check_skip_code_in_comments
+from services.webhook.testcase_webhook_handler import is_testcase_trigger_status
+from utils.database.task_db import (
+    enqueue_background_job,
+    get_background_queue_snapshot,
+    get_task,
+    increment_return_count,
+    log_status_change,
+    mark_progressing,
+    reset_service_statuses,
+    set_service1_skip,
+)
+from utils.jira.jira_adf_formatter import JiraADFFormatter
+from utils.jira.jira_comment_writer import JiraCommentWriter
 
 log = get_logger("webhook.handler")
 
@@ -318,6 +314,75 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
 app.add_middleware(_SecurityHeadersMiddleware)
 
 
+# ============================================================================
+# UNIFIED ERROR ENVELOPE (additive)
+# ============================================================================
+# `detail` maydoni avvalgidek qoladi (frontend BFF shuni o'qiydi) —
+# `error: {code, message}` obyekt qo'shimcha, barqaror shakl sifatida qo'shiladi.
+# Maqsad konvert hujjati: docs/API_VERSIONING.md
+
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.utils import is_body_allowed_for_status_code
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+_ERROR_CODE_BY_STATUS = {
+    400: "bad_request",
+    401: "unauthorized",
+    403: "forbidden",
+    404: "not_found",
+    409: "conflict",
+    422: "validation_error",
+    429: "rate_limited",
+    500: "internal_error",
+    502: "bad_gateway",
+    503: "service_unavailable",
+}
+
+
+def _error_code_for_status(status_code: int) -> str:
+    fallback = "internal_error" if status_code >= 500 else "http_error"
+    return _ERROR_CODE_BY_STATUS.get(status_code, fallback)
+
+
+def _error_message_from_detail(detail: Any) -> str:
+    if isinstance(detail, str) and detail.strip():
+        return detail
+    if isinstance(detail, dict):
+        for key in ("error_message", "error", "message"):
+            value = detail.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+    return "So'rov bajarilmadi"
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _http_exception_envelope(request: Request, exc: StarletteHTTPException):
+    headers = getattr(exc, "headers", None)
+    if not is_body_allowed_for_status_code(exc.status_code):
+        return Response(status_code=exc.status_code, headers=headers)
+    payload = {
+        "detail": jsonable_encoder(exc.detail),
+        "error": {
+            "code": _error_code_for_status(exc.status_code),
+            "message": _error_message_from_detail(exc.detail),
+        },
+    }
+    return JSONResponse(status_code=exc.status_code, content=payload, headers=headers)
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_exception_envelope(request: Request, exc: RequestValidationError):
+    payload = {
+        "detail": jsonable_encoder(exc.errors()),
+        "error": {
+            "code": "validation_error",
+            "message": "So'rov validatsiyadan o'tmadi",
+        },
+    }
+    return JSONResponse(status_code=422, content=payload)
+
+
 def _resolve_company_for_webhook(task_key: str, company_code: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Webhook uchun kompaniyani aniqlash."""
     from utils.auth.auth_db import get_company_by_code, get_company_by_project_key
@@ -386,6 +451,13 @@ try:
 except ImportError:
     pass
 
+# Admin job console (DLQ) API ni ulash
+try:
+    from services.api.admin_jobs_api import router as admin_jobs_router
+    app.include_router(admin_jobs_router)
+except ImportError:
+    pass
+
 
 # ============================================================================
 # WEBHOOK MODELS
@@ -397,10 +469,87 @@ class WebhookPayload(BaseModel):
 
     JIRA tomonidan yuborilgan JSON'ni validatsiya qilish uchun.
     Haqiqiy payload ancha katta — shu minimal maydonlar kerak.
+
+    ESLATMA: parsing ataylab lenient qoldirilgan (JIRA payload'lari event
+    turiga qarab farq qiladi) — model hozircha majburiy validatsiyada
+    ishlatilmaydi.
     """
     webhookEvent: str
     issue: Dict[str, Any]
     changelog: Optional[Dict[str, Any]] = None
+
+
+# Webhook body hajm cheklovi (DoS himoyasi). JIRA issue_updated payload'lari
+# odatda bir necha yuz KB dan oshmaydi.
+_WEBHOOK_MAX_BODY_BYTES = int(os.getenv("APP_WEBHOOK_MAX_BODY_BYTES", str(2 * 1024 * 1024)))
+
+
+def _check_webhook_secret(request: Request, company_id: int, log_key: str) -> Optional[JSONResponse]:
+    """
+    Kompaniya webhook secret tekshiruvi.
+
+    Muvaffaqiyatda None, aks holda 401 JSONResponse qaytaradi.
+    Company-specific endpointda body o'qishdan OLDIN chaqiriladi.
+    """
+    from utils.auth.auth_db import get_company_settings
+
+    company_settings = get_company_settings(company_id)
+    expected_secret = (company_settings.get("webhook_secret") or "").strip()
+    require_secret = (
+        os.getenv("APP_WEBHOOK_REQUIRE_SECRET", "").strip().lower() in ("1", "true", "yes")
+        or os.getenv("APP_STRICT_MODE", "").strip().lower() in ("1", "true", "yes")
+    )
+    if require_secret and not expected_secret:
+        log.warning(f"[{log_key}] Webhook secret sozlanmagan (company_id={company_id})")
+        return JSONResponse(status_code=401, content={"status": "unauthorized", "reason": "webhook secret not configured"})
+    if expected_secret:
+        # Header ustuvor. Query-param (?token=) — deprecated fallback: token
+        # URL orqali server/proxy loglariga tushadi, shuning uchun ogohlantiramiz.
+        header_secret = (request.headers.get("X-Webhook-Secret") or "").strip()
+        query_secret = (request.query_params.get("token") or "").strip()
+        provided_secret = header_secret or query_secret
+        if not secrets.compare_digest(provided_secret, expected_secret):
+            return JSONResponse(status_code=401, content={"status": "unauthorized", "reason": "invalid webhook secret"})
+        if not header_secret and query_secret:
+            log.warning(
+                f"[{log_key}] DEPRECATED -> webhook secret query-param (?token=) orqali yuborildi. "
+                f"X-Webhook-Secret header'ga o'ting (token URL loglariga tushadi) | company_id={company_id}"
+            )
+    return None
+
+
+async def _read_webhook_json(request: Request) -> tuple:
+    """
+    Webhook body'ni hajm cheklovi bilan o'qish va JSON parse qilish.
+
+    Returns:
+        (body_dict, None) — muvaffaqiyatda
+        (None, JSONResponse) — hajm oshsa 413, JSON buzuq bo'lsa 400
+    """
+    content_length = (request.headers.get("content-length") or "").strip()
+    if content_length:
+        try:
+            if int(content_length) > _WEBHOOK_MAX_BODY_BYTES:
+                return None, JSONResponse(status_code=413, content={"status": "error", "reason": "payload too large"})
+        except ValueError:
+            return None, JSONResponse(status_code=400, content={"status": "error", "reason": "invalid content-length"})
+
+    # Content-Length yolg'on/yo'q bo'lishi mumkin — real o'qishda ham cheklaymiz
+    chunks = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > _WEBHOOK_MAX_BODY_BYTES:
+            return None, JSONResponse(status_code=413, content={"status": "error", "reason": "payload too large"})
+        chunks.append(chunk)
+
+    try:
+        body = json.loads(b"".join(chunks))
+    except (ValueError, UnicodeDecodeError):
+        return None, JSONResponse(status_code=400, content={"status": "error", "reason": "invalid JSON body"})
+    if not isinstance(body, dict):
+        return None, JSONResponse(status_code=400, content={"status": "error", "reason": "JSON body must be an object"})
+    return body, None
 
 
 # ============================================================================
@@ -420,6 +569,9 @@ async def _jira_webhook_impl(
     o'zgartiriladi va har webhook'da qayta o'qiladi.
 
     Ishlash mantiqi:
+    0. Company-specific endpointda webhook secret body O'QISHDAN OLDIN
+       tekshiriladi (auth-first); body hajmi _WEBHOOK_MAX_BODY_BYTES bilan
+       cheklangan (413) — DoS himoyasi
     1. Faqat 'jira:issue_updated' event'larini qabul qiladi, boshqalari ignored
     2. Changelog'dan status o'zgarishini topadi (field='status')
     3. Yangi status settings'dagi trigger status'lardan birimi? → davom etadi
@@ -442,7 +594,30 @@ async def _jira_webhook_impl(
         - {"status": "error"} — kutilmagan xato
     """
     try:
-        body = await request.json()
+        # ━━━ AUTH-FIRST (company-specific endpoint) ━━━
+        # Kompaniya company_code'dan aniqlanadi → secret body O'QISHDAN OLDIN
+        # tekshiriladi. Legacy endpointda kompaniya faqat body'dagi project
+        # key'dan topiladi, shuning uchun u yerda secret parse'dan keyin
+        # tekshiriladi (hajm cheklovi baribir amal qiladi).
+        company = None
+        company_id = None
+        secret_checked = False
+        if company_code:
+            company = _resolve_company_for_webhook("", company_code)
+            if not company:
+                log.warning(f"Company code '{company_code}' uchun kompaniya topilmadi — ignored")
+                return {"status": "ignored", "reason": f"unknown company code '{company_code}'"}
+            company_id = company['id']
+            auth_error = _check_webhook_secret(request, company_id, log_key=company_code)
+            if auth_error:
+                return auth_error
+            secret_checked = True
+
+        # ━━━ Body o'qish (hajm cheklovi bilan — DoS himoyasi) ━━━
+        body, body_error = await _read_webhook_json(request)
+        if body_error:
+            return body_error
+
         event = body.get('webhookEvent', 'unknown')
 
         # Faqat issue update event'larni qabul qilamiz
@@ -480,48 +655,27 @@ async def _jira_webhook_impl(
         if not status_changed:
             return {"status": "ignored", "reason": "status not changed", "debug_items": items}
 
-        # Tavsiya etilgan routing: company-specific endpoint.
-        # Legacy endpoint faqat backward compatibility uchun qoldirilgan.
+        # Tavsiya etilgan routing: company-specific endpoint (yuqorida auth-first
+        # bilan allaqachon aniqlangan). Legacy endpoint faqat backward
+        # compatibility uchun — kompaniya body'dagi project key'dan topiladi.
         from config.app_settings import get_app_settings_for_company
         project_key = task_key.split('-')[0].upper()
-        company = _resolve_company_for_webhook(task_key, company_code)
+        if company is None:
+            company = _resolve_company_for_webhook(task_key, company_code)
         if company:
             company_id = company['id']
             app_settings = get_app_settings_for_company(company_id)
             log.info(f"[{task_key}] Company: {company.get('company_code')} (id={company_id})")
         else:
-            if company_code:
-                log.warning(f"[{task_key}] Company code '{company_code}' uchun kompaniya topilmadi — ignored")
-                return {"status": "ignored", "reason": f"unknown company code '{company_code}'"}
             log.warning(f"[{task_key}] Project key '{project_key}' uchun kompaniya topilmadi yoki ambiguous — ignored")
             return {"status": "ignored", "reason": f"unknown or ambiguous project key '{project_key}'"}
 
-        # Webhook secret tekshiruvi (agar kompaniya sozlamalarida belgilangan bo'lsa)
-        from utils.auth.auth_db import get_company_settings
-        company_settings = get_company_settings(company_id)
-        expected_secret = (company_settings.get("webhook_secret") or "").strip()
-        require_secret = (
-            os.getenv("APP_WEBHOOK_REQUIRE_SECRET", "").strip().lower() in ("1", "true", "yes")
-            or os.getenv("APP_STRICT_MODE", "").strip().lower() in ("1", "true", "yes")
-        )
-        if require_secret and not expected_secret:
-            from fastapi.responses import JSONResponse
-            log.warning(f"[{task_key}] Webhook secret sozlanmagan (company_id={company_id})")
-            return JSONResponse(status_code=401, content={"status": "unauthorized", "reason": "webhook secret not configured"})
-        if expected_secret:
-            # Header ustuvor. Query-param (?token=) — deprecated fallback: token
-            # URL orqali server/proxy loglariga tushadi, shuning uchun ogohlantiramiz.
-            header_secret = (request.headers.get("X-Webhook-Secret") or "").strip()
-            query_secret = (request.query_params.get("token") or "").strip()
-            provided_secret = header_secret or query_secret
-            if not secrets.compare_digest(provided_secret, expected_secret):
-                from fastapi.responses import JSONResponse
-                return JSONResponse(status_code=401, content={"status": "unauthorized", "reason": "invalid webhook secret"})
-            if not header_secret and query_secret:
-                log.warning(
-                    f"[{task_key}] DEPRECATED -> webhook secret query-param (?token=) orqali yuborildi. "
-                    f"X-Webhook-Secret header'ga o'ting (token URL loglariga tushadi) | company_id={company_id}"
-                )
+        # Webhook secret tekshiruvi (legacy endpoint — company endpointda bu
+        # tekshiruv body o'qishdan oldin bajarilgan)
+        if not secret_checked:
+            auth_error = _check_webhook_secret(request, company_id, log_key=task_key)
+            if auth_error:
+                return auth_error
 
         # Obuna tekshiruvi — muddati o'tgan yoki bloklangan kompaniya ignore
         from utils.auth.auth_db import is_company_subscription_active
@@ -922,8 +1076,8 @@ def get_metrics():
         "timestamp": datetime.now().isoformat(),
     }
     try:
-        from utils.database.runtime import connect_processing_db
         from utils.database.monitoring_repository import get_overall_stats_df
+        from utils.database.runtime import connect_processing_db
 
         conn = connect_processing_db(timeout=5.0, row_factory=True)
         df = get_overall_stats_df(conn, company_id=None)
@@ -1117,6 +1271,42 @@ async def manual_testcase(
         ),
         "trigger_status": trigger_status
     }
+
+
+# ============================================================================
+# API VERSIONING — /api/v1 ALIAS
+# ============================================================================
+
+def _mount_api_v1_aliases(target_app: FastAPI) -> None:
+    """
+    Barcha mavjud /api/* endpointlarni /api/v1/* ostida ham taqdim etadi.
+
+    Eski yo'llar o'zgarmaydi (backward compatible); webhook (/webhook/...)
+    va boshqa ildiz endpointlar versiyalanmaydi. Batafsil: docs/API_VERSIONING.md
+    Modul oxirida chaqiriladi — barcha route'lar ro'yxatdan o'tgan bo'lishi shart.
+    """
+    from fastapi.routing import APIRoute
+
+    for route in list(target_app.router.routes):
+        if not isinstance(route, APIRoute):
+            continue
+        path = route.path
+        if not path.startswith("/api/") or path.startswith("/api/v1/"):
+            continue
+        target_app.add_api_route(
+            "/api/v1" + path[len("/api"):],
+            route.endpoint,
+            methods=sorted(route.methods or []),
+            response_model=route.response_model,
+            status_code=route.status_code,
+            tags=route.tags,
+            dependencies=list(route.dependencies or []),
+            name=f"{route.name}__v1",
+            include_in_schema=False,
+        )
+
+
+_mount_api_v1_aliases(app)
 
 
 # ============================================================================

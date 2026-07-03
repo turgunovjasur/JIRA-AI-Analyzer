@@ -9,6 +9,7 @@ Author: JASUR TURGUNOV
 Version: 1.0
 """
 from typing import Optional, Tuple
+
 from core.logger import get_logger
 
 log = get_logger("testcase.webhook")
@@ -59,7 +60,8 @@ async def check_and_generate_testcases(
         # 3. Test case'lar yaratish — UI bilan AYNAN bir xil multi-agent run engine.
         #    Faqat kirish nuqtasi (webhook) va yetkazib berish (JIRA comment) farq qiladi.
         from services.generators.testcase_run import (
-            create_testcase_run, run_testcase_for_webhook,
+            create_testcase_run,
+            run_testcase_for_webhook,
         )
 
         if company_id is not None:
@@ -98,11 +100,10 @@ async def check_and_generate_testcases(
             )
             if should_write_comment:
                 try:
-                    from services.webhook.jira_webhook_handler import get_adf_formatter
                     from services.webhook.error_handler import _write_error_comment
-                    from utils.jira.jira_comment_writer import JiraCommentWriter
-                    from utils.auth.auth_db import get_company_credentials
+                    from services.webhook.jira_webhook_handler import get_adf_formatter
                     from utils.auth.auth_db import get_company_webhook_credentials
+                    from utils.jira.jira_comment_writer import JiraCommentWriter
                     _creds = get_company_webhook_credentials(company_id)
                     writer = JiraCommentWriter(
                         server=_creds['jira_server'],
@@ -173,7 +174,6 @@ def _write_testcases_comment(
     """
     from utils.jira.jira_comment_writer import JiraCommentWriter
     from utils.jira.testcase_adf_formatter import TestcaseADFFormatter
-    from utils.auth.auth_db import get_company_credentials
 
     try:
         from utils.auth.auth_db import get_company_webhook_credentials
@@ -268,7 +268,7 @@ def generate_testcases_sync(
                     executor_timeout = get_app_settings(force_reload=False).queue.executor_timeout
                 except Exception:
                     executor_timeout = 120  # Default fallback (2 daqiqa)
-                
+
                 return future.result(timeout=executor_timeout)
         else:
             return loop.run_until_complete(
