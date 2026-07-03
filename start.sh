@@ -182,6 +182,21 @@ stop_port_process_if_requested() {
   done
 }
 
+# Log fayl 50MB dan oshsa startup'da .old ga ko'chiriladi (bitta oldingi nusxa saqlanadi).
+# Uzoq muddatli prod uchun tizim darajasida logrotate sozlash tavsiya etiladi.
+rotate_log_if_large() {
+  local file="$1"
+  local max_bytes=$((50 * 1024 * 1024))
+  if [[ -f "$file" ]]; then
+    local size
+    size="$(wc -c <"$file" | tr -d ' ')"
+    if (( size > max_bytes )); then
+      mv -f "$file" "${file}.old"
+      log "[LOG] $(basename "$file") 50MB dan oshdi -> ${file}.old"
+    fi
+  fi
+}
+
 http_ready() {
   local url="$1"
   START_URL="$url" "$PYTHON_BIN" - <<'PY'
@@ -341,6 +356,8 @@ require_file "$FRONTEND_DIR/package.json" "Frontend package.json topilmadi: $FRO
 require_file "$FRONTEND_DIR/node_modules" "Frontend dependency topilmadi. Avval 'cd frontend && npm install' ni bajaring."
 
 mkdir -p "$LOG_DIR"
+rotate_log_if_large "$BACKEND_LOG"
+rotate_log_if_large "$WORKER_LOG"
 prepare_local_runtime_paths
 choose_database_backend
 
