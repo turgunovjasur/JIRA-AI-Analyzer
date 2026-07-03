@@ -7,6 +7,7 @@ shared API keys and webhook API keys.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict
 from typing import Any
 
@@ -27,6 +28,7 @@ from services.api.session_scope import (
 )
 from utils.auth.auth_db import (
     debug_company_settings_save,
+    get_company_by_id,
     get_company_settings,
     get_company_webhook_module_settings,
     get_user_credentials,
@@ -344,6 +346,24 @@ async def save_webhook_api_keys(
     }
 
 
+def _build_company_webhook_url(company_id: int) -> str:
+    """
+    Kompaniya uchun JIRA'ga qo'yiladigan tayyor webhook URL.
+
+    Secret ?token= query orqali — JIRA'ning oddiy system webhook'i custom
+    header yubora olmaydi. Base: APP_BASE_URL (Caddy /webhook/* ni backendga
+    proxy qiladi, shuning uchun domen frontend bilan bir xil).
+    """
+    company = get_company_by_id(company_id) or {}
+    company_code = str(company.get("company_code") or "").strip()
+    if not company_code:
+        return ""
+    base_url = (os.getenv("APP_BASE_URL") or "").strip().rstrip("/")
+    secret = str(get_company_settings(company_id).get("webhook_secret") or "").strip()
+    url = f"{base_url}/webhook/jira/{company_code}"
+    return f"{url}?token={secret}" if secret else url
+
+
 @router.post("/webhook/config/read")
 async def read_webhook_config(
     payload: WebhookConfigReadRequest,
@@ -364,6 +384,7 @@ async def read_webhook_config(
     return {
         "success": True,
         "data": {
+            "webhook_url": _build_company_webhook_url(company_id),
             "trigger_status": webhook_settings.trigger_status,
             "trigger_status_aliases": webhook_settings.trigger_status_aliases,
             "return_threshold": webhook_settings.return_threshold,

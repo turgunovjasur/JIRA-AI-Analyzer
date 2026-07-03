@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from services.api.settings_api import _mask_settings_secrets
+from services.api.settings_api import _build_company_webhook_url, _mask_settings_secrets
 
 pytestmark = pytest.mark.no_db
 
@@ -37,3 +37,38 @@ def test_settings_api_masks_figma_token_rows_without_breaking_json_shape():
     assert rows[0]["token"] != "figma-secret-token"
     assert rows[0]["token"].endswith("oken")
     assert rows[1]["name"] == "qa"
+
+
+def test_build_company_webhook_url_with_secret(monkeypatch):
+    monkeypatch.setenv("APP_BASE_URL", "https://qa.example.uz/")
+    monkeypatch.setattr(
+        "services.api.settings_api.get_company_by_id",
+        lambda company_id: {"id": company_id, "company_code": "uzum"},
+    )
+    monkeypatch.setattr(
+        "services.api.settings_api.get_company_settings",
+        lambda company_id: {"webhook_secret": "s3cr3t-token"},
+    )
+
+    assert _build_company_webhook_url(331) == "https://qa.example.uz/webhook/jira/uzum?token=s3cr3t-token"
+
+
+def test_build_company_webhook_url_without_secret(monkeypatch):
+    monkeypatch.setenv("APP_BASE_URL", "https://qa.example.uz")
+    monkeypatch.setattr(
+        "services.api.settings_api.get_company_by_id",
+        lambda company_id: {"id": company_id, "company_code": "uzum"},
+    )
+    monkeypatch.setattr(
+        "services.api.settings_api.get_company_settings",
+        lambda company_id: {"webhook_secret": ""},
+    )
+
+    assert _build_company_webhook_url(331) == "https://qa.example.uz/webhook/jira/uzum"
+
+
+def test_build_company_webhook_url_missing_company(monkeypatch):
+    monkeypatch.setenv("APP_BASE_URL", "https://qa.example.uz")
+    monkeypatch.setattr("services.api.settings_api.get_company_by_id", lambda company_id: None)
+
+    assert _build_company_webhook_url(999) == ""

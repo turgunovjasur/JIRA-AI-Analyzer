@@ -99,6 +99,7 @@ export async function GET() {
     return NextResponse.json({
       success: true,
       data: {
+        webhook_url: String(data.webhook_url || ""),
         auto_return_enabled: Boolean(data.auto_return_enabled),
         allowed_issue_types: String(data.allowed_issue_types || ""),
         excluded_assignees: String(data.excluded_assignees || ""),

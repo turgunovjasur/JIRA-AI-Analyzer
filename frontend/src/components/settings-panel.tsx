@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import { PageIntro } from "@/components/ui/page-intro";
 import { SectionHeader } from "@/components/ui/section-header";
@@ -288,6 +289,19 @@ export function SettingsPanel({
   const [form, setForm] = useState<SettingsFormState>(EMPTY_FORM);
   const [webhookForm, setWebhookForm] = useState<WebhookFormState>(EMPTY_WEBHOOK_FORM);
   const [webhookBaseline, setWebhookBaseline] = useState<WebhookFormState>(EMPTY_WEBHOOK_FORM);
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [webhookUrlCopied, setWebhookUrlCopied] = useState(false);
+
+  const maskedWebhookUrl = webhookUrl.replace(/(token=)[^&]+/, "$1••••••••");
+  const copyWebhookUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(webhookUrl);
+      setWebhookUrlCopied(true);
+      setTimeout(() => setWebhookUrlCopied(false), 2000);
+    } catch {
+      // clipboard ruxsati yo'q — foydalanuvchi URL'ni qo'lda belgilab nusxalaydi
+    }
+  };
   const [webhookTriggerConfigured, setWebhookTriggerConfigured] = useState<WebhookTriggerConfiguredState>(
     EMPTY_WEBHOOK_TRIGGER_CONFIGURED,
   );
@@ -488,6 +502,7 @@ export function SettingsPanel({
           const webhookPayload = (await webhookResponse.json().catch(() => null)) as
             | {
                 data?: {
+                  webhook_url?: string;
                   auto_return_enabled?: boolean;
                   allowed_issue_types?: string;
                   excluded_assignees?: string;
@@ -539,6 +554,7 @@ export function SettingsPanel({
 
           if (webhookResponse.ok && webhookPayload?.success) {
             const data = webhookPayload.data || {};
+            setWebhookUrl(String(data.webhook_url || ""));
             const current = String(data.trigger_status || "READY TO TEST");
             const showContradictory = Boolean(data.show_contradictory_comments ?? true);
             const normalizedSections = CHECKER_COMMENT_SECTIONS;
@@ -1493,6 +1509,28 @@ export function SettingsPanel({
                     .filter(Boolean)
                     .join(" ")}
                 </Notice>
+              ) : null}
+
+              {webhookUrl ? (
+                <div className="mt-4">
+                  <SettingsInnerCard>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-semibold text-foreground">📡 JIRA Webhook URL</div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          JIRA'da ⚙️ → System → Webhooks bo'limiga aynan shu URL'ni qo'ying.
+                          Token — kompaniyangizning webhook paroli (URL bilan birga yuboriladi).
+                        </div>
+                        <code className="mt-2 block truncate text-xs" title={maskedWebhookUrl}>
+                          {maskedWebhookUrl}
+                        </code>
+                      </div>
+                      <Button onClick={() => void copyWebhookUrl()} size="sm" type="button" variant="primary">
+                        {webhookUrlCopied ? "Nusxalandi ✓" : "URL'ni nusxalash"}
+                      </Button>
+                    </div>
+                  </SettingsInnerCard>
+                </div>
               ) : null}
 
               <div className="g2 mt-4 items-start webhook-cards-grid">

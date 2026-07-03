@@ -790,6 +790,7 @@ export type ModuleSettingsSaveRequest = {
 export type WebhookSettingsView = {
   success: boolean;
   data: {
+    webhook_url?: string;
     auto_return_enabled: boolean;
     excluded_assignees: string;
     min_tz_description_chars: number;
