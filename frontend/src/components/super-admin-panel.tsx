@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Eye, EyeOff, Plus, X } from "lucide-react";
 
+import { AdminJobsPanel } from "@/components/admin-jobs-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { BaseCard } from "@/components/ui/card";
@@ -42,7 +43,7 @@ type SuperAdminPanelProps = {
   currentUsername: string;
 };
 
-type SuperAdminTab = "companies" | "ai" | "usage" | "system" | "platform";
+type SuperAdminTab = "companies" | "ai" | "usage" | "jobs" | "system" | "platform";
 
 type CompanyCreateForm = {
   admin_password: string;
@@ -346,6 +347,7 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
   });
   const [openCompanyId, setOpenCompanyId] = useState<number | null>(null);
   const [seatDrafts, setSeatDrafts] = useState<Record<number, number>>({});
+  const [budgetDrafts, setBudgetDrafts] = useState<Record<number, string>>({});
   const [moduleDrafts, setModuleDrafts] = useState<Record<number, CompanyModules>>({});
   const [subscriptionDrafts, setSubscriptionDrafts] = useState<Record<number, CompanySubscription>>({});
   const [deleteDrafts, setDeleteDrafts] = useState<Record<number, string>>({});
@@ -568,6 +570,38 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
     );
   }
 
+  useEffect(() => {
+    if (!openCompanyId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch(`/api/super-admin/companies/${openCompanyId}`);
+        const payload = await parseJson<{ ai_monthly_budget_usd?: number | null; success?: boolean }>(response);
+        if (!cancelled && response.ok && payload?.success) {
+          const value = payload.ai_monthly_budget_usd;
+          setBudgetDrafts((current) => ({
+            ...current,
+            [openCompanyId]: value === null || value === undefined ? "" : String(value),
+          }));
+        }
+      } catch {
+        // Budjet o'qilmasa input bo'sh qoladi — saqlashda baribir yangilanadi.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [openCompanyId]);
+
+  async function saveAiBudget(company: SuperAdminCompany) {
+    const draft = (budgetDrafts[company.id] ?? "").trim();
+    await updateCompanyAction(
+      company,
+      { action: "ai_budget", ai_monthly_budget_usd: draft === "" ? null : Number(draft) },
+      `${company.company_code} oylik AI budjeti saqlandi.`,
+    );
+  }
+
   async function saveSeatLimit(company: SuperAdminCompany) {
     await updateCompanyAction(
       company,
@@ -753,6 +787,7 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
               { key: "companies", label: "🏢 Kompaniyalar" },
               { key: "ai", label: "🤖 AI Sozlamalar" },
               { key: "usage", label: "AI Usage" },
+              { key: "jobs", label: "📋 Job Queue" },
               { key: "system", label: "⚙️ System" },
               { key: "platform", label: "🔐 Platform Admin" },
             ].map((item) => (
@@ -903,6 +938,32 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                                     }
                                     type="number"
                                     value={seatDrafts[company.id] ?? company.seat_limit}
+                                  />
+                                  <BaseInlineActionField
+                                    action={(
+                                      <Button
+                                        className="tenant-action-btn tenant-action-btn--save"
+                                        disabled={busy}
+                                        onClick={() => void saveAiBudget(company)}
+                                        size="sm"
+                                        type="button"
+                                        variant="ghost"
+                                      >
+                                        Saqlash
+                                      </Button>
+                                    )}
+                                    className={SETTINGS_INPUT_CLASS}
+                                    hint="Bo'sh = cheksiz. Limitga yetganda yangi AI runlar bloklanadi (F2-5)."
+                                    label="Oylik AI budjet (USD)"
+                                    min={0}
+                                    onChange={(value) =>
+                                      setBudgetDrafts((current) => ({
+                                        ...current,
+                                        [company.id]: String(value ?? ""),
+                                      }))
+                                    }
+                                    type="number"
+                                    value={budgetDrafts[company.id] ?? ""}
                                   />
                                   <Button
                                     className="mt-3 tenant-action-btn tenant-action-btn--status"
@@ -1586,6 +1647,8 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
               </SettingsBaseCard>
             </>
           ) : null}
+
+          {tab === "jobs" ? <AdminJobsPanel /> : null}
 
           {tab === "platform" ? (
             <SettingsBaseCard header={<SectionHeader eyebrow="PLATFORM ADMIN" title="Super admin parolini yangilash" />}>

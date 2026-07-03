@@ -1,5 +1,5 @@
 """
-Internal RPC-style API for the remaining Streamlit admin/setup/settings flows.
+Internal RPC-style API for the Next.js frontend's admin/setup/settings flows (BFF).
 
 This is intentionally narrow and whitelisted so the frontend can stop importing
 backend persistence code directly while we preserve current business logic.
@@ -17,17 +17,16 @@ from pydantic import BaseModel, Field
 
 from config.app_settings import (
     AppSettings,
-    BugAnalyzerSettings,
     ModuleVisibility,
     QueueSettings,
-    StatisticsSettings,
-    TZPRCheckerSettings,
     TestcaseGeneratorSettings,
+    TZPRCheckerSettings,
     get_app_settings,
     get_app_settings_for_company,
     get_app_settings_for_user,
     save_app_settings,
 )
+from services.api.session_scope import get_session_company_id, get_session_role, load_api_session
 from utils.auth.auth_db import (
     count_users_in_company,
     create_company,
@@ -38,6 +37,7 @@ from utils.auth.auth_db import (
     delete_user,
     delete_user_for_company,
     get_all_companies,
+    get_company_ai_budget,
     get_company_by_id,
     get_company_modules,
     get_company_settings,
@@ -45,8 +45,8 @@ from utils.auth.auth_db import (
     get_company_webhook_config,
     get_company_webhook_module_settings,
     get_effective_company_modules,
-    get_global_setting,
     get_global_gemini_defaults,
+    get_global_setting,
     get_platform_admin_by_username,
     get_recent_login_audit_logs,
     get_user_by_id_and_company,
@@ -54,6 +54,7 @@ from utils.auth.auth_db import (
     get_users_by_company,
     has_api_keys_configured,
     has_user_credentials_configured,
+    save_company_ai_budget,
     save_company_modules,
     save_company_settings,
     save_company_subscription,
@@ -71,7 +72,6 @@ from utils.auth.auth_db import (
     validate_company_subscription_data,
     write_audit_log,
 )
-from services.api.session_scope import get_session_company_id, get_session_role, load_api_session
 from utils.auth.credential_crypto import get_credential_security_status, get_sensitive_credential_fields
 from utils.database.ai_usage_db import fetch_ai_usage_dashboard
 
@@ -85,27 +85,23 @@ class RpcRequest(BaseModel):
 
 
 def _build_app_settings_from_dict(payload: dict[str, Any]) -> AppSettings:
-    def _testcase_settings(key: str) -> TestcaseGeneratorSettings:
-        data = dict(payload.get(key, {}) or {})
-        for legacy_key in (
-            "max_test_cases",
-            "default_include_pr",
-            "default_include_comments",
-            "default_include_code",
-            "default_include_figma",
-        ):
-            data.pop(legacy_key, None)
-        return TestcaseGeneratorSettings(**data)
+    def _kw(cls, key: str) -> dict[str, Any]:
+        # Eski payloadlarda olib tashlangan kalitlar bo'lishi mumkin
+        # (masalan bug_analyzer_enabled, max_test_cases). Faqat dataclass
+        # tan oladigan maydonlarni o'tkazamiz — eski client crash bermasin.
+        raw = payload.get(key, {})
+        if not isinstance(raw, dict):
+            return {}
+        valid = set(cls.__dataclass_fields__)
+        return {k: v for k, v in raw.items() if k in valid}
 
     return AppSettings(
-        modules=ModuleVisibility(**payload.get("modules", {})),
-        bug_analyzer=BugAnalyzerSettings(**payload.get("bug_analyzer", {})),
-        statistics=StatisticsSettings(**payload.get("statistics", {})),
-        tz_pr_checker=TZPRCheckerSettings(**payload.get("tz_pr_checker", {})),
-        webhook_tz_pr=TZPRCheckerSettings(**payload.get("webhook_tz_pr", {})),
-        testcase_generator=_testcase_settings("testcase_generator"),
-        webhook_testcase=_testcase_settings("webhook_testcase"),
-        queue=QueueSettings(**payload.get("queue", {})),
+        modules=ModuleVisibility(**_kw(ModuleVisibility, "modules")),
+        tz_pr_checker=TZPRCheckerSettings(**_kw(TZPRCheckerSettings, "tz_pr_checker")),
+        webhook_tz_pr=TZPRCheckerSettings(**_kw(TZPRCheckerSettings, "webhook_tz_pr")),
+        testcase_generator=TestcaseGeneratorSettings(**_kw(TestcaseGeneratorSettings, "testcase_generator")),
+        webhook_testcase=TestcaseGeneratorSettings(**_kw(TestcaseGeneratorSettings, "webhook_testcase")),
+        queue=QueueSettings(**_kw(QueueSettings, "queue")),
     )
 
 
@@ -184,6 +180,9 @@ _OPERATIONS: dict[str, Callable[..., Any]] = {
     "create_company": create_company,
     "update_company_status": update_company_status,
     "update_company_seat_limit": update_company_seat_limit,
+    # F2-5: oylik AI budjet — o'qish company admin (o'z scope), yozish faqat super_admin.
+    "get_company_ai_budget": get_company_ai_budget,
+    "save_company_ai_budget": save_company_ai_budget,
     "get_company_subscription": get_company_subscription,
     "validate_company_subscription_data": validate_company_subscription_data,
     "save_company_subscription": save_company_subscription,
@@ -216,6 +215,7 @@ _OPERATIONS: dict[str, Callable[..., Any]] = {
 
 _COMPANY_ADMIN_COMPANY_ARG0_OPS = {
     "count_users_in_company",
+    "get_company_ai_budget",
     "get_company_by_id",
     "get_company_modules",
     "save_company_settings",

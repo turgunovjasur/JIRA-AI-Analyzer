@@ -234,7 +234,8 @@ export function ToggleRow({
   onChange: (next: boolean) => void;
 }) {
   return (
-    <div className={`tog-wrap${value ? " tog-on" : ""}`} onClick={() => onChange(!value)}>
+    // Haqiqiy boshqaruv ichkaridagi button (aria-pressed) — wrapper click faqat qulaylik.
+    <div className={`tog-wrap${value ? " tog-on" : ""}`} onClick={() => onChange(!value)} role="presentation">
       <div className="tog-info">
         <span className="tog-label">{label}</span>
         {desc ? <span className="tog-desc">{desc}</span> : null}
@@ -684,12 +685,14 @@ export function BaseTagInput({
 
   return (
     <div>
+      {/* Haqiqiy boshqaruv ichkaridagi input — wrapper click faqat fokus qulayligi uchun. */}
       <div
         className="tag-input-wrap"
         onClick={(event) => {
           const input = event.currentTarget.querySelector("input") as HTMLInputElement | null;
           input?.focus();
         }}
+        role="presentation"
       >
         {value.map((tag) => (
           <span className="tag-chip" key={tag}>

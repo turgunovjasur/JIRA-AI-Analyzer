@@ -10,7 +10,10 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from core.logger import get_logger
 from core.module_errors import ModuleCheck, build_preflight_error_payload
+
+log = get_logger("core.start_preflight")
 
 TASK_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
 
@@ -50,6 +53,9 @@ class StartPreflightResult:
     # Global (QA ASSISTANT) Gemini kvota holati — UI banner/qolgan urinish uchun.
     # {"using_global": bool, "used", "limit", "remaining", "exhausted"} yoki {"using_global": False}.
     quota: dict[str, Any] | None = None
+    # Oylik AI budjet holati (F2-5) — {"enabled": bool, "budget_usd", "spent_usd",
+    # "remaining_usd", "exceeded"} yoki {"enabled": False}.
+    budget: dict[str, Any] | None = None
 
     def to_error_payload(self) -> dict[str, Any]:
         payload = build_preflight_error_payload(
@@ -60,6 +66,8 @@ class StartPreflightResult:
         )
         if self.quota is not None:
             payload["gemini_quota"] = self.quota
+        if self.budget is not None:
+            payload["ai_budget"] = self.budget
         return payload
 
 
@@ -117,6 +125,14 @@ def run_start_preflight(
         else:
             quota = {"using_global": False}
 
+    # Oylik AI budjet gate (F2-5) — gemini_source'dan qat'i nazar: xarajat
+    # ledger'i barcha kalit manbalari uchun yoziladi.
+    budget: dict[str, Any] | None = None
+    if scope_check.status != "fail" and company_id is not None:
+        budget_check, budget = _check_monthly_budget(module_key=module_key, company_id=int(company_id))
+        if budget_check is not None:
+            checks.append(budget_check)
+
     ok = all(check.status != "fail" for check in checks)
     return StartPreflightResult(
         ok=ok,
@@ -127,6 +143,7 @@ def run_start_preflight(
         user_id=user_id,
         checks=checks,
         quota=quota,
+        budget=budget,
     )
 
 
@@ -339,6 +356,56 @@ def _check_global_quota(*, module_key: str, company_id: int) -> tuple[ModuleChec
     return None, quota
 
 
+def _check_monthly_budget(*, module_key: str, company_id: int) -> tuple[ModuleCheck | None, dict | None]:
+    """Oylik AI budjet gate (F2-5): shu oy (UTC) sarfi budjetga yetgan bo'lsa fail.
+
+    Qaytaradi: (ModuleCheck yoki None, budget_info yoki None). budget_info UI'ga uzatiladi.
+    """
+    try:
+        from utils.auth.auth_db import get_company_ai_budget
+
+        raw_budget = get_company_ai_budget(int(company_id))
+        if not raw_budget or float(raw_budget) <= 0:
+            return None, {"enabled": False}
+        budget_usd = float(raw_budget)
+
+        from utils.database.ai_usage_db import get_company_monthly_cost_usd
+
+        spent_usd = float(get_company_monthly_cost_usd(int(company_id)))
+    except Exception as exc:
+        # Fail-open: budjet/ledger o'qilmasa runlarni BLOKLAMAYMIZ — cost cap
+        # himoya chegarasi, DB nosozligi butun servisni to'xtatmasligi kerak.
+        log.warning(
+            f"oylik AI budjet tekshirilmadi (fail-open) | company_id={company_id} "
+            f"| module={module_key} | err={exc}"
+        )
+        return None, None
+
+    budget_info = {
+        "enabled": True,
+        "budget_usd": round(budget_usd, 4),
+        "spent_usd": round(spent_usd, 4),
+        "remaining_usd": round(max(0.0, budget_usd - spent_usd), 4),
+        "exceeded": spent_usd >= budget_usd,
+    }
+    if budget_info["exceeded"]:
+        return (
+            ModuleCheck(
+                id="ai_budget", label="Oylik AI budjet", status="fail",
+                code="BUDGET_EXCEEDED",
+                message=(
+                    f"Oylik AI budjet tugadi — shu oyda ${spent_usd:.2f} sarflandi, "
+                    f"budjet ${budget_usd:.2f}. Yangi run keyingi oydan yoki budjet "
+                    "oshirilgach mumkin."
+                ),
+                action="Super-admin orqali kompaniya oylik AI budjetini oshiring yoki keyingi oyni kuting.",
+                blocking=True,
+            ),
+            budget_info,
+        )
+    return None, budget_info
+
+
 def get_module_start_status(
     *, module_key: str, company_id: int | None, user_id: int | None = None,
 ) -> dict[str, Any]:
@@ -347,7 +414,7 @@ def get_module_start_status(
     Run gate (`run_start_preflight`) bilan AYNAN bir xil mantiq, lekin task_key
     talab qilmaydi. Frontend banner + run tugmasini bloklash uchun.
 
-    Qaytaradi: {module_key, blocked, level, message, gemini_source, gemini_quota}.
+    Qaytaradi: {module_key, blocked, level, message, gemini_source, gemini_quota, ai_budget}.
     """
     cred_check, readiness = _resolve_credentials(
         module_key=module_key, user_id=user_id, company_id=company_id, source="manual",
@@ -362,10 +429,17 @@ def get_module_start_status(
     ):
         quota_check, quota = _check_global_quota(module_key=module_key, company_id=int(company_id))
 
+    budget_check: ModuleCheck | None = None
+    budget: dict[str, Any] | None = None
+    if company_id is not None:
+        budget_check, budget = _check_monthly_budget(module_key=module_key, company_id=int(company_id))
+
     if cred_check.status == "fail":
         message, level, blocked = cred_check.message, "error", True
     elif quota_check is not None and quota_check.status == "fail":
         message, level, blocked = quota_check.message, "error", True
+    elif budget_check is not None and budget_check.status == "fail":
+        message, level, blocked = budget_check.message, "error", True
     elif quota.get("using_global"):
         remaining = quota.get("remaining", 0)
         limit = quota.get("limit", 0)
@@ -384,6 +458,7 @@ def get_module_start_status(
         "message": message,
         "gemini_source": (readiness.get("gemini_source") if readiness else "none"),
         "gemini_quota": quota,
+        "ai_budget": budget,
     }
 
 

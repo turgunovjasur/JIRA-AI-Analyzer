@@ -13,6 +13,8 @@ from typing import Any, Optional
 
 from utils.database.repository_common import (
     execute as _execute,
+)
+from utils.database.repository_common import (
     row_to_dict as _row_to_dict,
 )
 
@@ -370,6 +372,115 @@ def requeue_stale_running_jobs(conn, *, stale_seconds: int) -> dict[str, int]:
     return {"requeued": len(requeued or []), "failed": len(failed or [])}
 
 
+TERMINAL_JOB_STATUSES = ("failed", "done")
+_JOB_STATUSES = ("queued", "running", "done", "failed")
+
+_JOB_LIST_COLUMNS = (
+    "id, job_type, task_key, company_id, dedupe_key, status, attempts, "
+    "max_attempts, worker_name, scheduled_at, started_at, finished_at, "
+    "last_error, created_at, updated_at"
+)
+
+
+def get_job(conn, job_id: int) -> dict[str, Any] | None:
+    row = _execute(
+        conn,
+        f"SELECT {_JOB_LIST_COLUMNS} FROM job_queue WHERE id = ?",
+        [int(job_id)],
+    ).fetchone()
+    return _row_to_dict(row) if row else None
+
+
+def list_jobs(
+    conn,
+    *,
+    statuses: Optional[list[str]] = None,
+    company_id: int | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """Admin job console uchun joblar ro'yxati (rows + total)."""
+    where: list[str] = []
+    params: list[Any] = []
+    if statuses:
+        normalized = [s.strip().lower() for s in statuses if s and s.strip()]
+        invalid = set(normalized) - set(_JOB_STATUSES)
+        if invalid:
+            raise ValueError(f"Noma'lum job status: {sorted(invalid)}")
+        placeholders = ", ".join("?" for _ in normalized)
+        where.append(f"status IN ({placeholders})")
+        params.extend(normalized)
+    if company_id is not None:
+        where.append("company_id = ?")
+        params.append(int(company_id))
+    where_sql = f" WHERE {' AND '.join(where)}" if where else ""
+
+    total_row = _execute(
+        conn,
+        f"SELECT COUNT(*) AS total FROM job_queue{where_sql}",
+        params,
+    ).fetchone()
+    total = int(_row_to_dict(total_row).get("total") or 0)
+
+    rows = _execute(
+        conn,
+        f"""
+        SELECT {_JOB_LIST_COLUMNS}
+        FROM job_queue{where_sql}
+        ORDER BY id DESC
+        LIMIT ? OFFSET ?
+        """,
+        params + [max(1, min(int(limit), 500)), max(0, int(offset))],
+    ).fetchall()
+    return {"jobs": [_row_to_dict(row) for row in rows or []], "total": total}
+
+
+def requeue_failed_job(conn, job_id: int) -> dict[str, Any] | None:
+    """Failed jobni qayta navbatga qo'yish (DLQ requeue).
+
+    ``claim_next_job`` har claimda ``attempts``ni oshiradi va worker
+    ``attempts >= max_attempts`` bo'lsa yana failed qiladi — shuning uchun
+    attempts 0 ga qaytariladi (to'liq yangi retry sikli). scheduled_at=now →
+    darhol claim qilinadi. last_error saqlanadi (nega failed bo'lgani ko'rinsin).
+    """
+    now = _now_iso()
+    row = _execute(
+        conn,
+        """
+        UPDATE job_queue
+        SET status = 'queued',
+            attempts = 0,
+            worker_name = NULL,
+            scheduled_at = ?,
+            started_at = NULL,
+            finished_at = NULL,
+            updated_at = ?
+        WHERE id = ?
+          AND status = 'failed'
+        RETURNING *
+        """,
+        [now, now, int(job_id)],
+    ).fetchone()
+    if not row:
+        conn.rollback()
+        return None
+    job = _row_to_dict(row)
+    _record_job_run(conn, job, "requeued", "admin requeue")
+    conn.commit()
+    return job
+
+
+def delete_job(conn, job_id: int) -> bool:
+    """Faqat terminal (failed/done) jobni o'chirish; job_queue_runs CASCADE."""
+    row = _execute(
+        conn,
+        "DELETE FROM job_queue WHERE id = ? AND status IN ('failed', 'done') RETURNING id",
+        [int(job_id)],
+    ).fetchone()
+    conn.commit()
+    return bool(row)
+
+
 def fetch_queue_snapshot(conn) -> dict[str, Any]:
     cursor = _execute(
         conn,
@@ -383,9 +494,31 @@ def fetch_queue_snapshot(conn) -> dict[str, Any]:
         """,
     )
     row = _row_to_dict(cursor.fetchone())
+
+    failed_rows = _execute(
+        conn,
+        """
+        SELECT id, task_key, last_error, finished_at
+        FROM job_queue
+        WHERE status = 'failed'
+        ORDER BY finished_at DESC NULLS LAST, id DESC
+        LIMIT 10
+        """,
+    ).fetchall()
+    recent_failed = [
+        {
+            "id": item.get("id"),
+            "task_key": item.get("task_key"),
+            "error": item.get("last_error"),
+            "failed_at": item.get("finished_at"),
+        }
+        for item in (_row_to_dict(r) for r in failed_rows or [])
+    ]
+
     return {
         "queued": int(row.get("queued") or 0),
         "running": int(row.get("running") or 0),
         "done": int(row.get("done") or 0),
         "failed": int(row.get("failed") or 0),
+        "recent_failed": recent_failed,
     }

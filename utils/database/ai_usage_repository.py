@@ -12,6 +12,8 @@ from typing import Any
 
 from utils.database.repository_common import (
     execute as _execute,
+)
+from utils.database.repository_common import (
     row_to_dict as _row_to_dict,
 )
 
@@ -164,6 +166,47 @@ def record_ai_usage_event(
     if commit:
         conn.commit()
     return _row_to_dict(row)
+
+
+def _month_bounds_utc(year_month: str | None) -> tuple[datetime, datetime]:
+    if year_month:
+        year_str, month_str = str(year_month).split("-", 1)
+        year, month = int(year_str), int(month_str)
+    else:
+        now = datetime.now(timezone.utc)
+        year, month = now.year, now.month
+    start = datetime(year, month, 1, tzinfo=timezone.utc)
+    if month == 12:
+        end = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+    else:
+        end = datetime(year, month + 1, 1, tzinfo=timezone.utc)
+    return start, end
+
+
+def get_company_monthly_cost_usd(
+    conn,
+    company_id: int,
+    year_month: str | None = None,
+) -> float:
+    """Kompaniyaning bitta kalendar oyidagi jami taxminiy AI xarajati (USD).
+
+    Oy chegarasi — UTC kalendar oyi: created_at TIMESTAMPTZ va yozuvlar
+    `_now_iso()` (UTC) bilan yoziladi, shuning uchun [oy boshi, keyingi oy boshi)
+    intervali UTC'da olinadi — server timezone'idan qat'i nazar barqaror.
+    year_month: "YYYY-MM" yoki None (joriy oy).
+    """
+    start, end = _month_bounds_utc(year_month)
+    row = _execute(
+        conn,
+        """
+        SELECT COALESCE(SUM(estimated_total_cost_usd), 0) AS total_cost_usd
+        FROM ai_usage_events
+        WHERE company_id = ? AND created_at >= ? AND created_at < ?
+        """,
+        [int(company_id), start, end],
+    ).fetchone()
+    data = _row_to_dict(row)
+    return float(data.get("total_cost_usd") or 0)
 
 
 def fetch_ai_usage_summary(

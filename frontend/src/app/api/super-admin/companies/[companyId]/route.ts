@@ -46,6 +46,31 @@ function buildSubscriptionPayload(
   return merged;
 }
 
+export async function GET(
+  _request: Request,
+  context: { params: Promise<{ companyId: string }> },
+) {
+  const { error, session } = await requireSuperAdminSession();
+  if (error || !session) {
+    return error;
+  }
+
+  const { companyId: rawCompanyId } = await context.params;
+  const companyId = parseCompanyId(rawCompanyId);
+  if (!companyId) {
+    return NextResponse.json({ success: false, error: "companyId noto'g'ri." }, { status: 400 });
+  }
+
+  try {
+    const aiBudget = await callInternalRpc<number | null>("get_company_ai_budget", [companyId]);
+    return NextResponse.json({ success: true, ai_monthly_budget_usd: aiBudget });
+  } catch (routeError) {
+    const message =
+      routeError instanceof Error ? routeError.message : "Kompaniya ma'lumotini o'qib bo'lmadi.";
+    return NextResponse.json({ success: false, error: message }, { status: 500 });
+  }
+}
+
 export async function PATCH(
   request: Request,
   context: { params: Promise<{ companyId: string }> },
@@ -64,7 +89,8 @@ export async function PATCH(
   try {
     const payload = (await request.json().catch(() => null)) as
       | {
-          action?: "modules" | "seat_limit" | "status" | "subscription";
+          action?: "ai_budget" | "modules" | "seat_limit" | "status" | "subscription";
+          ai_monthly_budget_usd?: number | string | null;
           enabled_modules?: CompanyModules;
           is_active?: boolean;
           seat_limit?: number;
@@ -73,6 +99,28 @@ export async function PATCH(
       | null;
 
     switch (payload?.action) {
+      case "ai_budget": {
+        const raw = payload.ai_monthly_budget_usd;
+        let budget: number | null = null;
+        if (raw !== null && raw !== undefined && String(raw).trim() !== "") {
+          budget = Number(raw);
+          if (!Number.isFinite(budget) || budget < 0) {
+            return NextResponse.json(
+              { success: false, error: "Budjet 0 yoki undan katta son bo'lishi kerak." },
+              { status: 400 },
+            );
+          }
+        }
+        const success = await callInternalRpc<boolean>("save_company_ai_budget", [companyId, budget]);
+        if (!success) {
+          return NextResponse.json(
+            { success: false, error: "AI budjetni saqlab bo'lmadi." },
+            { status: 400 },
+          );
+        }
+        return NextResponse.json({ success });
+      }
+
       case "status": {
         if (typeof payload.is_active !== "boolean") {
           return NextResponse.json(
