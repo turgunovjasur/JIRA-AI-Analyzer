@@ -8,26 +8,45 @@ Author: JASUR TURGUNOV
 Date: 2026-02-09
 """
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, List
+from typing import Any, Dict, List, Optional
+
 from core.logger import get_logger
-from utils.database.runtime import connect_processing_db
-from utils.database.task_repository import (
-    fetch_task_by_id,
-    upsert_task_record,
-    fetch_blocked_tasks_ready_for_retry as repo_fetch_blocked_tasks_ready_for_retry,
-    delete_task_record,
-    fetch_stuck_tasks as repo_fetch_stuck_tasks,
-    insert_status_history,
-    fetch_status_history_for_report as repo_fetch_status_history_for_report,
+from utils.database.job_queue_repository import (
+    claim_next_job as repo_claim_next_job,
 )
 from utils.database.job_queue_repository import (
     enqueue_job as repo_enqueue_job,
-    claim_next_job as repo_claim_next_job,
-    mark_job_done as repo_mark_job_done,
-    mark_job_retry as repo_mark_job_retry,
-    mark_job_failed as repo_mark_job_failed,
+)
+from utils.database.job_queue_repository import (
     fetch_queue_snapshot as repo_fetch_queue_snapshot,
+)
+from utils.database.job_queue_repository import (
+    mark_job_done as repo_mark_job_done,
+)
+from utils.database.job_queue_repository import (
+    mark_job_failed as repo_mark_job_failed,
+)
+from utils.database.job_queue_repository import (
+    mark_job_retry as repo_mark_job_retry,
+)
+from utils.database.job_queue_repository import (
     requeue_stale_running_jobs as repo_requeue_stale_running_jobs,
+)
+from utils.database.runtime import connect_processing_db
+from utils.database.task_repository import (
+    delete_task_record,
+    fetch_task_by_id,
+    insert_status_history,
+    upsert_task_record,
+)
+from utils.database.task_repository import (
+    fetch_blocked_tasks_ready_for_retry as repo_fetch_blocked_tasks_ready_for_retry,
+)
+from utils.database.task_repository import (
+    fetch_status_history_for_report as repo_fetch_status_history_for_report,
+)
+from utils.database.task_repository import (
+    fetch_stuck_tasks as repo_fetch_stuck_tasks,
 )
 
 log = get_logger("database")
@@ -226,7 +245,7 @@ def mark_returned_pr_not_merged(task_id: str, company_id: Optional[int] = None) 
 def mark_error(task_id: str, error_message: str, company_id: Optional[int] = None):
     """
     Task holatini 'error' ga o'zgartirish
-    
+
     Args:
         task_id: JIRA task key
         error_message: Xato xabari
@@ -277,7 +296,7 @@ def set_skip_detected(task_id: str, company_id: Optional[int] = None):
 def set_service1_done(task_id: str, compliance_score: Optional[int] = None, company_id: Optional[int] = None):
     """
     Service1 (TZ-PR) holatini 'done' ga o'zgartirish
-    
+
     Args:
         task_id: JIRA task key
         compliance_score: Moslik bali (ixtiyoriy)
@@ -289,7 +308,7 @@ def set_service1_done(task_id: str, compliance_score: Optional[int] = None, comp
     }
     if compliance_score is not None:
         fields['compliance_score'] = compliance_score
-    
+
     upsert_task(task_id, fields, company_id=company_id)
 
 
@@ -358,7 +377,7 @@ def set_service2_done(task_id: str, company_id: Optional[int] = None):
 def set_service2_error(task_id: str, error_msg: str, company_id: Optional[int] = None):
     """
     Service2 (Testcase) holatini 'error' ga o'zgartirish
-    
+
     Args:
         task_id: JIRA task key
         error_msg: Xato xabari

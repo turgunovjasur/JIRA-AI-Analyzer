@@ -8,14 +8,15 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Dict, Optional, List, Callable, Tuple
-from utils.auth.repository_common import execute, row_to_dict
+from typing import Callable, Dict, List, Optional, Tuple
+
 from utils.auth.credential_crypto import (
+    can_encrypt_credentials,
     decrypt_sensitive_fields,
     encrypt_sensitive_fields,
-    can_encrypt_credentials,
     payload_requires_encryption,
 )
+from utils.auth.repository_common import execute, row_to_dict
 
 
 def _column_names(conn, table_name: str) -> set[str]:

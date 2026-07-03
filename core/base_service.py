@@ -11,14 +11,15 @@ Xususiyatlari:
 - Status update helper method
 """
 
-from typing import Optional, Callable
-from core.logger import get_logger
+from typing import Callable, Optional
+
 from config.token_limits import (
     AI_COST_WARNING_INPUT_TOKENS,
     AI_LONG_CONTEXT_PRICE_THRESHOLD_TOKENS,
     AI_MAX_INPUT_TOKENS,
     CHARS_PER_TOKEN,
 )
+from core.logger import get_logger
 
 # Logger instance
 log = get_logger("base.service")
@@ -33,7 +34,7 @@ def _get_base_settings():
         try:
             from config.app_settings import get_app_settings
             _settings_cache = get_app_settings(force_reload=False).queue
-        except Exception as e:
+        except Exception:
             # Default values
             class DefaultSettings:
                 ai_max_input_tokens = AI_MAX_INPUT_TOKENS

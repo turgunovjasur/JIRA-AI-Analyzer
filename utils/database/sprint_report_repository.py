@@ -8,9 +8,11 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
+
 from utils.database.repository_common import (
-    uses_postgres_params as _uses_postgres_params,
     prepare_query as _prepare_query,
+)
+from utils.database.repository_common import (
     row_to_dict as _row_to_dict,
 )
 

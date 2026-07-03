@@ -11,11 +11,12 @@ Ishlatish:
     python scripts/discover_jira_statuses.py
 """
 
-from jira import JIRA
-from dotenv import load_dotenv
 import os
-from datetime import datetime
 from collections import defaultdict
+from datetime import datetime
+
+from dotenv import load_dotenv
+from jira import JIRA
 from tqdm import tqdm
 
 load_dotenv()
@@ -108,7 +109,7 @@ def analyze_statuses(issues):
 def print_report(all_statuses, transitions, task_samples):
 
     print(f"\n{'='*70}")
-    print(f"  BARCHA STATUSLAR (vaqt bo'yicha kamayish tartibi)")
+    print("  BARCHA STATUSLAR (vaqt bo'yicha kamayish tartibi)")
     print(f"{'='*70}")
     print(f"  {'STATUS NOMI':<38} {'TASK':<8} {'ORT. KUN':<12} {'JAMI KUN'}")
     print(f"  {'─'*67}")
@@ -128,7 +129,7 @@ def print_report(all_statuses, transitions, task_samples):
               f"  (e.g: {samples})")
 
     print(f"\n{'='*70}")
-    print(f"  STATUS O'TISH SXEMASI (top 20 yo'nalish)")
+    print("  STATUS O'TISH SXEMASI (top 20 yo'nalish)")
     print(f"{'='*70}")
     print(f"  {'FROM':<35} {'TO':<35} {'SONI'}")
     print(f"  {'─'*70}")
@@ -138,9 +139,9 @@ def print_report(all_statuses, transitions, task_samples):
         print(f"  {frm:<35} {to:<35} {cnt}")
 
     print(f"\n{'='*70}")
-    print(f"  KEYINGI QADAM: Statuslarni 4 guruhga ajrating")
+    print("  KEYINGI QADAM: Statuslarni 4 guruhga ajrating")
     print(f"{'='*70}")
-    print(f"""
+    print("""
   Barcha status nomlarini ko'rib, quyidagilarni aniqlang:
 
   ⏳ KUTISH (vaqt hisoblanmaydi)    →  masalan: Open, Backlog, To Do
@@ -155,7 +156,7 @@ def print_report(all_statuses, transitions, task_samples):
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
     print(f"\n{'='*70}")
-    print(f"  JIRA STATUS ANIQLOVCHI")
+    print("  JIRA STATUS ANIQLOVCHI")
     print(f"{'='*70}\n")
 
     print("[1/3] JIRA ga ulanmoqda...")

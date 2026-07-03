@@ -7,10 +7,11 @@ Author: JASUR TURGUNOV
 Version: 4.0 - UNIVERSAL
 """
 
-import re
 import base64
-import requests
+import re
 from typing import Dict, List, Optional
+
+import requests
 
 
 class SmartPatchHelper:
@@ -203,7 +204,7 @@ class SmartPatchHelper:
                 content = method()
                 if content:
                     return content
-            except Exception as e:
+            except Exception:
                 # Silent fail, try next method
                 continue
 

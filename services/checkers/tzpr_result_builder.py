@@ -5,25 +5,40 @@ from dataclasses import asdict
 from typing import Any
 
 from core.logger import get_logger
+from services.checkers.tzpr_constants import (
+    FALLBACK_MODEL_NAME,
+    FINAL_ANALYSIS_SECTION_TITLES,
+    PRO_MODEL_NAME,
+)
+from services.checkers.tzpr_constants import (
+    execution_mode_display_label as _execution_mode_display_label,
+)
+from services.checkers.tzpr_helpers import now_iso as _now_iso
+from services.checkers.tzpr_helpers import summarize as _summarize
 from services.checkers.tzpr_models import (
     TZPRAnalysisOverview,
     TZPRAnalysisResult,
     TZPRAnalysisSection,
 )
-from services.checkers.tzpr_constants import (
-    FALLBACK_MODEL_NAME,
-    FINAL_ANALYSIS_SECTION_TITLES,
-    PRO_MODEL_NAME,
-    execution_mode_display_label as _execution_mode_display_label,
-)
-from services.checkers.tzpr_helpers import now_iso as _now_iso, summarize as _summarize
 from services.checkers.tzpr_presenters import (
     build_extra_issue_lines as _build_extra_issue_lines,
+)
+from services.checkers.tzpr_presenters import (
     build_final_analysis_text as _build_final_analysis_text,
+)
+from services.checkers.tzpr_presenters import (
     build_issue_section_items as _build_issue_section_items,
+)
+from services.checkers.tzpr_presenters import (
     calculate_compliance_score_from_agent3 as _calculate_compliance_score_from_agent3,
+)
+from services.checkers.tzpr_presenters import (
     collect_final_warnings as _collect_final_warnings,
+)
+from services.checkers.tzpr_presenters import (
     decision_matrix_item_text as _decision_matrix_item_text,
+)
+from services.checkers.tzpr_presenters import (
     figma_lines as _figma_lines,
 )
 from utils.database.checker_run_db import get_checker_run_snapshot, update_checker_run_record

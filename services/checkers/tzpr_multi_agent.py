@@ -97,6 +97,12 @@ def create_multi_agent_run(
         "max_files": max_files,
         "execution_mode": EXECUTION_MODE_MULTI,
     }
+    try:
+        from core.prompt_registry import get_prompt_versions_for
+
+        request_payload["prompt_versions"] = get_prompt_versions_for("checker")
+    except Exception:
+        _log.warning("prompt_versions yozilmadi (checker run)", exc_info=True)
     if isinstance(task_details, dict) and task_details:
         request_payload["task_details"] = task_details
 

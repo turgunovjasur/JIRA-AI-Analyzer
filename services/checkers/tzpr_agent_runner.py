@@ -5,18 +5,20 @@ from time import perf_counter
 from typing import Any
 
 from core.logger import get_logger
-from services.checkers.tzpr_constants import PRO_MODEL_NAME
 from services.checkers.tzpr_agents import agent1 as agent1_contract
 from services.checkers.tzpr_agents import agent1b as agent1b_contract
 from services.checkers.tzpr_agents import agent2 as agent2_contract
 from services.checkers.tzpr_agents import agent3 as agent3_contract
-from utils.ai.gemini_json import parse_gemini_json as _parse_gemini_json
+from services.checkers.tzpr_constants import PRO_MODEL_NAME
 from services.checkers.tzpr_helpers import summarize as _summarize
 from services.checkers.tzpr_preflight import (
     agent1_rules_from_effective_settings as _agent1_rules_from_effective_settings,
+)
+from services.checkers.tzpr_preflight import (
     build_agent1_sanitized_input as _build_agent1_sanitized_input,
 )
 from utils.ai.gemini_helper import GeminiHelper
+from utils.ai.gemini_json import parse_gemini_json as _parse_gemini_json
 
 log = get_logger("checker.multi_agent")
 

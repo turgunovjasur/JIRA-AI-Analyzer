@@ -1,12 +1,12 @@
 """Global Gemini kvota — connection lifecycle bilan high-level helperlar."""
 from __future__ import annotations
 
-from utils.database.runtime import connect_processing_db
 from utils.database.quota_repository import (
     GLOBAL_GEMINI_FREE_LIMIT,
     fetch_quota_used,
     increment_quota_used,
 )
+from utils.database.runtime import connect_processing_db
 from utils.database.task_db import _get_db_settings  # type: ignore
 
 

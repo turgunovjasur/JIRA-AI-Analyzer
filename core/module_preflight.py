@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 from core.logger import get_logger
-from core.setup_checks.checks import CHECK_REGISTRY, fetch_figma_summaries
+from core.setup_checks.checks import CHECK_REGISTRY
 from core.setup_checks.engine import SetupContext, run_setup_checks
 from core.setup_checks.profiles import profile_from_module_policy
 

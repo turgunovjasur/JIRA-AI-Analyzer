@@ -10,10 +10,10 @@ ADF Hujjatlar: https://developer.atlassian.com/cloud/jira/platform/apis/document
 Author: JASUR TURGUNOV
 Version: 1.0
 """
-import re
-from typing import Dict, List, Optional, Any
-from dataclasses import dataclass
 import logging
+import re
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 
 from utils.jira.base_adf_formatter import BaseADFFormatter
 

@@ -1,8 +1,8 @@
 """
 Internal auth API endpoints.
 
-These endpoints help move login/password-reset and module loading away from
-direct Streamlit DB calls while preserving the current auth logic.
+These endpoints provide login/password-reset and module loading for the
+Next.js frontend (via the BFF proxy) while preserving the current auth logic.
 """
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ from services.api.session_scope import load_api_session, require_company_scope
 from utils.auth.auth_db import (
     consume_password_reset_token,
     create_web_session,
-    get_effective_company_modules,
     get_company_subscription,
+    get_effective_company_modules,
     get_web_session,
     request_password_reset_email,
     revoke_web_session_token,

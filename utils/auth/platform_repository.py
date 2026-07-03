@@ -7,13 +7,14 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Callable, Dict, List
-from utils.auth.repository_common import execute, row_to_dict
+
 from utils.auth.credential_crypto import (
     can_encrypt_credentials,
     decrypt_value,
     encrypt_value,
     is_sensitive_credential_field,
 )
+from utils.auth.repository_common import execute, row_to_dict
 
 
 def fetch_global_setting(get_conn: Callable, key: str, default: str = '') -> str:

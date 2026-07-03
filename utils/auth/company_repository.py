@@ -8,15 +8,16 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional, List, Callable
+from typing import Any, Callable, Dict, List, Optional
+
 from core.logger import get_logger
-from utils.auth.repository_common import execute, row_to_dict
 from utils.auth.credential_crypto import (
+    can_encrypt_credentials,
     decrypt_sensitive_fields,
     encrypt_sensitive_fields,
-    can_encrypt_credentials,
     payload_requires_encryption,
 )
+from utils.auth.repository_common import execute, row_to_dict
 
 log = get_logger("auth.company_repo")
 
@@ -80,8 +81,15 @@ def _ensure_company_settings_runtime_columns(conn) -> None:
     if not _table_exists(conn, "company_settings"):
         return
     columns = _column_names(conn, "company_settings")
+    changed = False
     if "webhook_secret" not in columns:
         execute(conn, "ALTER TABLE company_settings ADD COLUMN webhook_secret TEXT NOT NULL DEFAULT ''")
+        changed = True
+    if "ai_monthly_budget_usd" not in columns:
+        # F2-5: 003 migratsiya qo'llanmagan legacy/test DB'lar uchun ham ustun bo'lsin.
+        execute(conn, "ALTER TABLE company_settings ADD COLUMN ai_monthly_budget_usd NUMERIC(12, 2)")
+        changed = True
+    if changed:
         conn.commit()
 
 
@@ -524,6 +532,72 @@ def fetch_company_settings(get_conn: Callable, company_id: int) -> Dict:
         return decrypt_sensitive_fields(settings)
     except Exception:
         return {}
+
+
+def fetch_company_ai_budget(get_conn: Callable, company_id: int) -> Optional[float]:
+    """Kompaniya oylik AI budjeti (USD). None yoki <=0 = cheksiz (F2-5)."""
+    try:
+        conn = get_conn()
+        try:
+            if not _table_exists(conn, "company_settings"):
+                return None
+            _ensure_company_settings_runtime_columns(conn)
+            row = execute(
+                conn,
+                "SELECT ai_monthly_budget_usd FROM company_settings WHERE company_id = ?",
+                [company_id],
+            ).fetchone()
+        finally:
+            conn.close()
+        value = row_to_dict(row).get("ai_monthly_budget_usd") if row else None
+        return float(value) if value is not None else None
+    except Exception as exc:
+        log.error(f"fetch_company_ai_budget xato | company_id={company_id} | err={exc}")
+        raise
+
+
+def update_company_ai_budget(get_conn: Callable, company_id: int, budget_usd: Any) -> bool:
+    """Oylik AI budjetni saqlash. None/''/0 = cheksiz (NULL sifatida saqlanadi)."""
+    normalized: Optional[float] = None
+    if budget_usd not in (None, ""):
+        try:
+            value = float(budget_usd)
+        except (TypeError, ValueError):
+            return False
+        if value < 0:
+            return False
+        normalized = value if value > 0 else None
+    try:
+        conn = get_conn()
+        try:
+            if not _table_exists(conn, "company_settings"):
+                return False
+            _ensure_company_settings_runtime_columns(conn)
+            exists = execute(
+                conn,
+                "SELECT company_id FROM company_settings WHERE company_id = ?",
+                [company_id],
+            ).fetchone()
+            now = datetime.now().isoformat()
+            if exists:
+                execute(
+                    conn,
+                    "UPDATE company_settings SET ai_monthly_budget_usd = ?, updated_at = ? WHERE company_id = ?",
+                    [normalized, now, company_id],
+                )
+            else:
+                execute(
+                    conn,
+                    "INSERT INTO company_settings (company_id, ai_monthly_budget_usd) VALUES (?, ?)",
+                    [company_id, normalized],
+                )
+            conn.commit()
+        finally:
+            conn.close()
+        return True
+    except Exception as exc:
+        log.error(f"update_company_ai_budget xato | company_id={company_id} | err={exc}")
+        return False
 
 
 def fetch_company_modules(get_conn: Callable, company_id: int, default_modules: Dict[str, bool]) -> Dict[str, bool]:

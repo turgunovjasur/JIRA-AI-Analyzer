@@ -6,10 +6,14 @@ from typing import Any
 from services.checkers.tzpr_constants import (
     FALLBACK_MODEL_NAME,
     PRO_MODEL_NAME,
+)
+from services.checkers.tzpr_constants import (
     execution_mode_display_label as _execution_mode_display_label,
 )
 from services.checkers.tzpr_helpers import (
     build_artifact_preview as _build_artifact_preview,
+)
+from services.checkers.tzpr_helpers import (
     now_iso as _now_iso,
 )
 from services.checkers.tzpr_lifecycle import is_stalled_multi_agent_snapshot as is_stalled_multi_agent_run

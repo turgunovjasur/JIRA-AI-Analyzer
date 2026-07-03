@@ -5,8 +5,8 @@ TZPRService bularni meros oladi, `self.` chaqiruvlar MRO orqali hal bo'ladi.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
 import re
+from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
 
 from core.logger import get_logger

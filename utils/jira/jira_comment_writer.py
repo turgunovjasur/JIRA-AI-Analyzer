@@ -8,9 +8,11 @@ REST API v3 orqali ADF (Atlassian Document Format) qo'llab-quvvatlaydi.
 Author: JASUR TURGUNOV
 Version: 2.0 - ADF Support
 """
-from jira import JIRA
+from typing import Dict
+
 import requests
-from typing import Dict, Optional
+from jira import JIRA
+
 from core.logger import get_logger
 
 log = get_logger("jira.comment")

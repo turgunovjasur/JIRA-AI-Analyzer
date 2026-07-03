@@ -4,21 +4,22 @@ Sprint Report API - FastAPI endpoints for sprint analytics
 Author: JASUR TURGUNOV
 Version: 1.0
 """
-import secrets
-from fastapi import APIRouter, HTTPException, Query, Header
-from pydantic import BaseModel
-from typing import List, Optional
-from datetime import datetime
 import os
+import secrets
+from datetime import datetime
+from typing import List, Optional
+
+from fastapi import APIRouter, Header, HTTPException, Query
+from pydantic import BaseModel
 
 from services.api.session_scope import get_session_company_id, get_session_role, load_api_session
 from utils.database.runtime import connect_processing_db, get_db_backend
 from utils.database.sprint_report_repository import (
-    fetch_total_tasks,
-    fetch_task_type_stats,
-    fetch_top_features,
     fetch_bug_distribution,
     fetch_developer_workload,
+    fetch_task_type_stats,
+    fetch_top_features,
+    fetch_total_tasks,
 )
 
 router = APIRouter(prefix="/api", tags=["sprint-report"])

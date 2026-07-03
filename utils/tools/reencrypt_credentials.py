@@ -27,7 +27,6 @@ from utils.auth.credential_crypto import (
 from utils.auth.repository_common import execute, row_to_dict, uses_postgres_params
 from utils.database.runtime import connect_auth_db
 
-
 USER_CREDENTIAL_FIELDS = get_sensitive_credential_fields()
 COMPANY_CREDENTIAL_FIELDS = get_sensitive_credential_fields()
 

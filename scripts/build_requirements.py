@@ -15,10 +15,10 @@ Usage (run inside the project venv that has the app's deps installed):
     python scripts/build_requirements.py --write     # overwrite requirements.txt
 """
 import ast
-import sys
 import re
-from pathlib import Path
+import sys
 from importlib import metadata
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 

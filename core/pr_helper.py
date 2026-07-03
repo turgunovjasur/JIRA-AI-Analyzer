@@ -3,17 +3,13 @@ PRHelper - Pull Request olish va qidirish (UNIVERSAL Smart Patch)
 Bu class JIRA task uchun PR topish logikasini o'z ichiga oladi.
 """
 
-from typing import Dict, List, Optional, Callable
+from typing import Callable, Dict, List, Optional
+
+from core.errors import PRNotMergedError  # backward-compat re-export (core/__init__ ham shu nomni beradi)
 from utils.github.github_client import GitHubClient
-from utils.github.smart_patch_helper import SmartPatchHelper, SmartPatchConfig
+from utils.github.smart_patch_helper import SmartPatchConfig, SmartPatchHelper
 
-
-class PRNotMergedError(Exception):
-    """
-    PR topildi, lekin hech biri merged emas (open yoki closed/cancelled).
-    Faqat merged statusdagi PR'lar qabul qilinadi.
-    """
-    pass
+__all__ = ["PRHelper", "PRNotMergedError"]
 
 
 class PRHelper:
@@ -340,7 +336,7 @@ class PRHelper:
             return "📭 PR ma'lumoti yo'q"
 
         lines = [
-            f"📊 PULL REQUEST TAHLILI",
+            "📊 PULL REQUEST TAHLILI",
             f"{'=' * 60}",
             f"PR'lar soni: {pr_info['pr_count']}",
             f"O'zgargan fayllar: {pr_info['files_changed']} ta",

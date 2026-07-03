@@ -6,18 +6,18 @@ Yangi ustunlar:
 ✅ Testing Return Who, Testing Return When
 """
 
-from jira import JIRA
-from dotenv import load_dotenv
-import os
-from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from datetime import datetime
-from collections import defaultdict
-from functools import lru_cache
-from tqdm import tqdm
-import logging
 import json
-import re
+import logging
+import os
+from collections import defaultdict
+from datetime import datetime
+from functools import lru_cache
+
+from dotenv import load_dotenv
+from jira import JIRA
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from tqdm import tqdm
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -243,7 +243,7 @@ def extract_sprint(issue, sprint_info_map):
             if sprint_field and isinstance(sprint_field, list):
                 for sprint_obj in sprint_field:
                     if hasattr(sprint_obj, 'id'):
-                        obj_id = getattr(sprint_obj, 'id')
+                        obj_id = sprint_obj.id
                         if obj_id in Config.SPRINT_IDS:
                             sprint_name = sprint_info_map.get(obj_id, {}).get('name', f'Sprint {obj_id}')
                             if sprint_name not in found_sprints:

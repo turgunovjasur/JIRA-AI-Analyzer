@@ -3,10 +3,12 @@
 Figma API Client - Production Version
 Figma REST API bilan ishlash va file ma'lumotlarini olish
 """
-import requests
-from typing import Dict, List, Optional
 import re
 from dataclasses import dataclass
+from typing import Dict, List, Optional
+
+import requests
+
 from core.logger import get_logger
 
 _log = get_logger("figma.client")

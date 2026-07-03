@@ -12,7 +12,6 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-
 DEFAULT_TTL_SECONDS = 300
 
 

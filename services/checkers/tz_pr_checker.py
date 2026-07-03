@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional
 # Core imports
 from core import BaseService
 from core.logger import get_logger
+
 # M1 refactor: TZPRService helperlari mavzu bo'yicha mixinlarga ajratildi.
 from services.checkers.tzpr_data_fetch import DataFetchMixin
 from services.checkers.tzpr_result_builders import ResultBuildersMixin

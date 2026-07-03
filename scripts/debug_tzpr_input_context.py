@@ -30,7 +30,6 @@ from services.checkers.tzpr_multi_agent import (
     create_multi_agent_run,
 )
 
-
 OUT_DIR = ROOT / "data" / "debug"
 
 

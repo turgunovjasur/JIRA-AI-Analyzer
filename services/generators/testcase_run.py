@@ -121,6 +121,13 @@ def create_testcase_run(
         agents = _build_testcase_agent_sequence(_resolve_testcase_settings(company_id, user_id))
     except Exception:
         agents = _AGENTS
+    prompt_versions: dict[str, str] = {}
+    try:
+        from core.prompt_registry import get_prompt_versions_for
+
+        prompt_versions = get_prompt_versions_for("testcase")
+    except Exception:
+        pass
     return create_analysis_run_record(
         run_id=run_id,
         module_key=MODULE_KEY,
@@ -135,6 +142,7 @@ def create_testcase_run(
             "test_types": list(test_types or []),
             "custom_context": custom_context or "",
             "execution_mode": EXECUTION_MODE,
+            "prompt_versions": prompt_versions,
         },
         agents=agents,
     )

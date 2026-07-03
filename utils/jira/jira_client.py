@@ -6,9 +6,11 @@ YANGI:
 - Development Status API dan PR URL olish
 - ✅ Figma link'larni olish (NEW!)
 """
-from jira import JIRA
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional
+
 import requests
+from jira import JIRA
+
 from core.logger import get_logger
 from utils.jira.task_details_cache import (
     get_cached_task_details,
@@ -182,8 +184,8 @@ class JiraClient:
             )
             if is_auth_fail:
                 raise RuntimeError(
-                    f"JIRA autentifikatsiya xatosi. "
-                    f"JIRA Email va API Token ni tekshiring (Sozlamalar → API Kalitlar)."
+                    "JIRA autentifikatsiya xatosi. "
+                    "JIRA Email va API Token ni tekshiring (Sozlamalar → API Kalitlar)."
                 ) from e
             return None
 
@@ -413,7 +415,6 @@ class JiraClient:
             List[Dict]: Figma link'lar ro'yxati
         """
         try:
-            from utils.jira.jira_figma_helper import JiraFigmaHelper
 
             cached = get_cached_task_details(
                 make_task_details_cache_key(self.server, self.email, issue_key),

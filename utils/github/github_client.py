@@ -6,11 +6,12 @@ FIX: contents_url qo'shildi (Smart Patch uchun)
 
 YANGI: Branch name bilan ham PR qidirish!
 """
-import requests
 import base64
 import re
-from typing import List, Dict, Optional, Tuple
 import time
+from typing import Dict, List, Optional, Tuple
+
+import requests
 
 from core.logger import get_logger
 
@@ -75,7 +76,7 @@ class GitHubClient:
             timeout = get_app_settings(force_reload=False).queue.http_timeout
         except Exception:
             timeout = 30  # Default fallback
-        
+
         response = requests.get(url, headers=headers, params=params, timeout=timeout)
 
         # Rate limit yangilash
@@ -280,7 +281,7 @@ class GitHubClient:
         try:
             rate_info = self.check_rate_limit()
             if rate_info:
-                log.info(f"GitHub ulandi!")
+                log.info("GitHub ulandi!")
                 log.info(f"Rate limit: {rate_info['remaining']}/{rate_info['limit']}")
                 return True
         except Exception as e:
@@ -326,7 +327,7 @@ class GitHubClient:
 
         # Strategy 2: Search in branch names (if not found in title/body)
         if not found_prs:
-            log.debug(f"Branch name search...")
+            log.debug("Branch name search...")
 
             # Common branch patterns (most common first to minimize API calls)
             branch_patterns = [
@@ -498,7 +499,7 @@ class GitHubClient:
                     log.debug(f"PR rejected: {reason}")
 
             if not found:
-                log.debug(f"Numeric search: all candidates rejected")
+                log.debug("Numeric search: all candidates rejected")
 
         except Exception as e:
             log.warning(f"Numeric search exception: {e}")
@@ -567,7 +568,7 @@ class GitHubClient:
                 continue
 
         if not found:
-            log.debug(f"Extended branch patterns: nothing found")
+            log.debug("Extended branch patterns: nothing found")
 
         return found
 

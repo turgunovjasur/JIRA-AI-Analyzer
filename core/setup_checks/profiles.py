@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Iterable
 
-
 CHECK_PROFILES: dict[str, list[str]] = {
     # UI checker and webhook Service1 enter the same checker engine after their
     # source-specific gates. Keep this order here so changing check order is a

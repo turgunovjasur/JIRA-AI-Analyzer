@@ -3,24 +3,33 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
-from core import CommentSeparator, PRNotMergedError, RECHECK_REASONS
+from core import RECHECK_REASONS, CommentSeparator, PRNotMergedError
+from core.errors import MinTZError, PRNotFoundError
 from core.logger import get_logger
 from core.setup_checks.checks import CHECK_REGISTRY
 from core.setup_checks.engine import SetupContext, run_setup_checks
 from core.setup_checks.profiles import CHECK_PROFILES
+from services.checkers.tzpr_agent_runner import AgentRunnerMixin
 from services.checkers.tzpr_constants import (
     PRO_MODEL_NAME,
-    execution_mode_display_label as _execution_mode_display_label,
-    normalize_execution_mode as _normalize_execution_mode,
     resolve_agent_model_names,
+)
+from services.checkers.tzpr_constants import (
+    execution_mode_display_label as _execution_mode_display_label,
+)
+from services.checkers.tzpr_constants import (
+    normalize_execution_mode as _normalize_execution_mode,
 )
 from services.checkers.tzpr_multi_agent_service import TZPRMultiAgentService
 from services.checkers.tzpr_preflight import (
     agent1_rules_from_effective_settings as _agent1_rules_from_effective_settings,
+)
+from services.checkers.tzpr_preflight import (
     build_agent1_sanitized_input as _build_agent1_sanitized_input,
+)
+from services.checkers.tzpr_preflight import (
     select_agent3_dev_comments as _select_agent3_dev_comments,
 )
-from services.checkers.tzpr_agent_runner import AgentRunnerMixin
 from services.checkers.tzpr_result_builder import ResultBuilderMixin
 from services.checkers.tzpr_run_state import RunStateMixin
 from utils.ai.gemini_helper import GeminiHelper
@@ -203,6 +212,7 @@ class _TZPRMultiAgentExecutor(AgentRunnerMixin, ResultBuilderMixin, RunStateMixi
                 str(pr_error),
                 task_summary=task_details.get("summary") or "",
                 effective_settings=effective_settings,
+                error=pr_error,
             )
             result.execution_mode = self.execution_mode
             result.run_id = self.run_id
@@ -211,12 +221,14 @@ class _TZPRMultiAgentExecutor(AgentRunnerMixin, ResultBuilderMixin, RunStateMixi
 
         pr_info = setup_ctx.pr_info
         if setup_ctx.failed("pr_check") or not pr_info:
+            pr_not_found = PRNotFoundError("Bu task uchun PR topilmadi (JIRA va GitHub'da)")
             result = self.service._create_error_result(
                 self.task_key,
-                "Bu task uchun PR topilmadi (JIRA va GitHub'da)",
+                str(pr_not_found),
                 task_summary=task_details.get("summary") or "",
                 warnings=["JIRA da PR link yo'q", "GitHub search natija bermadi"],
                 effective_settings=effective_settings,
+                error=pr_not_found,
             )
             result.execution_mode = self.execution_mode
             result.run_id = self.run_id
@@ -225,14 +237,16 @@ class _TZPRMultiAgentExecutor(AgentRunnerMixin, ResultBuilderMixin, RunStateMixi
 
         if setup_ctx.failed("min_tz_check"):
             actual_chars = setup_ctx.tz_chars
+            min_tz_error = MinTZError(
+                f"TZ yetarli emas. (description: {actual_chars} belgi, "
+                f"min: {min_tz} belgi). {_execution_mode_display_label(self.execution_mode)} checker to'xtatildi."
+            )
             result = self.service._create_error_result(
                 self.task_key,
-                (
-                    f"TZ yetarli emas. (description: {actual_chars} belgi, "
-                    f"min: {min_tz} belgi). {_execution_mode_display_label(self.execution_mode)} checker to'xtatildi."
-                ),
+                str(min_tz_error),
                 task_summary=task_details.get("summary") or "",
                 effective_settings=effective_settings,
+                error=min_tz_error,
             )
             result.execution_mode = self.execution_mode
             result.run_id = self.run_id

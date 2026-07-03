@@ -5,16 +5,25 @@ TZPRService bularni meros oladi, `self.` chaqiruvlar MRO orqali hal bo'ladi.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
-from fnmatch import fnmatch
 import re
+from fnmatch import fnmatch
+from typing import Any, Dict, List, Optional
 
 from core import RECHECK_REASONS
 from core.logger import get_logger
 from services.checkers.tzpr_models import (
-    TZPRAnalysisOverview, TZPRAnalysisResult, TZPRAnalysisSection, TZPRCodeReference,
-    TZPRCommentIntelligence, TZPRCommentSignal, TZPREvidenceItem, TZPRFigmaReference,
-    TZPRQARecommendation, TZPRRequirementMatrixItem, TZPRRunInfo, TZPRTaskInfo,
+    TZPRAnalysisOverview,
+    TZPRAnalysisResult,
+    TZPRAnalysisSection,
+    TZPRCodeReference,
+    TZPRCommentIntelligence,
+    TZPRCommentSignal,
+    TZPREvidenceItem,
+    TZPRFigmaReference,
+    TZPRQARecommendation,
+    TZPRRequirementMatrixItem,
+    TZPRRunInfo,
+    TZPRTaskInfo,
     TZPRWorkflowInfo,
 )
 
@@ -581,9 +590,15 @@ class ResultBuildersMixin:
             files_analyzed: int = 0,
             total_prompt_size: int = 0,
             effective_settings: Optional[Dict[str, Any]] = None,
+            error: Optional[BaseException] = None,
     ) -> TZPRAnalysisResult:
-        """Create error result"""
-        return TZPRAnalysisResult(
+        """Create error result.
+
+        `error` — typed exception (core/errors.py). Dataclass field emas
+        (asdict/DB payload o'zgarmasin) — jonli obyektga atribut sifatida
+        biriktiriladi; webhook `_classify_error` avval shuni tekshiradi.
+        """
+        result = TZPRAnalysisResult(
             task_key=task_key,
             task_summary=task_summary,
             tz_content=tz_content,
@@ -603,3 +618,6 @@ class ResultBuildersMixin:
             execution_mode="multi_agent",
             run_state="blocked" if status_banner else "failed",
         )
+        if error is not None:
+            result.typed_error = error
+        return result

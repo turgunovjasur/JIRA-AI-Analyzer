@@ -26,83 +26,94 @@ import os
 import re
 import secrets
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+
 from core.logger import get_logger
-from utils.database.runtime import connect_auth_db
-from utils.auth.company_repository import (
-    fetch_company_by_id,
-    fetch_company_by_code,
-    fetch_all_companies,
-    create_company_record,
-    insert_company_module_settings,
-    create_default_company_subscription,
-    update_company_active_flag,
-    update_company_seat_limit_value,
-    delete_company_by_id,
-    fetch_company_subscription,
-    upsert_company_subscription,
-    expire_overdue_subscriptions,
-    fetch_company_settings,
-    fetch_company_modules,
-    upsert_company_modules,
-    upsert_company_settings,
-    fetch_company_by_project_key,
-    find_project_key_conflicts,
-)
-from utils.auth.user_repository import (
-    count_users_in_company as repo_count_users_in_company,
-    insert_user,
-    fetch_user_by_id,
-    fetch_user_by_id_and_company,
-    fetch_user_by_full_username,
-    fetch_users_by_company,
-    update_user_password_hash,
-    update_user_status_value,
-    update_user_role_value,
-    delete_user_by_id,
-    fetch_user_credentials,
-    upsert_user_credentials,
-    fetch_user_module_settings,
-    upsert_user_module_settings,
-)
-from utils.auth.platform_repository import (
-    fetch_global_setting,
-    upsert_global_setting,
-    fetch_login_attempt_state,
-    delete_login_attempt,
-    upsert_login_attempt,
-    fetch_platform_admin_by_username,
-    upsert_platform_admin,
-    insert_login_audit_log,
-    fetch_login_audit_logs,
-    insert_password_reset_token,
-    fetch_password_reset_token,
-    mark_password_reset_token_used,
-    insert_web_session,
-    fetch_web_session,
-    touch_web_session,
-    revoke_web_session,
-    revoke_all_user_sessions,
-    cleanup_expired_web_sessions,
-    insert_audit_log,
-)
 from utils.auth.auth_bootstrap import run_auth_bootstrap
 from utils.auth.auth_config_helpers import (
-    build_company_gemini_keys,
     build_company_credentials,
+    build_company_gemini_keys,
+    build_company_webhook_config,
     build_company_webhook_credentials,
     build_user_credentials_for_service,
-    build_company_webhook_config,
     compute_credential_readiness,
-    validate_company_webhook_config_shape,
     parse_webhook_module_settings,
+    validate_company_webhook_config_shape,
+)
+from utils.auth.auth_subscription_helpers import (
+    get_effective_company_modules as helper_get_effective_company_modules,
+)
+from utils.auth.auth_subscription_helpers import (
+    is_company_subscription_active as helper_is_company_subscription_active,
 )
 from utils.auth.auth_subscription_helpers import (
     normalize_iso_date,
-    validate_company_subscription_data as helper_validate_company_subscription_data,
-    is_company_subscription_active as helper_is_company_subscription_active,
-    get_effective_company_modules as helper_get_effective_company_modules,
 )
+from utils.auth.auth_subscription_helpers import (
+    validate_company_subscription_data as helper_validate_company_subscription_data,
+)
+from utils.auth.company_repository import (
+    create_company_record,
+    create_default_company_subscription,
+    delete_company_by_id,
+    expire_overdue_subscriptions,
+    fetch_all_companies,
+    fetch_company_ai_budget,
+    fetch_company_by_code,
+    fetch_company_by_id,
+    fetch_company_by_project_key,
+    fetch_company_modules,
+    fetch_company_settings,
+    fetch_company_subscription,
+    find_project_key_conflicts,
+    insert_company_module_settings,
+    update_company_active_flag,
+    update_company_ai_budget,
+    update_company_seat_limit_value,
+    upsert_company_modules,
+    upsert_company_settings,
+    upsert_company_subscription,
+)
+from utils.auth.platform_repository import (
+    cleanup_expired_web_sessions,
+    delete_login_attempt,
+    fetch_global_setting,
+    fetch_login_attempt_state,
+    fetch_login_audit_logs,
+    fetch_password_reset_token,
+    fetch_platform_admin_by_username,
+    fetch_web_session,
+    insert_audit_log,
+    insert_login_audit_log,
+    insert_password_reset_token,
+    insert_web_session,
+    mark_password_reset_token_used,
+    revoke_all_user_sessions,
+    revoke_web_session,
+    touch_web_session,
+    upsert_global_setting,
+    upsert_login_attempt,
+    upsert_platform_admin,
+)
+from utils.auth.user_repository import (
+    count_users_in_company as repo_count_users_in_company,
+)
+from utils.auth.user_repository import (
+    delete_user_by_id,
+    fetch_user_by_full_username,
+    fetch_user_by_id,
+    fetch_user_by_id_and_company,
+    fetch_user_credentials,
+    fetch_user_module_settings,
+    fetch_users_by_company,
+    insert_user,
+    update_user_password_hash,
+    update_user_role_value,
+    update_user_status_value,
+    upsert_user_credentials,
+    upsert_user_module_settings,
+)
+from utils.database.runtime import connect_auth_db
 
 log = get_logger("auth_db")
 
@@ -472,6 +483,16 @@ def seed_default_platform_admin() -> bool:
 # GLOBAL SETTINGS (super admin tomonidan belgilanadi)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+def _invalidate_app_settings_cache() -> None:
+    # Sozlama o'zgardi — shu processdagi app_settings TTL cache tozalanadi.
+    # Boshqa jarayonlar (worker) ≤TTL kechikish bilan yangi qiymatni ko'radi.
+    try:
+        from config.app_settings import invalidate_app_settings_cache
+        invalidate_app_settings_cache()
+    except Exception:
+        pass
+
+
 def get_global_setting(key: str, default: str = '') -> str:
     """Global sozlamadan qiymat olish."""
     return fetch_global_setting(_get_conn, key, default)
@@ -479,7 +500,10 @@ def get_global_setting(key: str, default: str = '') -> str:
 
 def set_global_setting(key: str, value: str) -> bool:
     """Global sozlamani saqlash (upsert)."""
-    return upsert_global_setting(_get_conn, key, value)
+    saved = upsert_global_setting(_get_conn, key, value)
+    if saved:
+        _invalidate_app_settings_cache()
+    return saved
 
 
 def get_global_gemini_defaults() -> dict:
@@ -806,7 +830,7 @@ def request_password_reset_email(username: str) -> bool:
     Email topilmasa yoki SMTP sozlanmagan bo'lsa False qaytaradi.
     Xavfsizlik: user mavjud emas bo'lsa ham True qaytaradi (timing attack himoyasi).
     """
-    from utils.email.email_sender import send_password_reset_email, is_email_configured
+    from utils.email.email_sender import is_email_configured, send_password_reset_email
     if not is_email_configured():
         return False
     user = get_user_by_full_username(username)
@@ -1024,6 +1048,16 @@ def get_company_settings_by_code(company_code: str) -> Dict:
     return get_company_settings(company['id'])
 
 
+def get_company_ai_budget(company_id: int) -> Optional[float]:
+    """Kompaniya oylik AI budjeti (USD). None = cheksiz (F2-5)."""
+    return fetch_company_ai_budget(_get_conn, company_id)
+
+
+def save_company_ai_budget(company_id: int, budget_usd) -> bool:
+    """Oylik AI budjetni saqlash — faqat super-admin RPC orqali chaqiriladi."""
+    return update_company_ai_budget(_get_conn, company_id, budget_usd)
+
+
 def get_company_modules(company_id: int) -> Dict[str, bool]:
     """Kompaniyaga ruxsat berilgan modullar: {'tz_pr_checker': True, ...}"""
     return fetch_company_modules(_get_conn, company_id, DEFAULT_MODULES)
@@ -1079,13 +1113,16 @@ def save_company_settings(company_id: int, settings: Dict) -> bool:
         'webhook_module_settings',
     }
     filtered = {k: v for k, v in settings.items() if k in allowed_keys}
-    return upsert_company_settings(
+    saved = upsert_company_settings(
         _get_conn,
         company_id,
         filtered,
         _find_project_key_conflicts,
         _normalize_project_keys,
     )
+    if saved:
+        _invalidate_app_settings_cache()
+    return saved
 
 
 def debug_company_settings_save(company_id: int, settings: Dict) -> List[str]:
@@ -1334,7 +1371,10 @@ def get_user_module_settings(user_id: int, module_key: str = None) -> Dict:
 
 def save_user_module_settings(user_id: int, module_key: str, data: dict) -> bool:
     """Userning bitta modul sozlamasini saqlash (upsert)"""
-    return upsert_user_module_settings(_get_conn, user_id, module_key, data)
+    saved = upsert_user_module_settings(_get_conn, user_id, module_key, data)
+    if saved:
+        _invalidate_app_settings_cache()
+    return saved
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

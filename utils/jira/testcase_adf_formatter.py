@@ -11,9 +11,9 @@ ADF Hujjatlar: https://developer.atlassian.com/cloud/jira/platform/apis/document
 Author: JASUR TURGUNOV
 Version: 1.0
 """
-from typing import Dict, List, Optional, Any
-from datetime import datetime
 import logging
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 from utils.jira.base_adf_formatter import BaseADFFormatter
 

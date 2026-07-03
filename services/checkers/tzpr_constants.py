@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 EXECUTION_MODE_MULTI = "multi_agent"
 PRO_MODEL_NAME = ""
 FALLBACK_MODEL_NAME = ""

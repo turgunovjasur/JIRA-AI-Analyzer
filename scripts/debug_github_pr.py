@@ -7,10 +7,10 @@ Ishlatish:
 
 Author: JASUR TURGUNOV
 """
-import sys
 import os
-import json
 import re
+import sys
+
 import requests
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -87,7 +87,7 @@ def debug_github_pr(task_key: str):
         print(f"    ⚠️  Status: {resp.status_code}, body: {resp.text[:200]}")
 
     # Strategiya 2: Branch nomi qidirish (repo listing)
-    print(f"\n  [Strategiya 2] Repos listing va branch qidirish")
+    print("\n  [Strategiya 2] Repos listing va branch qidirish")
     repos_url = f"{base}/orgs/{org}/repos"
     resp = _make_request(session, repos_url, params={'per_page': 50, 'type': 'all'})
     if resp and resp.status_code == 200:
@@ -127,14 +127,14 @@ def debug_github_pr(task_key: str):
     print(f"\n  Jami topilgan PR: {len(found_prs)} ta")
     if not found_prs:
         print(f"\n  ⚠️  '{task_key}' uchun GitHub da PR topilmadi")
-        print(f"  💡 Sabablari:")
-        print(f"     - PR title/body da task key yo'q")
-        print(f"     - Branch nomida task key yo'q")
-        print(f"     - Boshqa task key bilan tekshiring")
+        print("  💡 Sabablari:")
+        print("     - PR title/body da task key yo'q")
+        print("     - Branch nomida task key yo'q")
+        print("     - Boshqa task key bilan tekshiring")
         return
 
     # ── 4. PR detallari ──────────────────────────────────────
-    print(f"\n[4/5] PR detallari olinmoqda...")
+    print("\n[4/5] PR detallari olinmoqda...")
 
     for idx, pr_meta in enumerate(found_prs[:3]):  # Max 3 ta
         print(f"\n  {'─'*60}")
@@ -159,7 +159,7 @@ def debug_github_pr(task_key: str):
 
         pr_number = pr_meta.get('number')
         if not repo_name or not pr_number:
-            print(f"  ⚠️  Repo yoki PR number aniqlanmadi, o'tkazib yuborilmoqda")
+            print("  ⚠️  Repo yoki PR number aniqlanmadi, o'tkazib yuborilmoqda")
             continue
 
         # PR to'liq ma'lumotlari
@@ -167,7 +167,7 @@ def debug_github_pr(task_key: str):
         resp = _make_request(session, pr_url)
         if resp and resp.status_code == 200:
             pr_data = resp.json()
-            print(f"\n  PR TO'LIQ MA'LUMOTLARI:")
+            print("\n  PR TO'LIQ MA'LUMOTLARI:")
             print(f"    Barcha kalitlar: {list(pr_data.keys())}")
             show_fields = ['number', 'title', 'state', 'merged', 'merge_commit_sha',
                            'additions', 'deletions', 'changed_files', 'commits']
@@ -204,7 +204,7 @@ def debug_github_pr(task_key: str):
                 dels     = f.get('deletions', 0)
                 print(f"  {i:<4} {status:<10} {adds:>6} {dels:>6}  {fname}")
             # Feature/Tech extraction preview
-            print(f"\n  FEATURE/TECH EXTRACTION PREVIEW:")
+            print("\n  FEATURE/TECH EXTRACTION PREVIEW:")
             features = set()
             techs    = set()
             tech_patterns = {
@@ -238,12 +238,12 @@ def debug_github_pr(task_key: str):
 
     # ── 5. Xulosa ────────────────────────────────────────────
     print(f"\n{'='*60}")
-    print(f"  ⚙️  XULOSA: DB GA NIMA SAQLANADI (task_type EMAS)")
+    print("  ⚙️  XULOSA: DB GA NIMA SAQLANADI (task_type EMAS)")
     print(f"{'='*60}")
-    print(f"  GitHub dan faqat quyidagilar saqlanadi:")
-    print(f"    feature_name     → PR fayl yo'llari asosida")
-    print(f"    technology_stack → PR fayl kengaytmalari asosida")
-    print(f"  task_type esa JIRA dan keladi (debug_jira_task.py ga qarang)")
+    print("  GitHub dan faqat quyidagilar saqlanadi:")
+    print("    feature_name     → PR fayl yo'llari asosida")
+    print("    technology_stack → PR fayl kengaytmalari asosida")
+    print("  task_type esa JIRA dan keladi (debug_jira_task.py ga qarang)")
 
     print(f"\n{'#'*60}")
     print(f"  Debug yakunlandi: {task_key}")

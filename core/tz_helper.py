@@ -162,17 +162,17 @@ class TZHelper:
         # 1. Summary
         summary = task_details.get('summary', '')
         if summary:
-            parts.append(f"📋 SUMMARY:")
+            parts.append("📋 SUMMARY:")
             parts.append(summary)
 
         # 2. Description
         description = task_details.get('description', '')
         if description:
-            parts.append(f"\n📝 DESCRIPTION (TZ):")
+            parts.append("\n📝 DESCRIPTION (TZ):")
             parts.append(description)
 
         # 3. Metadata
-        parts.append(f"\n📊 METADATA:")
+        parts.append("\n📊 METADATA:")
         parts.append(f"   Type: {task_details.get('type', 'N/A')}")
         parts.append(f"   Priority: {task_details.get('priority', 'N/A')}")
         parts.append(f"   Status: {task_details.get('status', 'N/A')}")
@@ -509,9 +509,9 @@ class TZHelper:
     @staticmethod
     def format_contradictory_comments_for_ui(comment_analysis: Dict) -> dict:
         """
-        Zid commentlarni UI (Streamlit) uchun formatda tayyorlash
+        Zid commentlarni frontend (Next.js) UI uchun formatda tayyorlash
 
-        Streamlit warning va expander'larda ko'rsatish uchun.
+        Frontend'dagi warning banner va yig'iladigan bloklarda ko'rsatish uchun.
 
         Args:
             comment_analysis: analyze_comments() natijasi

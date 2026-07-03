@@ -9,16 +9,16 @@ Test Case Generator Service — multi-agent (Agent1 → Agent2 → Agent3).
 
 Author: JASUR TURGUNOV
 """
-from typing import Any, Dict, List, Optional, Callable
-from dataclasses import dataclass, field
 import json
 import re
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Optional
 
 # Core imports
 from core import BaseService
 from core.analysis_policy import build_full_analysis_blocked
-from core.module_preflight import ModulePreflightPolicy, run_module_preflight
 from core.logger import get_logger
+from core.module_preflight import ModulePreflightPolicy, run_module_preflight
 
 # Multi-agent: Agent1 (talab ajratuvchi) checker modulidan QAYTA ISHLATILADI —
 # checker fayli O'ZGARTIRILMAYDI, faqat import qilinadi.

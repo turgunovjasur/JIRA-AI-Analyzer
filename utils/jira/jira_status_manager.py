@@ -10,8 +10,10 @@ Avtomatik status o'zgartirish uchun:
 Author: JASUR TURGUNOV
 Version: 1.0
 """
+from typing import Dict, List, Optional, Tuple
+
 from jira import JIRA
-from typing import List, Dict, Optional, Tuple
+
 from core.logger import get_logger
 
 log = get_logger("jira.status")
