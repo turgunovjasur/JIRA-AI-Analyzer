@@ -142,6 +142,11 @@ Risk:
 - `low`: lokal va kichik qo'shimcha o'zgarish.
 - `medium`: business behavior yoki data/query flowga ta'sir qilishi mumkin.
 - `high`: data loss, security, permission, migration yoki keng regressiya xavfi.
+
+Til talabi:
+- `text` matni faqat Uzbek lotin tilida yozilsin.
+- File/procedure/function/package/table/constant/test nomlari original holatda qoldirilsin.
+- Inglizcha umumiy izoh yozmang; faqat texnik nomlar va kod identifikatorlari original tilda qolishi mumkin.
 """.strip()
 
 

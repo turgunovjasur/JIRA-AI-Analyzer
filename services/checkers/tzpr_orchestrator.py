@@ -205,6 +205,29 @@ class _TZPRMultiAgentExecutor(AgentRunnerMixin, ResultBuilderMixin, RunStateMixi
             result.run_state = "blocked"
             return {"error_result": result}
 
+        # min_tz_check profilda pr_check'dan oldin ishlaydi va blocking fail'da
+        # engine'ni to'xtatadi (pr_check umuman ishlamaydi). Shuning uchun uni
+        # pr bloklaridan OLDIN tekshiramiz — aks holda skip bo'lgan pr_check
+        # tufayli pr_info=None bo'lib, TZ kamligi "PR topilmadi" deb noto'g'ri
+        # ko'rsatiladi.
+        if setup_ctx.failed("min_tz_check"):
+            actual_chars = setup_ctx.tz_chars
+            min_tz_error = MinTZError(
+                f"TZ yetarli emas. (description: {actual_chars} belgi, "
+                f"min: {min_tz} belgi). {_execution_mode_display_label(self.execution_mode)} checker to'xtatildi."
+            )
+            result = self.service._create_error_result(
+                self.task_key,
+                str(min_tz_error),
+                task_summary=task_details.get("summary") or "",
+                effective_settings=effective_settings,
+                error=min_tz_error,
+            )
+            result.execution_mode = self.execution_mode
+            result.run_id = self.run_id
+            result.run_state = "blocked"
+            return {"error_result": result}
+
         pr_error = setup_ctx.errors.get("pr_check")
         if isinstance(pr_error, PRNotMergedError):
             result = self.service._create_error_result(
@@ -229,24 +252,6 @@ class _TZPRMultiAgentExecutor(AgentRunnerMixin, ResultBuilderMixin, RunStateMixi
                 warnings=["JIRA da PR link yo'q", "GitHub search natija bermadi"],
                 effective_settings=effective_settings,
                 error=pr_not_found,
-            )
-            result.execution_mode = self.execution_mode
-            result.run_id = self.run_id
-            result.run_state = "blocked"
-            return {"error_result": result}
-
-        if setup_ctx.failed("min_tz_check"):
-            actual_chars = setup_ctx.tz_chars
-            min_tz_error = MinTZError(
-                f"TZ yetarli emas. (description: {actual_chars} belgi, "
-                f"min: {min_tz} belgi). {_execution_mode_display_label(self.execution_mode)} checker to'xtatildi."
-            )
-            result = self.service._create_error_result(
-                self.task_key,
-                str(min_tz_error),
-                task_summary=task_details.get("summary") or "",
-                effective_settings=effective_settings,
-                error=min_tz_error,
             )
             result.execution_mode = self.execution_mode
             result.run_id = self.run_id
@@ -309,6 +314,7 @@ class _TZPRMultiAgentExecutor(AgentRunnerMixin, ResultBuilderMixin, RunStateMixi
                     "figma_count": (figma_data or {}).get("count") or 0,
                     "agent1_comments": len(agent1_input.get("comments") or []),
                     "agent1_figma": len(agent1_input.get("figma") or []),
+                    "agent3_dev_comments": len(agent3_dev_comments or []),
                     "is_recheck": is_recheck,
                 },
             )

@@ -1496,17 +1496,20 @@ class AgentRunnerMixin:
             summary = fallback["summary"]
             quality = fallback
 
+        dev_comments_count = len(context.get("agent3_dev_comments") or [])
         self._finish_agent(
             agent_key,
             state="completed" if run_state == "completed" else "failed" if run_state == "blocked" else "completed",
             input_summary=(
-                f"Arbiterga {len(agent1.get('requirements') or [])} ta inventory va "
-                f"{len(agent2.get('verifications') or [])} ta verification yuborildi."
+                f"Arbiterga {len(agent1.get('requirements') or [])} ta inventory, "
+                f"{len(agent2.get('verifications') or [])} ta verification va "
+                f"{dev_comments_count} ta dev comment yuborildi."
             ),
             output_summary=f"{len(final_requirements)} ta requirement bo'yicha checker final matrix hisoblandi.",
             warnings=warnings,
             artifact={
                 "summary": summary,
+                "dev_comments_received": dev_comments_count,
                 "run_state": run_state,
                 "verdict": verdict,
                 "verdict_label": verdict_label,
@@ -1537,6 +1540,7 @@ class AgentRunnerMixin:
             "verdict_label": verdict_label,
             "verdict_reason": verdict_reason,
             "quality_status": quality.get("quality_status", "ok"),
+            "dev_comments_received": dev_comments_count,
             "total_requirements": quality.get("total_requirements", 0),
             "completed_count": quality.get("completed_count", 0),
             "failed_count": quality.get("failed_count", 0),

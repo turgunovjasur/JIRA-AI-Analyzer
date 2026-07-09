@@ -101,7 +101,12 @@ def decision_matrix_item_text(item: dict[str, Any]) -> str:
         requirement = str(item.get("id") or "Talab matni qaytmadi.").strip()
     requirement = requirement.replace("|", "/")
 
-    segments = [f"Talab: {requirement}"]
+    # REQ ID panel sarlavhasiga chiqadi (JiraADFFormatter._split_requirement_item
+    # uni ajratib "[REQ-N]" ko'rinishida title'ga qo'yadi) — Xulosadagi REQ
+    # havolalar endi bajarilgan/bajarilmagan/skip bo'limlarida topiladi.
+    req_id = str(item.get("id") or "").strip()
+    head = f"{req_id}: Talab: {requirement}" if req_id else f"Talab: {requirement}"
+    segments = [head]
     requirement_source = str(item.get("source") or item.get("requirement_source") or "").strip()
     if requirement_source:
         segments.append(f"Source: {requirement_source}")
@@ -225,7 +230,7 @@ def build_extra_issue_lines(agent1: dict[str, Any], agent2: dict[str, Any], agen
         if description:
             suffix = f" ({files})" if files else ""
             risk_suffix = f" [risk: {risk}]" if risk else ""
-            lines.append(f"- Extra code change: {description}{risk_suffix}{suffix}")
+            lines.append(f"- Qo'shimcha kod o'zgarishi: {description}{risk_suffix}{suffix}")
     return list(dict.fromkeys([line for line in lines if line.strip()]))
 
 

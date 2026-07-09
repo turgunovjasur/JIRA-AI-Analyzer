@@ -210,10 +210,14 @@ def build_quality_artifact(
     dev_comments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     # Skip uchun asos bo'lgan dev izohi(lari) — har skip qatorida ko'rsatiladi
-    dev_comment_quote = " | ".join(
-        f'{str(c.get("author") or "Dev").strip()}: "{str(c.get("body") or "").strip()}"'
+    dev_comment_bodies = [
+        c
         for c in (dev_comments or [])
         if isinstance(c, dict) and str(c.get("body") or "").strip()
+    ]
+    dev_comment_quote = " | ".join(
+        f'{str(c.get("author") or "Dev").strip()}: "{str(c.get("body") or "").strip()}"'
+        for c in dev_comment_bodies
     )
 
     skip_map: dict[str, str] = {}
@@ -301,16 +305,23 @@ def build_quality_artifact(
         if skip_ids:
             failed = [req_id for req_id in failed if req_id not in skip_ids]
             skipped = [req_id for req_id in req_ids if req_id in skip_ids]
+            has_dev_comment = bool(dev_comment_quote)
             for row in requirement_rows:
                 if row["id"] in skip_ids and row["status"] == "failed":
                     reason = skip_map.get(row["id"], "")
                     row["status"] = "skipped"
                     row["skip_reason"] = reason
                     evidence = f"⏭️ Skip sababi: {reason}" if reason else "⏭️ Skip qilingan"
-                    if dev_comment_quote:
+                    if has_dev_comment:
                         evidence = f"{evidence}  ·  💬 Dev izohi (skip asosi): {dev_comment_quote}"
+                    else:
+                        evidence = (
+                            f"{evidence}  ·  ⚠️ Bu skip agent3 tomonidan DEV COMMENTSIZ qilindi "
+                            "(arbiter'ga mos dev izohi yetmagan) — manual tekshiring."
+                        )
                     row["evidence"] = evidence
-                    row["dev_comments"] = list(dev_comments or [])
+                    row["dev_comments"] = list(dev_comment_bodies)
+                    row["skip_without_dev_comment"] = not has_dev_comment
 
     extra_risk = highest_extra_risk(compact_extra)
 
@@ -418,7 +429,7 @@ def build_deterministic_summary(quality: dict[str, Any]) -> str:
     if invalid:
         parts.append(f"Agent2 {len(invalid)} ta noma'lum/invalid verification qaytardi: {', '.join(invalid[:5])}.")
     if extra:
-        parts.append(f"Extra code change topildi; eng yuqori risk: {quality.get('extra_code_risk') or 'medium'}.")
+        parts.append(f"Qo'shimcha kod o'zgarishi topildi; eng yuqori risk: {quality.get('extra_code_risk') or 'medium'}.")
     if not parts:
         parts.append("Requirementlar bo'yicha yakuniy xulosa tayyor.")
     return " ".join(parts)

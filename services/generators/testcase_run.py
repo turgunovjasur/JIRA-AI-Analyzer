@@ -440,6 +440,13 @@ class _TestcaseRunExecutor:
             pass
 
     def _finish(self, *, run_state: str, final_result: dict | None, error_message: str | None) -> dict[str, Any] | None:
+        # Webhook result obyektiga agent_runs snapshot'ini biriktiramiz (debug collapse uchun).
+        if self.final_result_obj is not None:
+            try:
+                snap = get_analysis_run_snapshot(self.run_id) or {}
+                setattr(self.final_result_obj, "agent_runs", snap.get("agent_runs", []))
+            except Exception:
+                pass
         append_analysis_run_event(
             run_id=self.run_id,
             level=("info" if run_state == "completed" else "error"),

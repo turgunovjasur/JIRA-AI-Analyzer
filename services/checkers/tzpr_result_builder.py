@@ -163,6 +163,7 @@ class ResultBuilderMixin:
                 "verdict_label": agent3.get("verdict_label") or analysis_overview.verdict_label,
                 "verdict_reason": agent3.get("verdict_reason") or analysis_overview.verdict_reason,
                 "quality_status": agent3.get("quality_status") or "",
+                "dev_comments_received": agent3.get("dev_comments_received") or 0,
                 "total_requirements": agent3.get("total_requirements") or 0,
                 "completed_count": agent3.get("completed_count") or 0,
                 "failed_count": agent3.get("failed_count") or 0,

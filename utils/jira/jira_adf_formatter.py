@@ -301,15 +301,20 @@ class JiraADFFormatter(BaseADFFormatter):
 
         content = []
 
-        # ━━━ AI MARKER (comment ajratish uchun) ━━━
+        # ━━━ AI MARKER + TITLE ━━━
         content.append(self._paragraph([self._text_node("[AI_S1]")]))
+        if result.compliance_score is not None:
+            score = result.compliance_score
+            score_color = self._get_score_color(score)
+            content.append(self._heading_nodes([
+                self._text_node("🎯 Checker(Multi Agent) — Bali: "),
+                self._colored_text(f"{score}%", score_color),
+            ], level=1))
+        else:
+            content.append(self._heading("🎯 Checker(Multi Agent)", 1))
 
-        # ━━━ HEADER ━━━
-        content.append(self._heading("🎯 TZ-PR Checker", 2))
-        content.append(self._rule())
-
-        # ━━━ META INFO ━━━
-        meta_text = [
+        # ━━━ META + STATISTIKA (bitta yopiq collapse; title'da task_key ko'rinadi) ━━━
+        meta_para = self._paragraph([
             self._bold_text("Task: "),
             self._text_node(f"{result.task_key}"),
             self._hard_break(),
@@ -317,41 +322,53 @@ class JiraADFFormatter(BaseADFFormatter):
             self._text_node(datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
             self._hard_break(),
             self._bold_text("Status: "),
-            self._text_node(new_status)
+            self._text_node(new_status),
+        ])
+        stats_items = [
+            f"Pull Requests: {result.pr_count} ta",
+            f"O'zgargan fayllar: {result.files_changed} ta",
+            f"Qo'shilgan: +{result.total_additions}",
+            f"O'chirilgan: -{result.total_deletions}",
         ]
-        content.append(self._paragraph(meta_text))
+        meta_stats_content = [meta_para, self._bullet_list(stats_items)]
+        for pr in getattr(result, 'pr_details', []) or []:
+            pr_title = pr.get('title', 'PR')
+            pr_url = pr.get('url', '')
+            pr_files = pr.get('files', [])
+            pr_add = sum(f.get('additions', 0) for f in pr_files)
+            pr_del = sum(f.get('deletions', 0) for f in pr_files)
+            nodes = [self._text_node("🔗 ")]
+            if pr_url:
+                nodes.append(self._link_text(pr_title, pr_url))
+            else:
+                nodes.append(self._text_node(pr_title))
+            nodes += [
+                self._text_node(f" — {len(pr_files)} fayl | "),
+                self._colored_text(f"+{pr_add}", "#36B37E"),
+                self._text_node(" / "),
+                self._colored_text(f"-{pr_del}", "#FF5630"),
+            ]
+            meta_stats_content.append(self._paragraph(nodes))
+        content.append(self._expand_panel(
+            "📊 Statistika",
+            meta_stats_content,
+        ))
 
         # AI tahlil bo'limlari — score/scoreboard uchun oldindan hisoblanadi
         sections = self._sections_from_result(result)
 
-        # ━━━ MOSLIK BALI + XULOSA SO'ZI ━━━
-        if result.compliance_score is not None:
-            score = result.compliance_score
-            score_color = self._get_score_color(score)
-
-            content.append(self._paragraph([
-                self._bold_text("📊 Moslik Bali: "),
-                self._colored_text(f"{score}%", score_color),
-                self._text_node("  —  "),
-                self._colored_text(self._score_verdict(score), score_color),
-            ]))
-
-        # ━━━ SCOREBOARD (talab verdiktlari bir qatorda) ━━━
-        scoreboard = self._requirement_scoreboard(sections)
-        if scoreboard:
-            content.append(self._paragraph(scoreboard))
+        # ━━━ DEBUG: AI PIPELINE (statistika bilan yonma-yon top-level collapse) ━━━
+        debug_lines = self._debug_pipeline_lines(result)
+        if debug_lines:
+            content.append(self._expand_panel("🔧 AI pipeline", [self._bullet_list(debug_lines)]))
 
         summary_lines = self._summary_lines_from_result(result)
-        if summary_lines:
-            content.append(self._expand_panel("🧭 Xulosa", [self._bullet_list(summary_lines)]))
-        content.append(self._rule())
 
         # ━━━ RE-CHECK PANEL ━━━
         if is_recheck and recheck_text:
             content.append(self._panel([
                 self._paragraph([self._text_node(recheck_text)])
             ], "note"))
-            content.append(self._rule())
 
         # ━━━ DEVELOPER IZOHLARI DROPDOWN (faqat recheck + izohlar bo'lsa) ━━━
         if is_recheck and dev_objections:
@@ -363,47 +380,16 @@ class JiraADFFormatter(BaseADFFormatter):
                 obj_items.append(f"👤 {author} ({created}): {body}")
             panel_title = f"💬 Developer izohlari — AI ko'rdi ({len(obj_items)} ta)"
             content.append(self._expand_panel(panel_title, [self._bullet_list(obj_items)]))
-            content.append(self._rule())
 
         # ━━━ RUN SIGNALLARI ━━━
         warnings = [str(item).strip() for item in (getattr(result, "warnings", None) or []) if str(item).strip()]
         if warnings:
             content.append(self._expand_panel("⚠ Run signallari", [self._bullet_list(warnings)]))
-            content.append(self._rule())
 
-        # ━━━ STATISTIKA + PR HAVOLALAR (dropdown, default yopiq) ━━━
-        stats_items = [
-            f"Pull Requests: {result.pr_count} ta",
-            f"O'zgargan fayllar: {result.files_changed} ta",
-            f"Qo'shilgan: +{result.total_additions}",
-            f"O'chirilgan: -{result.total_deletions}"
-        ]
-        stats_panel_content = [self._bullet_list(stats_items)]
-
-        pr_details = getattr(result, 'pr_details', [])
-        for pr in pr_details:
-            pr_title = pr.get('title', 'PR')
-            pr_url = pr.get('url', '')
-            pr_files = pr.get('files', [])
-            pr_file_count = len(pr_files)
-            pr_add = sum(f.get('additions', 0) for f in pr_files)
-            pr_del = sum(f.get('deletions', 0) for f in pr_files)
-
-            nodes = [self._text_node("🔗 ")]
-            if pr_url:
-                nodes.append(self._link_text(pr_title, pr_url))
-            else:
-                nodes.append(self._text_node(pr_title))
-            nodes += [
-                self._text_node(f" — {pr_file_count} fayl | "),
-                self._colored_text(f"+{pr_add}", "#36B37E"),
-                self._text_node(" / "),
-                self._colored_text(f"-{pr_del}", "#FF5630"),
-            ]
-            stats_panel_content.append(self._paragraph(nodes))
-
-        content.append(self._expand_panel("📈 Statistika", stats_panel_content))
-        content.append(self._rule())
+        # ━━━ XULOSA (talab bo'limlaridan oldin, section heading bilan) ━━━
+        if summary_lines:
+            content.append(self._heading("🧭 Xulosa", 3))
+            content.append(self._expand_panel("Tafsilotlar", [self._bullet_list(summary_lines)]))
 
         # ━━━ AI TAHLIL BO'LIMLARI (EXPAND PANELS) ━━━
         _visible = self._normalize_visible_sections(visible_sections)
@@ -430,8 +416,6 @@ class JiraADFFormatter(BaseADFFormatter):
                         self._section_status_emoji.get(section_key, ""),
                     ))
 
-        content.append(self._rule())
-
         # ━━━ FOOTER ━━━
         actual_footer = footer_text if footer_text else (
             "🤖 Bu komment AI tomonidan avtomatik yaratilgan. "
@@ -440,6 +424,68 @@ class JiraADFFormatter(BaseADFFormatter):
         content.append(self._paragraph([self._italic_text(actual_footer)]))
 
         return {"version": 1, "type": "doc", "content": content}
+
+    def _debug_pipeline_lines(self, result: Any) -> List[str]:
+        """AI pipeline debug — har agent nima qilgani (collapse ichida ko'rsatiladi).
+
+        Input qatorlari yo'q. Har agent: nima qilgani + qaysi modelda ishlagani
+        (fallback bo'lsa o'tish) + xato. Agent1b (merge) alohida qator, chunki u
+        agent1 ichidagi qadam — snapshotda alohida row emas.
+        """
+        by_key = self._agent_runs_by_key(getattr(result, "agent_runs", None))
+        lines: List[str] = []
+
+        # ━━━ Agent1 (scope) + Agent1b (merge) ━━━
+        agent1_row = by_key.get("agent1_scope_builder")
+        if agent1_row:
+            artifact = agent1_row.get("artifact") or {}
+            raw_count = len(artifact.get("raw_requirements") or [])
+            merged = artifact.get("requirements") or []
+            merged_count = len(merged)
+            merge_groups = sum(
+                1 for item in merged if isinstance(item, dict) and item.get("merged_from")
+            )
+            if raw_count:
+                state = str(agent1_row.get("state") or "?").strip() or "?"
+                scope_line = f"1️⃣ Agent1 (scope) [{state}]: {raw_count} ta talab ajratdi"
+                model_suffix = self._agent_model_suffix(agent1_row)
+                if model_suffix:
+                    scope_line = f"{scope_line} — {model_suffix}"
+                lines.append(scope_line)
+                lines.append(
+                    f"🔀 Agent1b (merge): {raw_count} ta talabni {merged_count} taga "
+                    f"birlashtirdi ({merge_groups} ta merge)"
+                )
+            else:
+                lines.append(self._agent_line(agent1_row, "1️⃣ Agent1 (scope)"))
+
+        # ━━━ Agent2 (verify) + Agent3 (arbiter) ━━━
+        agent2_row = by_key.get("agent2_verifier")
+        if agent2_row:
+            lines.append(self._agent_line(agent2_row, "2️⃣ Agent2 (verify)"))
+        agent3_row = by_key.get("agent3_arbiter")
+        if agent3_row:
+            lines.append(self._agent_line(agent3_row, "3️⃣ Agent3 (arbiter)"))
+
+        # Agent3'ga dev comment yetdimi — sizning asosiy savolingiz uchun aniq qator.
+        arbiter = getattr(result, "arbiter_summary", None) or {}
+        dev_count = int(arbiter.get("dev_comments_received") or 0)
+        if dev_count > 0:
+            lines.append(f"💬 Dev comment agent3'ga YETDI: {dev_count} ta")
+        else:
+            lines.append("💬 Dev comment agent3'ga YETMADI (0 ta) — skip bo'lsa manual tekshiring")
+
+        no_dev_skips = [
+            str(row.get("id") or "").strip()
+            for row in (arbiter.get("requirements") or [])
+            if isinstance(row, dict) and row.get("skip_without_dev_comment")
+        ]
+        no_dev_skips = [item for item in no_dev_skips if item]
+        if no_dev_skips:
+            lines.append(
+                f"⚠️ Dev commentsiz skip qilingan talablar: {', '.join(no_dev_skips)}"
+            )
+        return lines
 
     def build_return_notification_document(
             self,
@@ -583,36 +629,32 @@ class JiraADFFormatter(BaseADFFormatter):
         """
         from datetime import datetime
 
-        status_emoji = "🎯" if "Ready" in new_status else "🧪"
-
+        score_title = (
+            f"🎯 Checker(Multi Agent) — Bali: {result.compliance_score}%"
+            if result.compliance_score is not None
+            else "🎯 Checker(Multi Agent)"
+        )
         comment = f"""[AI_S1]
-{status_emoji} *TZ-PR Checker*
+h1. {score_title}
 
-----
-
+*📊 Statistika:*
 *Task:* {result.task_key}
 *Vaqt:* {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 *Status:* {new_status}
-
-----
+*PR:* {result.pr_count} PR · {result.files_changed} fayl · {{color:green}}+{result.total_additions}{{color}} / {{color:red}}-{result.total_deletions}{{color}}
 """
 
         sections = self._sections_from_result(result)
 
-        if result.compliance_score is not None:
-            comment += f"\n*📊 Moslik Bali:* *{result.compliance_score}%* — {self._score_verdict(result.compliance_score)}\n"
-            scoreboard_bits = []
-            for key, label in [('completed', 'bajarildi'), ('failed', 'bajarilmadi'), ('skipped', 'skip')]:
-                section = sections.get(key)
-                count = len(section.items) if section and section.items else 0
-                if count:
-                    scoreboard_bits.append(f"{self._section_status_emoji.get(key, '')} {count} {label}")
-            if scoreboard_bits:
-                comment += "  ·  ".join(scoreboard_bits) + "\n"
+        debug_lines = self._debug_pipeline_lines(result)
+        if debug_lines:
+            comment += "\n*🔧 AI pipeline:*\n"
+            for line in debug_lines:
+                comment += f"• {line}\n"
 
         summary_lines = self._summary_lines_from_result(result)
         if summary_lines:
-            comment += "\n*🧭 Xulosa:*\n"
+            comment += "\nh3. 🧭 Xulosa\n"
             for line in summary_lines:
                 comment += f"• {line}\n"
 
@@ -622,18 +664,6 @@ class JiraADFFormatter(BaseADFFormatter):
             for warning in warnings:
                 comment += f"• {warning}\n"
 
-        comment += f"""
-----
-
-*📈 Statistika:*
-• Pull Requests: {result.pr_count} ta
-• O'zgargan fayllar: {result.files_changed} ta
-• Qo'shilgan qatorlar: {{color:green}}+{result.total_additions}{{color}}
-• O'chirilgan qatorlar: {{color:red}}-{result.total_deletions}{{color}}
-
-----
-"""
-
         for section_key in self._normalize_visible_sections(visible_sections):
             if section_key == 'issues' and not extra_scan_enabled:
                 continue
@@ -641,11 +671,11 @@ class JiraADFFormatter(BaseADFFormatter):
             if not section or not section.items:
                 continue
             title = self.section_titles[section_key][0] if section_key == 'issues' else section.title
-            comment += f"\n*{title}:*\n"
+            comment += f"\nh3. {title}\n"
             for item in section.items:
                 comment += f"• {item}\n"
 
-        comment += "\n----\n\n_Bu komment AI tomonidan avtomatik yaratilgan. Savollar bo'lsa QA Team ga murojaat qiling._\n"
+        comment += "\n_Bu komment AI tomonidan avtomatik yaratilgan. Savollar bo'lsa QA Team ga murojaat qiling._\n"
         return comment
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

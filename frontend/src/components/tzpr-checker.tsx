@@ -15,6 +15,7 @@ import {
   Frame,
   GitPullRequest,
   Layers3,
+  MessageSquare,
   Play,
   RefreshCw,
   ShieldCheck,
@@ -473,6 +474,23 @@ function AgentPipeline({
                     </>
                   );
                 })()}
+                {agent.agent_key === "agent3_arbiter"
+                  ? (() => {
+                      const artifact = (agent.artifact ?? null) as Record<string, unknown> | null;
+                      const devCount = Number(artifact?.dev_comments_received ?? 0);
+                      return devCount > 0 ? (
+                        <Badge tone="soft" className="inline-flex items-center gap-1">
+                          <MessageSquare size={11} />
+                          {devCount} dev comment yetdi
+                        </Badge>
+                      ) : (
+                        <Badge tone="warning" className="inline-flex items-center gap-1">
+                          <MessageSquare size={11} />
+                          dev comment yetmadi
+                        </Badge>
+                      );
+                    })()
+                  : null}
               </div>
 
               {agent.error_text ? (

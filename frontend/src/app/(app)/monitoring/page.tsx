@@ -6,6 +6,9 @@ import { MetricCard } from "@/components/ui/metric-card";
 import { Notice } from "@/components/ui/notice";
 import { SectionHeader } from "@/components/ui/section-header";
 import { StatusPill } from "@/components/ui/status-pill";
+import { ManualTriggerCard } from "@/components/manual-trigger-card";
+import { MonitoringAutoRefresh } from "@/components/monitoring-auto-refresh";
+import { MonitoringRefreshButton } from "@/components/monitoring-refresh-button";
 import { MonitoringDeleteCard } from "@/components/monitoring-delete-card";
 import { getBackendHealth, getMonitoringSnapshot } from "@/lib/backend";
 import { requireSession } from "@/lib/session";
@@ -319,11 +322,20 @@ export default async function MonitoringPage({
 
   return (
     <>
+      <MonitoringAutoRefresh />
+
       <div className="qa-page-intro">
-        <span className="qa-eyebrow">Operations</span>
-        <h2 className="qa-page-heading">Monitoring</h2>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <span className="qa-eyebrow">Operations</span>
+            <h2 className="qa-page-heading">Monitoring</h2>
+          </div>
+          <MonitoringRefreshButton />
+        </div>
         <p className="qa-page-desc">Queue holati, xizmat ishlashi va so&apos;nggi tasklar real-time.</p>
       </div>
+
+      <ManualTriggerCard />
 
       <HealthCard health={health} />
 

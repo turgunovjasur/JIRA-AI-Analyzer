@@ -111,6 +111,8 @@ class TestCaseGenerationResult:
     # Agent3 grouped view va audit izohlari
     test_scenarios: List[TestScenario] = field(default_factory=list)
     audit_findings: List[Dict] = field(default_factory=list)
+    # Debug: multi-agent pipeline snapshot (agent_runs) — comment debug collapse uchun
+    agent_runs: List[Dict] = field(default_factory=list)
 
 
 class TestCaseGeneratorService(BaseService):

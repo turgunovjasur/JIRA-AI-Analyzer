@@ -24,6 +24,7 @@ type WebhookSavePayload = {
   return_notification_text?: string;
   read_comments_enabled?: boolean;
   max_comments_to_read?: number;
+  dev_comment_source?: string;
   show_contradictory_comments?: boolean;
   visible_sections?: string[];
   ai_data_section_order?: string[];
@@ -120,6 +121,7 @@ export async function GET(request: Request) {
         return_notification_text: String(data.return_notification_text || "TZ-PR tekshiruvi past natija ko'rsatdi. Iltimos, TZ talablarini to'liq bajarilganligini tekshiring va qaytadan PR bering."),
         read_comments_enabled: Boolean(data.read_comments_enabled ?? true),
         max_comments_to_read: ensureNumber(data.max_comments_to_read, 0),
+        dev_comment_source: String(data.dev_comment_source || "assignee_reporter"),
         show_contradictory_comments: Boolean(data.show_contradictory_comments ?? true),
         visible_sections: Array.isArray(data.visible_sections) ? data.visible_sections : CHECKER_COMMENT_SECTIONS,
         ai_data_section_order: Array.isArray(data.ai_data_section_order) ? data.ai_data_section_order : ["tz", "comments", "figma", "code"],
@@ -187,6 +189,10 @@ export async function POST(request: Request) {
       return_notification_text: String(payload?.return_notification_text || "TZ-PR tekshiruvi past natija ko'rsatdi. Iltimos, TZ talablarini to'liq bajarilganligini tekshiring va qaytadan PR bering.").trim(),
       read_comments_enabled: Boolean(payload?.read_comments_enabled ?? true),
       max_comments_to_read: ensureNumber(payload?.max_comments_to_read, 0),
+      dev_comment_source:
+        String(payload?.dev_comment_source || "").trim().toLowerCase() === "all"
+          ? "all"
+          : "assignee_reporter",
       show_contradictory_comments: Boolean(payload?.show_contradictory_comments ?? true),
       visible_sections: Array.isArray(payload?.visible_sections) ? payload!.visible_sections! : CHECKER_COMMENT_SECTIONS,
       ai_data_section_order: Array.isArray(payload?.ai_data_section_order) ? payload!.ai_data_section_order! : ["tz", "comments", "figma", "code"],
@@ -244,6 +250,7 @@ export async function POST(request: Request) {
         return_notification_text: cleanPayload.return_notification_text,
         read_comments_enabled: cleanPayload.read_comments_enabled,
         max_comments_to_read: cleanPayload.max_comments_to_read,
+        dev_comment_source: cleanPayload.dev_comment_source,
         show_contradictory_comments: cleanPayload.show_contradictory_comments,
         visible_sections: cleanPayload.visible_sections,
         ai_data_section_order: cleanPayload.ai_data_section_order,

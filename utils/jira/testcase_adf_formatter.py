@@ -81,6 +81,7 @@ class TestcaseADFFormatter(BaseADFFormatter):
             pr_count: int = 0,
             files_changed: int = 0,
             test_scenarios: Optional[List[Any]] = None,
+            agent_runs: Optional[List[Dict]] = None,
     ) -> Dict:
         """
         Test case'lar uchun to'liq ADF document yaratish
@@ -95,15 +96,20 @@ class TestcaseADFFormatter(BaseADFFormatter):
         """
         content = []
 
-        # ━━━ AI MARKER (comment ajratish uchun) ━━━
+        # ━━━ AI MARKER + TITLE ━━━
         content.append(self._paragraph([self._text_node("[AI_S2]")]))
+        content.append(self._heading(
+            f"🧪 Test Cases(Multi Agent) — {len(test_cases)} ta test case",
+            1,
+        ))
 
-        # ━━━ HEADER ━━━
-        content.append(self._heading("🧪 Test Cases", 2))
-        content.append(self._rule())
+        # ━━━ META + STATISTIKA (bitta yopiq collapse; title'da task_key ko'rinadi) ━━━
+        by_type = {}
+        for tc in test_cases:
+            t = getattr(tc, 'test_type', 'unknown')
+            by_type[t] = by_type.get(t, 0) + 1
 
-        # ━━━ META INFO ━━━
-        meta_text = [
+        meta_para = self._paragraph([
             self._bold_text("Task: "),
             self._text_node(task_key),
             self._hard_break(),
@@ -111,34 +117,16 @@ class TestcaseADFFormatter(BaseADFFormatter):
             self._text_node(datetime.now().strftime('%Y-%m-%d %H:%M')),
             self._hard_break(),
             self._bold_text("Jami: "),
-            self._text_node(f"{len(test_cases)} ta test case")
-        ]
-        content.append(self._paragraph(meta_text))
-
-        content.append(self._rule())
-
-        # ━━━ STATISTIKA ━━━
-        by_type = {}
-        by_priority = {}
-        for tc in test_cases:
-            t = getattr(tc, 'test_type', 'unknown')
-            by_type[t] = by_type.get(t, 0) + 1
-
-            p = getattr(tc, 'priority', 'Medium')
-            by_priority[p] = by_priority.get(p, 0) + 1
-
-        content.append(self._heading("📊 Statistika", 3))
-
+            self._text_node(f"{len(test_cases)} ta test case"),
+        ])
         stats_items = []
         for t, count in by_type.items():
             emoji = self._get_type_emoji(t)
             stats_items.append(f"{emoji} {t.capitalize()}: {count} ta")
+        meta_stats_content = [meta_para, self._bullet_list(stats_items)]
 
-        content.append(self._bullet_list(stats_items))
-
-        # ━━━ PR HAVOLALAR ━━━
         if pr_details:
-            content.append(self._paragraph([
+            meta_stats_content.append(self._paragraph([
                 self._bold_text(f"🔗 PR'lar ({pr_count or len(pr_details)} ta | {files_changed} fayl o'zgargan):")
             ]))
             for pr in pr_details:
@@ -160,9 +148,17 @@ class TestcaseADFFormatter(BaseADFFormatter):
                     self._text_node(" / "),
                     self._colored_text(f"-{pr_del}", "#FF5630"),
                 ]
-                content.append(self._paragraph(nodes))
+                meta_stats_content.append(self._paragraph(nodes))
 
-        content.append(self._rule())
+        content.append(self._expand_panel(
+            "📊 Statistika",
+            meta_stats_content,
+        ))
+
+        # ━━━ DEBUG: AI PIPELINE (statistika bilan yonma-yon top-level collapse) ━━━
+        debug_lines = self._debug_pipeline_lines(agent_runs)
+        if debug_lines:
+            content.append(self._expand_panel("🔧 AI pipeline", [self._bullet_list(debug_lines)]))
 
         # ━━━ TEST CASE'LAR (EXPAND PANELS) ━━━
         content.append(self._heading("📋 Test Case'lar", 3))
@@ -172,13 +168,10 @@ class TestcaseADFFormatter(BaseADFFormatter):
             for scenario in scenarios:
                 title = getattr(scenario, 'scenario_title', '') or "Test scenario"
                 flow = getattr(scenario, 'screen_or_flow', '') or ""
-                req_ids = getattr(scenario, 'requirement_ids', []) or []
                 subtitle = f" — {flow}" if flow else ""
-                content.append(self._heading(f"🧩 {title}{subtitle}", 4))
-                if req_ids:
-                    content.append(self._paragraph([
-                        self._colored_text("REQ: " + ", ".join(req_ids), "#8b949e")
-                    ]))
+                content.append(self._heading(f"🧩 {title}{subtitle}", 3))
+                # REQ havolalari ko'rsatilmaydi — S2 commentga talablar emas,
+                # faqat test case'lar yoziladi.
                 for tc in getattr(scenario, 'test_cases', []) or []:
                     content.append(self._expand_panel(
                         self._testcase_panel_title(tc),
@@ -191,8 +184,6 @@ class TestcaseADFFormatter(BaseADFFormatter):
                     self._build_testcase_panel_content(tc),
                 ))
 
-        content.append(self._rule())
-
         # ━━━ FOOTER ━━━
         actual_footer = footer_text if footer_text else (
             "🤖 Test case'lar AI (Gemini) tomonidan avtomatik yaratilgan. "
@@ -201,6 +192,17 @@ class TestcaseADFFormatter(BaseADFFormatter):
         content.append(self._paragraph([self._italic_text(actual_footer)]))
 
         return {"version": 1, "type": "doc", "content": content}
+
+    def _debug_pipeline_lines(self, agent_runs: Optional[List[Dict]]) -> List[str]:
+        """AI pipeline debug — har agent nima qilgani (Servis-2 collapse ichida)."""
+        return self._agent_pipeline_lines(
+            agent_runs,
+            [
+                ("agent1_requirements", "1️⃣ Agent1 (talablar)"),
+                ("agent2_testcase", "2️⃣ Agent2 (testcase)"),
+                ("agent3_audit", "3️⃣ Agent3 (audit)"),
+            ],
+        )
 
     def _testcase_panel_title(self, tc: Any) -> str:
         tc_id = getattr(tc, 'id', 'TC-000')
@@ -278,6 +280,7 @@ class TestcaseADFFormatter(BaseADFFormatter):
             task_key: str,
             test_cases: List[Any],
             test_scenarios: Optional[List[Any]] = None,
+            agent_runs: Optional[List[Dict]] = None,
     ) -> str:
         """
         Oddiy Jira Markup formatda comment (ADF ishlamasa)
@@ -288,12 +291,12 @@ class TestcaseADFFormatter(BaseADFFormatter):
         lines = []
 
         lines.append("[AI_S2]")
-        lines.append("🧪 *Avtomatik Test Case'lar*")
-        lines.append("----")
+        lines.append(f"h1. 🧪 Test Cases(Multi Agent) — {len(test_cases)} ta test case")
+        lines.append("")
+        lines.append("*📊 Statistika:*")
         lines.append(f"*Task:* {task_key}")
         lines.append(f"*Yaratilgan:* {datetime.now().strftime('%Y-%m-%d %H:%M')}")
         lines.append(f"*Jami:* {len(test_cases)} ta test case")
-        lines.append("----")
 
         by_type = {}
         scenarios = [s for s in (test_scenarios or []) if getattr(s, 'test_cases', None)]
@@ -306,13 +309,19 @@ class TestcaseADFFormatter(BaseADFFormatter):
             t = getattr(tc, 'test_type', 'unknown')
             by_type[t] = by_type.get(t, 0) + 1
 
-        lines.append("*📊 Statistika:*")
         for t, count in by_type.items():
             emoji = self._get_type_emoji(t)
             lines.append(f"• {emoji} {t.capitalize()}: {count} ta")
-        lines.append("----")
 
-        lines.append("*📋 Test Case'lar:*")
+        debug_lines = self._debug_pipeline_lines(agent_runs)
+        if debug_lines:
+            lines.append("")
+            lines.append("*🔧 AI pipeline:*")
+            for line in debug_lines:
+                lines.append(f"• {line}")
+
+        lines.append("")
+        lines.append("h3. 📋 Test Case'lar")
         lines.append("")
 
         def append_tc(tc: Any) -> None:
@@ -356,17 +365,14 @@ class TestcaseADFFormatter(BaseADFFormatter):
             for scenario in scenarios:
                 title = getattr(scenario, 'scenario_title', '') or "Test scenario"
                 flow = getattr(scenario, 'screen_or_flow', '') or ""
-                req_ids = getattr(scenario, 'requirement_ids', []) or []
-                lines.append(f"*🧩 {title}{(' — ' + flow) if flow else ''}*")
-                if req_ids:
-                    lines.append(f"_REQ:_ {', '.join(req_ids)}")
+                lines.append(f"h3. 🧩 {title}{(' — ' + flow) if flow else ''}")
                 for tc in getattr(scenario, 'test_cases', []) or []:
                     append_tc(tc)
         else:
             for tc in test_cases:
                 append_tc(tc)
 
-        lines.append("----")
+        lines.append("")
         lines.append("_🤖 Test case'lar AI tomonidan avtomatik yaratilgan._")
 
         return "\n".join(lines)

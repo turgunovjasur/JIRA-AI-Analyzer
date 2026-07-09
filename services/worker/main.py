@@ -144,8 +144,13 @@ def _parse_payload(job: dict[str, Any]) -> dict[str, Any]:
         return {}
 
 
-async def _run_manual_check(task_key: str, company_id: int | None, include_testcase: bool) -> None:
-    await check_tz_pr_and_comment(task_key=task_key, new_status="Manual Check", company_id=company_id)
+async def _run_manual_check(
+    task_key: str,
+    company_id: int | None,
+    include_testcase: bool,
+    new_status: str,
+) -> None:
+    await check_tz_pr_and_comment(task_key=task_key, new_status=new_status, company_id=company_id)
     if include_testcase:
         queue_settings = (
             get_app_settings_for_company(company_id).queue
@@ -200,6 +205,7 @@ async def _dispatch_job(job: dict[str, Any]) -> None:
             task_key=task_key,
             company_id=company_id,
             include_testcase=bool(payload.get("include_testcase")),
+            new_status=new_status,
         )
         return
     if job_type == JOB_TZPR_MULTI_AGENT_RUN:

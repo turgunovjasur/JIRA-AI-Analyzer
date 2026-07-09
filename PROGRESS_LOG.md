@@ -16,6 +16,33 @@ Bu fayl loyihada amalda bajarilgan ishlarni, qolgan ishlarni va keyingi qadamlar
 
 ### Done
 
+#### 2026-07-06 - Monitoring sahifasiga manual trigger fallback qo'shildi
+
+- Roadmap bog'lanishi:
+  - Stage 9 - Product UX/UI
+  - Stage 10 - Core Feature Stabilization
+  - Stage 12 - Operations, Monitoring va Support
+- O'zgarish:
+  - [frontend/src/components/manual-trigger-card.tsx](/Users/mac/Documents/projects/QA-Assistant/frontend/src/components/manual-trigger-card.tsx)
+    - Monitoring sahifasi tepasiga adminlar uchun `Manual trigger` inputi qo'shildi.
+    - Task key faqat to'liq JIRA formatda (`DEV-1234`) qabul qilinadi; noto'g'ri keylar UI'da xato ko'rsatadi.
+    - Backend `error` yoki `ignored` qaytarsa success sifatida ko'rsatilmaydi.
+  - [frontend/src/app/api/monitoring/manual-trigger/route.ts](/Users/mac/Documents/projects/QA-Assistant/frontend/src/app/api/monitoring/manual-trigger/route.ts)
+    - Next.js BFF route qo'shildi: sessiyani tekshiradi va backend `/manual/check/{task_key}` endpointini chaqiradi.
+  - [frontend/src/components/monitoring-auto-refresh.tsx](/Users/mac/Documents/projects/QA-Assistant/frontend/src/components/monitoring-auto-refresh.tsx), [frontend/src/app/(app)/monitoring/page.tsx](/Users/mac/Documents/projects/QA-Assistant/frontend/src/app/(app)/monitoring/page.tsx)
+    - Monitoring sahifasi manual trigger holatini kuzatishi uchun auto-refresh qo'shildi.
+    - `router.refresh()` o'rniga xavfsiz sahifa reload ishlatildi; input focusda yoki tab backgroundda bo'lsa refresh qilmaydi.
+  - [services/webhook/jira_webhook_handler.py](/Users/mac/Documents/projects/QA-Assistant/services/webhook/jira_webhook_handler.py)
+    - Manual trigger real webhook oqimiga yaqinlashtirildi: trigger bosilganda task `task_processing` monitoring jadvaliga `progressing` sifatida yoziladi.
+    - Eski/stale `progressing` tasklar reset qilinib qayta ishga tushadi; yaqinda bosilgan dublikatlar `ignored` bo'lib qoladi.
+    - Manual trigger uchun status history yoziladi va task key validatsiyasi backendda ham majburiy qilindi.
+  - [services/worker/main.py](/Users/mac/Documents/projects/QA-Assistant/services/worker/main.py)
+    - Queue rejimidagi manual check joblari manual/webhook statusini workerga uzatadigan qilindi.
+- Verification:
+  - `git diff --check` bilan o'zgargan fayllarda whitespace tekshirildi ✅
+  - Manual smoke: `DEV-8245` uchun UI `processing` javobini ko'rsatdi va stale `progressing` holati reset logic bilan qayta run qilindi ✅
+  - Build/test ishlatilmadi (foydalanuvchi alohida so'ramadi).
+
 #### 2026-07-03 - Chuqur audit va Faza A/B/C remediation boshlandi
 
 - O'zgarish:

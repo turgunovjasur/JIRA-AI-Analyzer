@@ -405,6 +405,9 @@ export type TZPRArbiterDecisionItem = {
   figma_relation?: string | null;
   note?: string | null;
   reason?: string | null;
+  skip_reason?: string | null;
+  skip_without_dev_comment?: boolean | null;
+  dev_comments?: { author?: string | null; body?: string | null }[] | null;
 };
 
 export type TZPRAgentRunSnapshot = {
@@ -447,6 +450,7 @@ export type TZPRArbiterSummary = {
   verdict_label?: string | null;
   verdict_reason?: string | null;
   quality_status?: string | null;
+  dev_comments_received?: number | null;
   total_requirements?: number | null;
   completed_count?: number | null;
   failed_count?: number | null;
@@ -802,6 +806,7 @@ export type WebhookSettingsView = {
     return_notification_text: string;
     read_comments_enabled: boolean;
     max_comments_to_read: number;
+    dev_comment_source?: string;
     show_contradictory_comments: boolean;
     visible_sections: string[];
     ai_data_section_order: string[];
@@ -846,6 +851,7 @@ export type WebhookSettingsSaveRequest = {
   return_notification_text: string;
   read_comments_enabled: boolean;
   max_comments_to_read: number;
+  dev_comment_source?: string;
   show_contradictory_comments: boolean;
   visible_sections: string[];
   ai_data_section_order: string[];

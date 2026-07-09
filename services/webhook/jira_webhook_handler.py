@@ -24,10 +24,11 @@ import asyncio
 import json
 import logging
 import os
+import re
 import secrets
 import sys
 from contextlib import suppress
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 import uvicorn
@@ -48,7 +49,11 @@ if sys.platform == 'win32':
 
 from config.app_settings import get_app_settings
 from core.logger import get_logger
-from services.api.session_scope import load_api_session, require_company_scope
+from services.api.session_scope import (
+    get_session_company_id,
+    load_api_session,
+    require_company_scope,
+)
 from services.checkers.tz_pr_checker import TZPRService
 
 # Yangi modullar (biznes logika shu fayllarda)
@@ -83,6 +88,9 @@ from utils.jira.jira_comment_writer import JiraCommentWriter
 
 log = get_logger("webhook.handler")
 
+_TASK_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
+_MANUAL_PROGRESS_RECENT_WINDOW = timedelta(minutes=10)
+
 # ============================================================================
 # SINGLETON FACTORY FUNKSIYALAR
 # (Barcha modullar shu funksiyalar orqali servislarni oladi)
@@ -106,6 +114,26 @@ def get_tz_pr_service() -> TZPRService:
     if _tz_pr_service is None:
         _tz_pr_service = TZPRService()
     return _tz_pr_service
+
+
+def _is_recent_progressing_task(task_db: dict | None) -> bool:
+    if not task_db:
+        return False
+
+    last_processed = task_db.get('last_processed_at') or task_db.get('updated_at')
+    if not last_processed:
+        return False
+
+    try:
+        processed_at = (
+            datetime.fromisoformat(last_processed)
+            if isinstance(last_processed, str)
+            else last_processed
+        )
+        now = datetime.now(processed_at.tzinfo) if processed_at.tzinfo else datetime.now()
+        return now - processed_at < _MANUAL_PROGRESS_RECENT_WINDOW
+    except Exception:
+        return False
 
 
 def get_adf_formatter() -> JiraADFFormatter:
@@ -1162,8 +1190,26 @@ async def manual_check(
     Usage:
         curl -X POST http://localhost:8000/manual/check/DEV-1234
     """
+    task_key = task_key.strip().upper()
     log.info(f"Manual check triggered for {task_key}")
     session = load_api_session(x_session_id, allowed_roles={"super_admin", "company_admin"})
+    if task_key.isdigit():
+        from services.api.task_key_normalizer import (
+            MissingProjectKeySetting,
+            normalize_manual_task_key,
+        )
+        session_company_id = get_session_company_id(session)
+        if not session_company_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Raqamli input uchun to'liq task key kiriting (DEV-8345) — super-adminda company aniqlanmaydi.",
+            )
+        try:
+            task_key = normalize_manual_task_key(task_key, session_company_id)
+        except MissingProjectKeySetting as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not _TASK_KEY_RE.match(task_key):
+        raise HTTPException(status_code=400, detail="Task key to'liq bo'lishi kerak: DEV-1234")
     company_id = _resolve_company_id_for_manual_task(task_key)
     if company_id is None:
         return {"status": "error", "reason": "unknown company for task key", "task_key": task_key}
@@ -1175,12 +1221,43 @@ async def manual_check(
     app_settings = get_app_settings_for_company(company_id)
     tc_settings = app_settings.webhook_testcase
     testcase_triggered = bool(tc_settings.auto_comment_enabled)
+    manual_status = tc_settings.auto_comment_trigger_status or "Manual Check"
+
+    task_db = get_task(task_key, company_id=company_id)
+    if task_db:
+        task_status = task_db.get('task_status', 'none')
+        if task_status == 'progressing':
+            if _is_recent_progressing_task(task_db):
+                log.info(f"[{task_key}] SKIP -> manual trigger: task hozir jarayonda")
+                return {
+                    "status": "ignored",
+                    "reason": "Task already in progressing state",
+                    "task_key": task_key,
+                    "company_id": company_id,
+                }
+            log.warning(f"[{task_key}] manual trigger -> eski progressing holat reset qilindi")
+            reset_service_statuses(task_key, company_id=company_id)
+        if task_status in ('completed', 'error', 'blocked', 'returned'):
+            if task_status == 'returned':
+                increment_return_count(task_key, company_id=company_id)
+            reset_service_statuses(task_key, company_id=company_id)
+
+    log_status_change(
+        task_id=task_key,
+        from_status=(task_db or {}).get('last_jira_status') if task_db else None,
+        to_status=manual_status,
+        changed_at=datetime.now(),
+        issue_type="manual_trigger",
+        company_id=company_id,
+    )
+    mark_progressing(task_key, manual_status, datetime.now(), company_id=company_id)
 
     if _worker_queue_enabled():
         _queue_job(
             job_type="manual_check",
             task_key=task_key,
             company_id=company_id,
+            new_status=manual_status,
             include_testcase=testcase_triggered,
             dedupe_key=f"manual:{task_key}",
         )
@@ -1188,7 +1265,7 @@ async def manual_check(
         background_tasks.add_task(
             check_tz_pr_and_comment,
             task_key=task_key,
-            new_status="Manual Check",
+            new_status=manual_status,
             company_id=company_id,
         )
 
@@ -1230,7 +1307,10 @@ async def manual_testcase(
     Usage:
         curl -X POST http://localhost:8000/manual/testcase/DEV-1234
     """
+    task_key = task_key.strip().upper()
     log.info(f"Manual testcase generation triggered for {task_key}")
+    if not _TASK_KEY_RE.match(task_key):
+        raise HTTPException(status_code=400, detail="Task key to'liq bo'lishi kerak: DEV-1234")
     session = load_api_session(x_session_id, allowed_roles={"super_admin", "company_admin"})
     company_id = _resolve_company_id_for_manual_task(task_key)
     if company_id is None:

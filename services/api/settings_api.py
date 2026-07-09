@@ -422,6 +422,7 @@ async def read_webhook_config(
             "ai_data_section_order": list(webhook_settings.ai_data_section_order or []),
             "read_comments_enabled": bool(webhook_settings.read_comments_enabled),
             "max_comments_to_read": int(webhook_settings.max_comments_to_read),
+            "dev_comment_source": str(getattr(webhook_settings, "dev_comment_source", "assignee_reporter") or "assignee_reporter"),
             "min_tz_description_chars": webhook_settings.min_tz_description_chars,
             "excluded_assignees": webhook_settings.excluded_assignees,
             "allowed_issue_types": webhook_settings.allowed_issue_types,
@@ -592,6 +593,11 @@ async def save_webhook_config(
             ),
             "read_comments_enabled": _wh_bool("read_comments_enabled", True),
             "max_comments_to_read": effective_max_comments_to_read,
+            "dev_comment_source": (
+                "all"
+                if str(raw.get("dev_comment_source", current_wh.get("dev_comment_source", "")) or "").strip().lower() == "all"
+                else "assignee_reporter"
+            ),
             "min_tz_description_chars": raw_min_tz,
             "excluded_assignees": raw_excluded,
             "allowed_issue_types": raw_allowed_types,

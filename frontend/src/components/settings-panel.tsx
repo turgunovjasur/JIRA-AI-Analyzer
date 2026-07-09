@@ -75,6 +75,7 @@ type WebhookFormState = {
   return_notification_text: string;
   read_comments_enabled: boolean;
   max_comments_to_read: string;
+  dev_comment_source: string;
   show_contradictory_comments: boolean;
   visible_sections: string[];
   ai_data_section_order: string[];
@@ -170,6 +171,7 @@ const EMPTY_WEBHOOK_FORM: WebhookFormState = {
   return_notification_text: "TZ-PR tekshiruvi past natija ko'rsatdi. Iltimos, TZ talablarini to'liq bajarilganligini tekshiring va qaytadan PR bering.",
   read_comments_enabled: true,
   max_comments_to_read: "0",
+  dev_comment_source: "assignee_reporter",
   show_contradictory_comments: true,
   visible_sections: CHECKER_COMMENT_SECTIONS,
   ai_data_section_order: ["tz", "comments", "figma", "code"],
@@ -394,6 +396,7 @@ export function SettingsPanel({
     "return_notification_text",
     "read_comments_enabled",
     "max_comments_to_read",
+    "dev_comment_source",
     "show_contradictory_comments",
     "visible_sections",
     "ai_data_section_order",
@@ -538,6 +541,7 @@ export function SettingsPanel({
                   return_notification_text?: string;
                   read_comments_enabled?: boolean;
                   max_comments_to_read?: number;
+                  dev_comment_source?: string;
                   show_contradictory_comments?: boolean;
                   visible_sections?: string[];
                   ai_data_section_order?: string[];
@@ -599,6 +603,7 @@ export function SettingsPanel({
               return_notification_text: String(data.return_notification_text || EMPTY_WEBHOOK_FORM.return_notification_text),
               read_comments_enabled: Boolean(data.read_comments_enabled ?? true),
               max_comments_to_read: String(data.max_comments_to_read ?? 0),
+              dev_comment_source: String(data.dev_comment_source || "assignee_reporter"),
               show_contradictory_comments: showContradictory,
               visible_sections: normalizedSections,
               ai_data_section_order: Array.isArray(data.ai_data_section_order) ? data.ai_data_section_order : EMPTY_WEBHOOK_FORM.ai_data_section_order,
@@ -644,6 +649,7 @@ export function SettingsPanel({
               return_notification_text: String(data.return_notification_text || EMPTY_WEBHOOK_FORM.return_notification_text),
               read_comments_enabled: Boolean(data.read_comments_enabled ?? true),
               max_comments_to_read: String(data.max_comments_to_read ?? 0),
+              dev_comment_source: String(data.dev_comment_source || "assignee_reporter"),
               show_contradictory_comments: showContradictory,
               visible_sections: normalizedSections,
               ai_data_section_order: Array.isArray(data.ai_data_section_order) ? data.ai_data_section_order : EMPTY_WEBHOOK_FORM.ai_data_section_order,
@@ -1044,6 +1050,7 @@ export function SettingsPanel({
           return_notification_text: webhookForm.return_notification_text,
           read_comments_enabled: webhookForm.read_comments_enabled,
           max_comments_to_read: Number(webhookForm.max_comments_to_read || 0),
+          dev_comment_source: webhookForm.dev_comment_source,
           show_contradictory_comments: webhookForm.show_contradictory_comments,
           visible_sections: CHECKER_COMMENT_SECTIONS,
           ai_data_section_order: webhookForm.ai_data_section_order,
@@ -1750,6 +1757,20 @@ export function SettingsPanel({
                                 onChange={(value) => updateWebhookField("max_comments_to_read", value)}
                                 value={webhookForm.max_comments_to_read}
                               />
+                            </SettingsCardItem>
+                          ) : null}
+                          {webhookForm.read_comments_enabled ? (
+                            <SettingsCardItem>
+                              <BaseSelectField
+                                className="settings-form-select"
+                                hint="Dev izohlar Agent3 (arbiter) ga beriladi: u bajarilmagan talablarni dev tushuntirgan bo'lsa skip qiladi (manual tekshiruvga). Faqat ishonchli manba tanlang."
+                                label="Dev comment manbai (Agent3 uchun)"
+                                onChange={(value) => updateWebhookField("dev_comment_source", value)}
+                                value={webhookForm.dev_comment_source}
+                              >
+                                <option value="assignee_reporter">Faqat assignee + reporter izohlari</option>
+                                <option value="all">Barcha dev izohlari</option>
+                              </BaseSelectField>
                             </SettingsCardItem>
                           ) : null}
                         </div>

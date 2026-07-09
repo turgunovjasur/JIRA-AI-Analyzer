@@ -84,6 +84,14 @@ class BaseADFFormatter:
             "content": [self._text_node(text)]
         }
 
+    def _heading_nodes(self, content: List[Dict], level: int = 3) -> Dict:
+        """Heading node — rangli/bold text nodelardan tuzilgan sarlavha."""
+        return {
+            "type": "heading",
+            "attrs": {"level": level},
+            "content": content,
+        }
+
     def _code_block(self, text: str, language: str = "") -> Dict:
         """Code block"""
         return {
@@ -107,3 +115,57 @@ class BaseADFFormatter:
     def _link_text(self, text: str, href: str) -> Dict:
         """Havola (link) text node"""
         return self._text_node(text, [{"type": "link", "attrs": {"href": href}}])
+
+    def _agent_runs_by_key(self, agent_runs: Optional[List[Dict]]) -> Dict[str, Dict]:
+        """agent_runs snapshot ro'yxatini agent_key bo'yicha dict qiladi."""
+        by_key: Dict[str, Dict] = {}
+        for item in (agent_runs or []):
+            if isinstance(item, dict):
+                by_key[str(item.get("agent_key") or "")] = item
+        return by_key
+
+    def _agent_model_suffix(self, row: Dict) -> str:
+        """Agent qaysi modelda ishlaganini — fallback bo'lsa o'tishni ham — matn qiladi."""
+        actual = str(row.get("actual_model") or "").strip()
+        primary = str(row.get("primary_model") or "").strip()
+        if bool(row.get("used_fallback")) and actual and primary and actual != primary:
+            return f"model: {primary} → {actual} (fallback)"
+        model = actual or primary
+        return f"model: {model}" if model else ""
+
+    def _agent_line(self, row: Dict, label: str) -> str:
+        """Bitta agent uchun debug qatori — nima qilgani + model + xato (input YO'Q)."""
+        state = str(row.get("state") or "").strip() or "?"
+        output = str(row.get("output_summary") or "").strip()
+        error = str(row.get("error_text") or "").strip()
+        detail = f"{label} [{state}]"
+        body = output or (error if state in {"failed", "blocked"} else "")
+        if body:
+            detail = f"{detail}: {body}"
+        model_suffix = self._agent_model_suffix(row)
+        if model_suffix:
+            detail = f"{detail} — {model_suffix}"
+        if error and state in {"failed", "blocked"} and error != body:
+            detail = f"{detail} · xato: {error}"
+        return detail
+
+    def _agent_pipeline_lines(
+        self,
+        agent_runs: Optional[List[Dict]],
+        labels: List[tuple],
+    ) -> List[str]:
+        """Multi-agent pipeline debug qatorlari — har agent nima qilgani + model.
+
+        `labels` — [(agent_key, ko'rinadigan_nom), ...] tartibida. Servis-1 va
+        Servis-2 formatterlari shu umumiy metodni o'z agent_key'lari bilan chaqiradi.
+        Input qatorlari ko'rsatilmaydi; faqat agent nima qilgani, qaysi modelda
+        ishlagani (fallback bo'lsa o'tish) va xato bo'lsa u yoziladi.
+        """
+        by_key = self._agent_runs_by_key(agent_runs)
+        lines: List[str] = []
+        for key, label in labels:
+            row = by_key.get(key)
+            if not row:
+                continue
+            lines.append(self._agent_line(row, label))
+        return lines
