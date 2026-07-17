@@ -251,6 +251,17 @@ const EMPTY_MODULE_FORM: ModuleFormState = {
 
 const SETTINGS_INPUT_CLASS = "settings-form-input";
 
+function CredHelp({ href }: { href: string }) {
+  return (
+    <>
+      {" · "}
+      <a className="text-primary underline whitespace-nowrap" href={href} rel="noopener noreferrer" target="_blank">
+        Qayerdan olaman? →
+      </a>
+    </>
+  );
+}
+
 function modelOptions() {
   return ["", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-flash-latest"];
 }
@@ -1258,6 +1269,7 @@ export function SettingsPanel({
                   <div className="mt-3 grid gap-4">
                     <BaseInputField
                       className={SETTINGS_INPUT_CLASS}
+                      hint="JIRA saytingiz manzili (https://kompaniya.atlassian.net)"
                       label="JIRA Base URL"
                       onChange={(value) => updateField("jira_server", value)}
                       placeholder="https://yourcompany.atlassian.net"
@@ -1265,6 +1277,7 @@ export function SettingsPanel({
                     />
                     <BaseInputField
                       className={SETTINGS_INPUT_CLASS}
+                      hint="JIRA'ga kiradigan email"
                       label="JIRA User Email"
                       onChange={(value) => updateField("jira_email", value)}
                       placeholder="admin@yourcompany.uz"
@@ -1272,7 +1285,7 @@ export function SettingsPanel({
                     />
                     <BaseInputField
                       className={SETTINGS_INPUT_CLASS}
-                      hint="Webhook routing va manual task prefix uchun ishlatiladi"
+                      hint="Task havolasidan: .../browse/DEV-123 → DEV"
                       label="JIRA Project Key(lar)"
                       onChange={(value) => updateField("jira_project_keys", value.toUpperCase())}
                       placeholder="DEV, QA"
@@ -1280,7 +1293,7 @@ export function SettingsPanel({
                     />
                     <BaseInputField
                       className={SETTINGS_INPUT_CLASS}
-                      hint={clearedCreds.jira_token ? "Saqlansa token o'chiriladi" : view.fields.jira_token_present ? "Bo'sh qoldirilsa mavjud token saqlanadi" : undefined}
+                      hint={<>{clearedCreds.jira_token ? "Saqlansa token o'chiriladi" : view.fields.jira_token_present ? "Bo'sh qoldirilsa mavjud token saqlanadi" : "Atlassian → Security → API tokens"}<CredHelp href="https://id.atlassian.com/manage-profile/security/api-tokens" /></>}
                       label="JIRA Token"
                       onBlur={() => {
                         if (jiraTokenDirty && !clearedCreds.jira_token && !form.jira_token.trim() && jiraTokenMask) {
@@ -1312,7 +1325,7 @@ export function SettingsPanel({
                   <div className="mt-3 grid gap-4">
                     <BaseInputField
                       className={SETTINGS_INPUT_CLASS}
-                      hint={clearedCreds.github_token ? "Saqlansa token o'chiriladi" : view.fields.github_token_present ? "Bo'sh qoldirilsa mavjud token saqlanadi" : undefined}
+                      hint={<>{clearedCreds.github_token ? "Saqlansa token o'chiriladi" : view.fields.github_token_present ? "Bo'sh qoldirilsa mavjud token saqlanadi" : "GitHub → Settings → Developer → Tokens"}<CredHelp href="https://github.com/settings/tokens" /></>}
                       label="GitHub Token"
                       onBlur={() => {
                         if (githubTokenDirty && !clearedCreds.github_token && !form.github_token.trim() && githubTokenMask) {
@@ -1338,6 +1351,7 @@ export function SettingsPanel({
                     />
                     <BaseInputField
                       className={SETTINGS_INPUT_CLASS}
+                      hint="Repo manzilidagi tashkilot nomi (github.com/ORG/repo)"
                       label="GitHub Organization"
                       onChange={(value) => updateField("github_org", value)}
                       placeholder="your-org-name"
@@ -1370,7 +1384,7 @@ export function SettingsPanel({
                         />
                         <BaseInputField
                           className={SETTINGS_INPUT_CLASS}
-                          hint={!entry.isNew ? "Bo'sh qoldirilsa mavjud token saqlanadi" : undefined}
+                          hint={<>{!entry.isNew ? "Bo'sh qoldirilsa mavjud token saqlanadi" : "Figma → Settings → Personal tokens"}<CredHelp href="https://www.figma.com/settings" /></>}
                           label="Token"
                           onBlur={() => {
                             if (entry.dirty && !entry.isNew && !entry.token.trim() && entry.mask) {
@@ -1424,7 +1438,7 @@ export function SettingsPanel({
                         </div>
                         <BaseInputField
                           className={SETTINGS_INPUT_CLASS}
-                          hint={clearedCreds.gemini_api_key_1 ? "Saqlansa kalit o'chiriladi" : view.fields.gemini_api_key_1_present ? "Bo'sh qoldirilsa mavjud kalit saqlanadi" : undefined}
+                          hint={<>{clearedCreds.gemini_api_key_1 ? "Saqlansa kalit o'chiriladi" : view.fields.gemini_api_key_1_present ? "Bo'sh qoldirilsa mavjud kalit saqlanadi" : "Google AI Studio → Get API key"}<CredHelp href="https://aistudio.google.com/app/apikey" /></>}
                           label="Token"
                           onBlur={() => {
                             if (geminiKey1Dirty && !clearedCreds.gemini_api_key_1 && !form.gemini_api_key_1.trim() && geminiKey1Mask) {

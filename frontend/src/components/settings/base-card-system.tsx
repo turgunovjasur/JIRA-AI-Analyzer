@@ -326,7 +326,7 @@ export function BaseInputField({
   rightSlot,
 }: {
   label: string;
-  hint?: string;
+  hint?: ReactNode;
   value: string;
   placeholder?: string;
   type?: string;
