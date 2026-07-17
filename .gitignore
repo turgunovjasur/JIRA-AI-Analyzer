@@ -191,3 +191,6 @@ frontend/out/
 # Debug / scratch artifacts
 result.json
 *.zip
+
+# Local deploy notes (server IP/email — lokalda qoladi, repoga tushmaydi)
+DEPLOY_STATUS.md
