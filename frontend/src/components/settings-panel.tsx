@@ -916,10 +916,11 @@ export function SettingsPanel({
   function formatSaveError(
     scopeLabel: string,
     response: Response,
-    result: { error?: string; success?: boolean } | null,
+    result: { error?: string; success?: boolean; request_id?: string | null } | null,
   ) {
     const backendMessage = result?.error || "Noma'lum server xatosi";
-    return `${scopeLabel} saqlanmadi. DEBUG: status=${response.status}, ok=${response.ok}, message=${backendMessage}`;
+    const reqId = result?.request_id ? ` (kod: ${result.request_id})` : "";
+    return `${scopeLabel} saqlanmadi: ${backendMessage}${reqId}`;
   }
 
   async function saveShared() {
@@ -972,7 +973,7 @@ export function SettingsPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const result = (await response.json().catch(() => null)) as { error?: string; success?: boolean } | null;
+      const result = (await response.json().catch(() => null)) as { error?: string; success?: boolean; request_id?: string | null } | null;
       if (!response.ok || !result?.success) {
         throw new Error(formatSaveError("Settings", response, result));
       }
@@ -1097,7 +1098,7 @@ export function SettingsPanel({
         }),
       });
 
-      const result = (await response.json().catch(() => null)) as { error?: string; success?: boolean } | null;
+      const result = (await response.json().catch(() => null)) as { error?: string; success?: boolean; request_id?: string | null } | null;
       if (!response.ok || !result?.success) {
         throw new Error(formatSaveError("Webhook", response, result));
       }
@@ -1171,7 +1172,7 @@ export function SettingsPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const result = (await response.json().catch(() => null)) as { error?: string; success?: boolean } | null;
+      const result = (await response.json().catch(() => null)) as { error?: string; success?: boolean; request_id?: string | null } | null;
       if (!response.ok || !result?.success) {
         throw new Error(formatSaveError("Module sozlamalari", response, result));
       }

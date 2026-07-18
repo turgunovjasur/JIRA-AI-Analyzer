@@ -27,6 +27,7 @@ import os
 import re
 import secrets
 import sys
+import uuid
 from contextlib import suppress
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
@@ -247,7 +248,9 @@ async def lifespan(app: FastAPI):
     """
     global _blocked_retry_task, _watchdog_task
 
-    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    # Access log: default o'chiq (WARNING). Debug uchun APP_ACCESS_LOG=1 bilan yoqiladi.
+    _access_on = str(os.getenv("APP_ACCESS_LOG", "")).strip().lower() in ("1", "true", "yes", "on")
+    logging.getLogger("uvicorn.access").setLevel(logging.INFO if _access_on else logging.WARNING)
 
     from utils.auth.credential_crypto import assert_master_key_configured
     assert_master_key_configured()
@@ -343,6 +346,53 @@ app.add_middleware(_SecurityHeadersMiddleware)
 
 
 # ============================================================================
+# REQUEST CONTEXT + KUZATUVCHANLIK (additive)
+# ============================================================================
+# Har so'rovga barqaror `request_id` beriladi (kelgan `X-Request-ID` header
+# yoki yangi uuid). Yiqilgan (4xx/5xx) va kutilmagan xatolar shu id bilan
+# stdout'ga yoziladi — UI'dagi xato bilan server logini bog'lash uchun.
+
+_req_log = get_logger("api.request")
+
+
+def _request_id_from(request: Request) -> str:
+    incoming = (request.headers.get("X-Request-ID") or "").strip()
+    if incoming:
+        return incoming[:64]
+    return uuid.uuid4().hex[:12]
+
+
+class _RequestContextMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        request_id = _request_id_from(request)
+        request.state.request_id = request_id
+        method = request.method
+        path = request.url.path
+        try:
+            response: Response = await call_next(request)
+        except Exception as exc:  # noqa: BLE001 — log qilib qayta ko'taramiz
+            _req_log.error(
+                f"REQ-FAIL [{request_id}] {method} {path} -> UNHANDLED "
+                f"{type(exc).__name__}: {exc}",
+                exc_info=True,
+            )
+            raise
+        if response.status_code >= 500:
+            _req_log.error(
+                f"REQ-ERR  [{request_id}] {method} {path} -> {response.status_code}"
+            )
+        elif response.status_code >= 400:
+            _req_log.warning(
+                f"REQ-WARN [{request_id}] {method} {path} -> {response.status_code}"
+            )
+        response.headers["X-Request-ID"] = request_id
+        return response
+
+
+app.add_middleware(_RequestContextMiddleware)
+
+
+# ============================================================================
 # UNIFIED ERROR ENVELOPE (additive)
 # ============================================================================
 # `detail` maydoni avvalgidek qoladi (frontend BFF shuni o'qiydi) —
@@ -389,12 +439,14 @@ async def _http_exception_envelope(request: Request, exc: StarletteHTTPException
     headers = getattr(exc, "headers", None)
     if not is_body_allowed_for_status_code(exc.status_code):
         return Response(status_code=exc.status_code, headers=headers)
+    request_id = getattr(request.state, "request_id", None)
     payload = {
         "detail": jsonable_encoder(exc.detail),
         "error": {
             "code": _error_code_for_status(exc.status_code),
             "message": _error_message_from_detail(exc.detail),
         },
+        "request_id": request_id,
     }
     return JSONResponse(status_code=exc.status_code, content=payload, headers=headers)
 
@@ -407,6 +459,7 @@ async def _validation_exception_envelope(request: Request, exc: RequestValidatio
             "code": "validation_error",
             "message": "So'rov validatsiyadan o'tmadi",
         },
+        "request_id": getattr(request.state, "request_id", None),
     }
     return JSONResponse(status_code=422, content=payload)
 

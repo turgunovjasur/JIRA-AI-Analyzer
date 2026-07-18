@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { DM_Mono, DM_Sans } from "next/font/google";
 
+import { VersionGuard } from "@/components/version-guard";
 import "./globals.css";
 
 const dmSans = DM_Sans({
@@ -29,7 +30,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="uz" className={`${dmSans.variable} ${dmMono.variable}`}>
-      <body className="page-root">{children}</body>
+      <body className="page-root">
+        {children}
+        <VersionGuard />
+      </body>
     </html>
   );
 }

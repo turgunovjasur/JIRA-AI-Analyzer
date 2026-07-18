@@ -62,7 +62,7 @@ function backendErrorResponse(error: unknown, fallback: string) {
         ? (error.payload as Record<string, unknown>)
         : {};
     return NextResponse.json(
-      { success: false, ...payload, error: message },
+      { success: false, ...payload, error: message, request_id: error.requestId },
       { status: error.status },
     );
   }

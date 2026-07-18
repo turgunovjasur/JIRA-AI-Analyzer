@@ -32,13 +32,20 @@ const SESSION_COOKIE = "qa_backend_session";
 export class BackendRequestError extends Error {
   status: number;
   payload: unknown;
+  requestId: string | null;
 
-  constructor(message: string, status: number, payload: unknown) {
+  constructor(message: string, status: number, payload: unknown, requestId: string | null = null) {
     super(message);
     this.name = "BackendRequestError";
     this.status = status;
     this.payload = payload;
+    this.requestId = requestId;
   }
+}
+
+function newRequestId(): string {
+  const raw = globalThis.crypto?.randomUUID?.() ?? `req-${Date.now()}-${Math.round(Math.random() * 1e6)}`;
+  return raw.replace(/-/g, "").slice(0, 12);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -96,7 +103,11 @@ export async function backendRequest<T>(
   path: string,
   options: BackendRequestOptions = {},
 ) {
+  const requestId = newRequestId();
   const headers = await buildBackendHeaders(options.headers);
+  if (!headers.has("X-Request-ID")) headers.set("X-Request-ID", requestId);
+
+  const method = options.method ?? "GET";
   const response = await fetch(`${getBackendBaseUrl()}${path}`, {
     ...options,
     headers,
@@ -107,11 +118,14 @@ export async function backendRequest<T>(
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
     const errorPayload = unwrapBackendErrorPayload(payload);
-    throw new BackendRequestError(
-      extractBackendErrorMessage(payload, response.statusText),
-      response.status,
-      errorPayload,
-    );
+    const backendReqId =
+      response.headers.get("X-Request-ID") ||
+      (isRecord(payload) && typeof payload.request_id === "string" ? payload.request_id : null) ||
+      requestId;
+    const message = extractBackendErrorMessage(payload, response.statusText);
+    // Server-side log — Next.js konteyner stdout'ida (docker logs) ko'rinadi.
+    console.error(`[BFF] backend ${method} ${path} -> ${response.status} reqId=${backendReqId} msg=${message}`);
+    throw new BackendRequestError(message, response.status, errorPayload, backendReqId);
   }
 
   return payload as T;
