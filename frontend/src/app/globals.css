@@ -3502,3 +3502,186 @@ textarea.input { height: auto; padding: 11px 13px; resize: vertical; min-height:
   font-size: 11.5px;
   color: var(--muted-soft);
 }
+
+/* ── Demo rejim ── */
+.qa-demo-cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--brand);
+  color: #fff;
+  font-weight: 650;
+  font-size: 13.5px;
+  transition: background 0.15s, transform 0.15s;
+}
+.qa-demo-cta:hover {
+  background: var(--brand-strong);
+  transform: translateY(-1px);
+}
+.qa-demo-back {
+  display: block;
+  margin-top: 8px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+.qa-demo-back:hover {
+  color: var(--brand);
+}
+.qa-demo-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 32px;
+  margin-top: 14px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  background: var(--warn-soft);
+  border: 1px solid var(--warn-border);
+  color: var(--warning);
+  font-size: 13px;
+}
+.qa-demo-banner strong {
+  font-weight: 700;
+}
+.qa-demo-banner-link {
+  font-weight: 650;
+  white-space: nowrap;
+  color: var(--brand-strong);
+}
+.qa-demo-banner-link:hover {
+  text-decoration: underline;
+}
+@media (max-width: 720px) {
+  .qa-demo-banner {
+    margin: 14px 16px 0;
+  }
+}
+
+/* ── Landing: Jira issue view mock (webhook reklama) ── */
+.lj-scope {
+  --lj-bg: #f7f8f9;
+  --lj-surface: #ffffff;
+  --lj-surface2: #f1f2f4;
+  --lj-text: #172b4d;
+  --lj-sub: #626f86;
+  --lj-line: #dfe1e6;
+  --lj-blue: #0c66e4;
+  --lj-prog-bg: #e9f2ff; --lj-prog-fg: #0055cc;
+  --lj-test-bg: #f3f0ff; --lj-test-fg: #5e4db2;
+  --lj-done-bg: #dcfff1; --lj-done-fg: #216e4e;
+  --lj-score: #1f845a;
+}
+.dark .lj-scope {
+  --lj-bg: #1d2125;
+  --lj-surface: #22272b;
+  --lj-surface2: #282e33;
+  --lj-text: #c7d1db;
+  --lj-sub: #9aa8b6;
+  --lj-line: #2c333a;
+  --lj-blue: #579dff;
+  --lj-prog-bg: #09326c; --lj-prog-fg: #8fb8f6;
+  --lj-test-bg: #352c63; --lj-test-fg: #b8acf6;
+  --lj-done-bg: #164b35; --lj-done-fg: #7ee2b8;
+  --lj-score: #4bce97;
+}
+.lj-win {
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid var(--lj-line);
+  background: var(--lj-bg);
+  box-shadow: 0 20px 45px rgba(9, 20, 30, 0.12);
+}
+.lj-chrome {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 13px; background: var(--lj-surface);
+  border-bottom: 1px solid var(--lj-line);
+}
+.lj-dots { display: flex; gap: 6px; }
+.lj-dots i { width: 10px; height: 10px; border-radius: 50%; display: block; }
+.lj-url {
+  flex: 1; text-align: center; font-family: var(--font-mono); font-size: 11px;
+  color: var(--lj-sub); background: var(--lj-bg); border: 1px solid var(--lj-line);
+  border-radius: 6px; padding: 4px 10px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.lj-app { display: grid; grid-template-columns: minmax(0, 1fr) 210px; }
+@media (max-width: 760px) { .lj-app { grid-template-columns: 1fr; } }
+.lj-main { padding: 16px 18px; min-width: 0; }
+.lj-side { border-left: 1px solid var(--lj-line); background: var(--lj-surface2); padding: 16px; }
+@media (max-width: 760px) { .lj-side { border-left: none; border-top: 1px solid var(--lj-line); } }
+.lj-crumb { font-family: var(--font-mono); font-size: 11px; color: var(--lj-sub); }
+.lj-summary { margin: 6px 0 12px; font-size: 17px; font-weight: 650; color: var(--lj-text); letter-spacing: -0.01em; }
+.lj-status-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.lj-status {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.03em; padding: 5px 10px; border-radius: 4px;
+  border: none; transition: background 0.35s, color 0.35s;
+}
+.lz-prog { background: var(--lj-prog-bg); color: var(--lj-prog-fg); }
+.lz-test { background: var(--lj-test-bg); color: var(--lj-test-fg); }
+.lz-done { background: var(--lj-done-bg); color: var(--lj-done-fg); }
+.lj-signal {
+  display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono);
+  font-size: 10.5px; color: var(--lj-sub); background: var(--lj-surface);
+  border: 1px solid var(--lj-line); border-radius: 999px; padding: 4px 10px;
+  transition: opacity 0.3s, transform 0.3s;
+}
+.lj-desc {
+  margin-top: 12px; padding: 11px 13px; border-radius: 8px; background: var(--lj-surface);
+  border: 1px solid var(--lj-line); font-size: 12.5px; line-height: 1.6; color: var(--lj-sub);
+}
+.lj-desc b { color: var(--lj-text); }
+.lj-activity-head { margin: 16px 0 11px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--lj-line); padding-bottom: 8px; }
+.lj-activity-head .t { font-size: 13px; font-weight: 700; color: var(--lj-text); }
+.lj-tab { font-size: 12px; padding: 4px 9px; border-radius: 6px; color: var(--lj-sub); }
+.lj-tab.on { color: var(--lj-text); font-weight: 600; box-shadow: inset 0 -2px 0 var(--lj-blue); }
+.lj-feed { display: grid; gap: 11px; }
+.lj-sys { display: flex; align-items: center; gap: 9px; font-size: 12px; color: var(--lj-sub); transition: opacity 0.4s; }
+.lj-av { display: grid; place-items: center; color: #fff; background: linear-gradient(145deg, var(--brand), var(--brand-strong)); flex: none; }
+.lj-sys .lj-av { width: 24px; height: 24px; border-radius: 50%; font-size: 11px; }
+.lj-sys b { color: var(--lj-text); font-weight: 600; }
+.lj-sys .from { text-decoration: line-through; opacity: 0.7; }
+.lj-sys .to { padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.lj-spin { width: 13px; height: 13px; border-radius: 50%; border: 2px solid var(--lj-line); border-top-color: var(--lj-blue); animation: spin 0.7s linear infinite; }
+.lj-cm { display: flex; gap: 10px; transition: opacity 0.5s, transform 0.5s; }
+.lj-cm .lj-av { width: 28px; height: 28px; border-radius: 50%; font-size: 13px; }
+.lj-cm .body { flex: 1; min-width: 0; }
+.lj-cm .by { font-size: 12px; color: var(--lj-text); }
+.lj-cm .by b { font-weight: 650; }
+.lj-cm .by .time { color: var(--lj-sub); margin-left: 6px; }
+.lj-box { margin-top: 5px; border: 1px solid var(--lj-line); background: var(--lj-surface); border-radius: 9px; padding: 10px 12px; }
+.lj-marker { margin-left: auto; font-family: var(--font-mono); font-size: 9.5px; font-weight: 700; color: var(--lj-blue); background: color-mix(in srgb, var(--lj-blue) 12%, transparent); padding: 2px 6px; border-radius: 4px; }
+.lj-score { font-family: var(--font-mono); font-weight: 800; color: var(--lj-score); }
+.lj-req { font-size: 12px; color: var(--lj-text); }
+.lj-side-row { margin-bottom: 13px; }
+.lj-side-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--lj-sub); }
+.lj-side-val { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--lj-text); margin-top: 3px; }
+.lj-side-av { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-size: 10px; font-weight: 700; }
+@keyframes ljspin { to { transform: rotate(360deg); } }
+@keyframes ljIn { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+.lj-spin { animation: ljspin 0.7s linear infinite; }
+.lj-appear { animation: ljIn 0.45s ease both; }
+@media (prefers-reduced-motion: reduce) {
+  .lj-spin, .lj-appear { animation: none !important; }
+}
+.lz-ret { background: #ffeceb; color: #ae2e24; }
+.dark .lj-scope .lz-ret { background: #5d1f1a; color: #f6a29b; }
+.lj-warn {
+  display: flex; gap: 9px; border-radius: 8px; padding: 10px 12px;
+  font-size: 12px; line-height: 1.55;
+  background: var(--warn-soft); border: 1px solid var(--warn-border); color: var(--warning);
+}
+.lj-warn b { font-weight: 700; }
+
+/* ── Landing: bir martalik reveal ── */
+.reveal { opacity: 0; transform: translateY(24px); transition: opacity 0.7s cubic-bezier(0.2, 0.6, 0.2, 1), transform 0.7s cubic-bezier(0.2, 0.6, 0.2, 1); }
+.reveal.in { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  .reveal { opacity: 1 !important; transform: none !important; transition: none !important; }
+}

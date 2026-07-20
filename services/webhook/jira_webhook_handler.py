@@ -539,6 +539,13 @@ try:
 except ImportError:
     pass
 
+# Contact leads API ni ulash (landing/demo forma + super-admin ro'yxat)
+try:
+    from services.api.leads_api import router as leads_router
+    app.include_router(leads_router)
+except ImportError:
+    pass
+
 
 # ============================================================================
 # WEBHOOK MODELS

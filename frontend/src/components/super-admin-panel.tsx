@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Eye, EyeOff, Plus, X } from "lucide-react";
 
 import { AdminJobsPanel } from "@/components/admin-jobs-panel";
+import { AdminLeadsPanel } from "@/components/admin-leads-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { BaseCard } from "@/components/ui/card";
@@ -43,7 +44,7 @@ type SuperAdminPanelProps = {
   currentUsername: string;
 };
 
-type SuperAdminTab = "companies" | "ai" | "usage" | "jobs" | "system" | "platform";
+type SuperAdminTab = "companies" | "ai" | "usage" | "jobs" | "leads" | "system" | "platform";
 
 type CompanyCreateForm = {
   admin_password: string;
@@ -794,6 +795,7 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
               { key: "ai", label: "🤖 AI Sozlamalar" },
               { key: "usage", label: "AI Usage" },
               { key: "jobs", label: "📋 Job Queue" },
+              { key: "leads", label: "📥 Lidlar" },
               { key: "system", label: "⚙️ System" },
               { key: "platform", label: "🔐 Platform Admin" },
             ].map((item) => (
@@ -1696,6 +1698,8 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
           ) : null}
 
           {tab === "jobs" ? <AdminJobsPanel /> : null}
+
+          {tab === "leads" ? <AdminLeadsPanel /> : null}
 
           {tab === "platform" ? (
             <SettingsBaseCard header={<SectionHeader eyebrow="PLATFORM ADMIN" title="Super admin parolini yangilash" />}>

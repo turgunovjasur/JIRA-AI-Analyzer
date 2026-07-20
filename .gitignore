@@ -194,3 +194,6 @@ result.json
 
 # Local deploy notes (server IP/email — lokalda qoladi, repoga tushmaydi)
 DEPLOY_STATUS.md
+
+# Playwright MCP artifactlari (lokalda qoladi)
+.playwright-mcp/
