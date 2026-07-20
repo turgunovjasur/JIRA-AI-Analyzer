@@ -16,6 +16,8 @@ export async function POST(request: Request) {
       api_key_2?: string;
       api_key_2_clear?: boolean;
       key_freeze_minutes?: number;
+      tzpr_free_quota_limit?: number;
+      testcase_free_quota_limit?: number;
       agent1_primary_model?: string;
       agent1_fallback_model?: string;
       agent2_primary_model?: string;
@@ -34,9 +36,17 @@ export async function POST(request: Request) {
     const freezeMinutes = Number.isFinite(freezeMinutesRaw)
       ? Math.max(0, Math.trunc(freezeMinutesRaw))
       : 10;
+    const normalizeQuotaLimit = (value: unknown) => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? Math.min(100000, Math.max(0, Math.trunc(parsed))) : 3;
+    };
+    const tzprFreeQuotaLimit = normalizeQuotaLimit(payload?.tzpr_free_quota_limit);
+    const testcaseFreeQuotaLimit = normalizeQuotaLimit(payload?.testcase_free_quota_limit);
 
     const updates: Array<[string, string]> = [
       ["gemini_key_freeze_minutes", String(freezeMinutes)],
+      ["gemini_global_free_limit_tz_pr_checker", String(tzprFreeQuotaLimit)],
+      ["gemini_global_free_limit_testcase_generator", String(testcaseFreeQuotaLimit)],
       ["checker_agent1_primary_model", (payload?.agent1_primary_model || "").trim()],
       ["checker_agent1_fallback_model", (payload?.agent1_fallback_model || "").trim()],
       ["checker_agent2_primary_model", (payload?.agent2_primary_model || "").trim()],

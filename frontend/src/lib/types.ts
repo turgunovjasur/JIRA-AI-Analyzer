@@ -994,12 +994,14 @@ export type GlobalAiDefaults = {
   api_key_2_mask?: string | null;
   api_key_2_present: boolean;
   key_freeze_minutes?: number | null;
+  testcase_free_quota_limit?: number | null;
   testcase_agent1_fallback_model?: string | null;
   testcase_agent1_primary_model?: string | null;
   testcase_agent2_fallback_model?: string | null;
   testcase_agent2_primary_model?: string | null;
   testcase_agent3_fallback_model?: string | null;
   testcase_agent3_primary_model?: string | null;
+  tzpr_free_quota_limit?: number | null;
 };
 
 export type AiUsageSummary = {

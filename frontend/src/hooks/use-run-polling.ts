@@ -229,6 +229,21 @@ export function useRunPolling<
     // Asl komponentlardagi kabi: faqat run identifikatori/holati o'zgarganda restart bo'ladi.
   }, [activeRun?.run_id, activeRun?.run_state, activeRun?.finished_at, hasFinalResult]);
 
+  const activeRunIsResolved = isResolvedRunSnapshot(activeRun);
+
+  useEffect(() => {
+    if (!activeRun?.run_id || !activeRunIsResolved) return;
+    // Kvota backendda run terminal holatga kelganda hisoblanadi. Shu paytda
+    // start-statusni qayta o'qimasak banner run boshidagi eski qiymatda qoladi.
+    // Checker run_state'ni saqlagandan keyin quota increment qilishi mumkin;
+    // qisqa kechiktirilgan ikkinchi o'qish shu race'ni ham yopadi.
+    void refreshStartStatus();
+    const refreshTimer = window.setTimeout(() => {
+      void refreshStartStatus();
+    }, 1000);
+    return () => window.clearTimeout(refreshTimer);
+  }, [activeRun?.run_id, activeRunIsResolved, refreshStartStatus]);
+
   useEffect(() => {
     try {
       const raw = window.sessionStorage.getItem(openRunStorageKey);

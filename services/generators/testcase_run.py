@@ -104,6 +104,23 @@ def _now() -> str:
     return datetime.now().isoformat()
 
 
+def _uses_global_gemini(company_id: int | None, user_id: int | None) -> bool:
+    """Run uchun effective Gemini manbasi platform global kalitimi."""
+    if company_id is None:
+        return False
+    try:
+        from utils.auth.auth_db import get_credential_readiness
+
+        readiness = get_credential_readiness(
+            int(company_id),
+            int(user_id) if user_id is not None else None,
+        )
+        return (readiness or {}).get("gemini_source") == "global"
+    except Exception:
+        # API preflightdan kelgan increment_quota flag fallback bo'lib qoladi.
+        return False
+
+
 def create_testcase_run(
     *,
     task_key: str,
@@ -153,7 +170,13 @@ def execute_testcase_run(run_id: str, *, increment_quota: bool = False) -> dict[
     snapshot = get_analysis_run_snapshot(run_id)
     if not snapshot:
         raise RuntimeError(f"Testcase run topilmadi: {run_id}")
-    return _TestcaseRunExecutor(snapshot, increment_quota=increment_quota).run()
+    # Queue worker eski joblarda flag olmagan bo'lishi mumkin. Effective source'ni
+    # run boshlanishida qayta tekshirish manual inline va queue oqimlarini bir xil qiladi.
+    should_increment_quota = bool(increment_quota) or _uses_global_gemini(
+        snapshot.get("company_id"),
+        snapshot.get("user_id"),
+    )
+    return _TestcaseRunExecutor(snapshot, increment_quota=should_increment_quota).run()
 
 
 def run_testcase_for_webhook(run_id: str):
@@ -457,9 +480,12 @@ class _TestcaseRunExecutor:
             try:
                 from utils.database.quota_db import increment_global_quota
                 result = increment_global_quota(int(self.company_id), MODULE_KEY)
-                log.info("quota incremented [%s] company=%s remaining=%s", MODULE_KEY, self.company_id, result.get("remaining"))
-            except Exception:
-                log.warning("increment_global_quota failed silently [%s]", MODULE_KEY)
+                log.info(f"quota incremented [{MODULE_KEY}] company={self.company_id} remaining={result.get('remaining')}")
+            except Exception as exc:
+                log.error(
+                    f"increment_global_quota failed [{MODULE_KEY}] company={self.company_id} error={exc}",
+                    exc_info=True,
+                )
         return save_analysis_run_final_result(
             self.run_id, run_state=run_state, final_result=final_result, error_message=error_message
         )

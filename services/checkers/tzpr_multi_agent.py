@@ -53,8 +53,14 @@ def _increment_global_quota_safe(company_id: int | None) -> None:
         from utils.database.quota_db import increment_global_quota
         q = increment_global_quota(int(company_id), _MODULE_KEY)
         _log.info("quota incremented [%s] company=%s remaining=%s", _MODULE_KEY, company_id, (q or {}).get("remaining"))
-    except Exception:
-        _log.warning("increment_global_quota failed silently [%s]", _MODULE_KEY)
+    except Exception as exc:
+        _log.warning(
+            "increment_global_quota failed [%s] company=%s error=%s",
+            _MODULE_KEY,
+            company_id,
+            exc,
+            exc_info=True,
+        )
 
 
 _QUOTA_EXHAUSTED_MESSAGE = (
@@ -122,11 +128,9 @@ def create_multi_agent_run(
 def execute_multi_agent_run(run_id: str, *, increment_quota: bool = False) -> dict[str, Any] | None:
     """UI yo'li: snapshot dict qaytaradi.
 
-    Kvota hisobi endi SOURCE-DRIVEN — `increment_quota` flag'iga emas, running
-    haqiqiy Gemini manbasiga (global bo'lsa) qarab increment qilinadi. Shu sabab
-    queue rejimidagi (worker orqali) UI runlari ham kvotani sarflaydi (ilgari
-    worker flag'ni uzatmagani uchun increment yo'qolardi). Flag backward-compat
-    uchun qoldirilgan, lekin qaror manbadan olinadi.
+    Kvota hisobi SOURCE-DRIVEN; API preflightdan kelgan `increment_quota` flagi
+    esa credential readiness'ni qayta o'qish vaqtincha xato qilsa fallback bo'ladi.
+    Shu sabab inline va queue UI runlari bir xil hisoblanadi.
     """
     snapshot = get_checker_run_snapshot(run_id)
     if not snapshot:
@@ -134,6 +138,7 @@ def execute_multi_agent_run(run_id: str, *, increment_quota: bool = False) -> di
     company_id = snapshot.get("company_id")
     user_id = snapshot.get("user_id")
     is_global, quota = _global_quota_status(company_id, user_id)
+    should_increment_quota = bool(increment_quota) or is_global
 
     executor = _TZPRMultiAgentExecutor(snapshot)
     if is_global and (quota or {}).get("exhausted"):
@@ -145,7 +150,7 @@ def execute_multi_agent_run(run_id: str, *, increment_quota: bool = False) -> di
         return blocked
 
     result = executor.run()
-    if is_global and (result or {}).get("run_state") == "completed":
+    if should_increment_quota and (result or {}).get("run_state") == "completed":
         _increment_global_quota_safe(company_id)
     return result
 

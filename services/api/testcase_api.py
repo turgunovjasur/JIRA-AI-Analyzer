@@ -89,7 +89,11 @@ async def create_testcase_run_endpoint(
                 JOB_TESTCASE_MULTI_AGENT_RUN,
                 task_key,
                 company_id=company_id,
-                payload={"run_id": run_id, "task_key": task_key},
+                payload={
+                    "run_id": run_id,
+                    "task_key": task_key,
+                    "increment_quota": using_global,
+                },
                 dedupe_key=f"{JOB_TESTCASE_MULTI_AGENT_RUN}:{run_id}",
                 max_attempts=3,
             )

@@ -64,12 +64,14 @@ type AiDefaultsForm = {
   api_key_1: string;
   api_key_2: string;
   key_freeze_minutes: number;
+  testcase_free_quota_limit: number;
   testcase_agent1_fallback_model: string;
   testcase_agent1_primary_model: string;
   testcase_agent2_fallback_model: string;
   testcase_agent2_primary_model: string;
   testcase_agent3_fallback_model: string;
   testcase_agent3_primary_model: string;
+  tzpr_free_quota_limit: number;
 };
 
 type SuperAdminSystemForm = {
@@ -314,12 +316,14 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
     api_key_1: "",
     api_key_2: "",
     key_freeze_minutes: 10,
+    testcase_free_quota_limit: 3,
     testcase_agent1_fallback_model: "",
     testcase_agent1_primary_model: "",
     testcase_agent2_fallback_model: "",
     testcase_agent2_primary_model: "",
     testcase_agent3_fallback_model: "",
     testcase_agent3_primary_model: "",
+    tzpr_free_quota_limit: 3,
   });
   const [showApiKey1, setShowApiKey1] = useState(false);
   const [showApiKey2, setShowApiKey2] = useState(false);
@@ -459,12 +463,14 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
         api_key_1: nextApiKey1Mask,
         api_key_2: nextApiKey2Mask,
         key_freeze_minutes: payload.global_ai_defaults.key_freeze_minutes ?? 10,
+        testcase_free_quota_limit: payload.global_ai_defaults.testcase_free_quota_limit ?? 3,
         testcase_agent1_fallback_model: payload.global_ai_defaults.testcase_agent1_fallback_model || "",
         testcase_agent1_primary_model: payload.global_ai_defaults.testcase_agent1_primary_model || "",
         testcase_agent2_fallback_model: payload.global_ai_defaults.testcase_agent2_fallback_model || "",
         testcase_agent2_primary_model: payload.global_ai_defaults.testcase_agent2_primary_model || "",
         testcase_agent3_fallback_model: payload.global_ai_defaults.testcase_agent3_fallback_model || "",
         testcase_agent3_primary_model: payload.global_ai_defaults.testcase_agent3_primary_model || "",
+        tzpr_free_quota_limit: payload.global_ai_defaults.tzpr_free_quota_limit ?? 3,
       });
       setPlatformAdminForm((current) => ({
         ...current,
@@ -1321,6 +1327,47 @@ export function SuperAdminPanel({ authSource: _authSource, currentUsername }: Su
                     </div>
                   )}
                 </div>
+
+                <SettingsInnerCard>
+                  <div className="ssec mt-0 border-none pt-0">
+                    <div className="ssec-label">Global kalit uchun bepul kvota</div>
+                    <p className="mb-4 text-xs leading-5 text-muted-foreground">
+                      Limit har bir kompaniya va har bir modul uchun alohida hisoblanadi. 0 qo&apos;yilsa, shu modul global kalitdan bepul foydalana olmaydi.
+                    </p>
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <NumberField
+                        hint="Har bir kompaniyaga TZ-PR Checker uchun beriladigan global Gemini runlari soni."
+                        inputClassName={SETTINGS_INPUT_CLASS}
+                        label="TZ-PR Checker bepul urinishlari"
+                        max={100000}
+                        min={0}
+                        onChange={(value) =>
+                          setAiForm((current) => ({
+                            ...current,
+                            tzpr_free_quota_limit: Number(value || 0),
+                          }))
+                        }
+                        required
+                        value={String(aiForm.tzpr_free_quota_limit)}
+                      />
+                      <NumberField
+                        hint="Har bir kompaniyaga Test Case Generator uchun beriladigan global Gemini runlari soni."
+                        inputClassName={SETTINGS_INPUT_CLASS}
+                        label="Test Case Generator bepul urinishlari"
+                        max={100000}
+                        min={0}
+                        onChange={(value) =>
+                          setAiForm((current) => ({
+                            ...current,
+                            testcase_free_quota_limit: Number(value || 0),
+                          }))
+                        }
+                        required
+                        value={String(aiForm.testcase_free_quota_limit)}
+                      />
+                    </div>
+                  </div>
+                </SettingsInnerCard>
 
                 <div className="grid gap-4 lg:grid-cols-2">
                   <SettingsInnerCard>

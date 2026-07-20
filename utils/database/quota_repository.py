@@ -2,7 +2,7 @@
 
 Kompaniya/user o'z Gemini kalitiga ega bo'lmasa, platforma (super-admin) global
 default kalitidan foydalanadi. Har modul (tz_pr_checker / testcase_generator) uchun
-ALOHIDA `GLOBAL_GEMINI_FREE_LIMIT` marta tekin run beriladi (per company_id).
+ALOHIDA sozlanadigan miqdorda tekin run beriladi (per company_id).
 Limit tugagach o'sha modul bloklanadi; ikkinchi modul o'z kvotasigacha ishlayveradi.
 """
 from __future__ import annotations
@@ -11,8 +11,10 @@ from datetime import datetime, timezone
 
 from utils.database.repository_common import execute
 
-# Har (company_id, module_key) uchun bepul global-kalit run limiti.
-GLOBAL_GEMINI_FREE_LIMIT = 3
+# Global setting hali saqlanmagan eski muhitlar uchun fallback.
+DEFAULT_GLOBAL_GEMINI_FREE_LIMIT = 3
+# Backward compatibility: mavjud import/testlar uchun alias.
+GLOBAL_GEMINI_FREE_LIMIT = DEFAULT_GLOBAL_GEMINI_FREE_LIMIT
 
 
 def ensure_quota_tables(conn) -> None:

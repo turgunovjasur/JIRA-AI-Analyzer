@@ -93,7 +93,11 @@ async def create_tzpr_run(
                 "tzpr_multi_agent_run",
                 task_key,
                 company_id=company_id,
-                payload={"run_id": run_id, "task_key": task_key},
+                payload={
+                    "run_id": run_id,
+                    "task_key": task_key,
+                    "increment_quota": using_global,
+                },
                 dedupe_key=f"tzpr_multi_agent_run:{run_id}",
                 max_attempts=3,
             )

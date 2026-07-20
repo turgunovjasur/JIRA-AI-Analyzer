@@ -37,6 +37,11 @@ function maskSecret(value: unknown) {
   return `${stars}${tail}`;
 }
 
+function nonNegativeInt(value: unknown, fallback: number) {
+  const parsed = Number.parseInt(String(value ?? "").trim(), 10);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : fallback;
+}
+
 export async function GET() {
   const { error, session } = await requireSuperAdminSession();
   if (error || !session) {
@@ -62,6 +67,8 @@ export async function GET() {
       testcaseAgent2FallbackModel,
       testcaseAgent3PrimaryModel,
       testcaseAgent3FallbackModel,
+      tzprFreeQuotaLimit,
+      testcaseFreeQuotaLimit,
       aiUsage,
     ] =
       await Promise.all([
@@ -82,6 +89,8 @@ export async function GET() {
         callInternalRpc<string>("get_global_setting", ["testcase_agent2_fallback_model", ""]),
         callInternalRpc<string>("get_global_setting", ["testcase_agent3_primary_model", ""]),
         callInternalRpc<string>("get_global_setting", ["testcase_agent3_fallback_model", ""]),
+        callInternalRpc<string>("get_global_setting", ["gemini_global_free_limit_tz_pr_checker", "3"]),
+        callInternalRpc<string>("get_global_setting", ["gemini_global_free_limit_testcase_generator", "3"]),
         callInternalRpc<AiUsageDashboard>("get_ai_usage_dashboard", [], { limit: 20 }),
       ]);
 
@@ -159,6 +168,8 @@ export async function GET() {
       testcase_agent2_fallback_model: (testcaseAgent2FallbackModel || "").trim(),
       testcase_agent3_primary_model: (testcaseAgent3PrimaryModel || "").trim(),
       testcase_agent3_fallback_model: (testcaseAgent3FallbackModel || "").trim(),
+      tzpr_free_quota_limit: nonNegativeInt(tzprFreeQuotaLimit, 3),
+      testcase_free_quota_limit: nonNegativeInt(testcaseFreeQuotaLimit, 3),
     } satisfies GlobalAiDefaults;
 
     const payload = {

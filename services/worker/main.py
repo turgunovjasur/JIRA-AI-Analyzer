@@ -212,13 +212,21 @@ async def _dispatch_job(job: dict[str, Any]) -> None:
         run_id = str(payload.get("run_id") or "").strip()
         if not run_id:
             raise RuntimeError("run_id bo'sh")
-        await asyncio.to_thread(execute_multi_agent_run, run_id)
+        await asyncio.to_thread(
+            execute_multi_agent_run,
+            run_id,
+            increment_quota=bool(payload.get("increment_quota")),
+        )
         return
     if job_type == JOB_TESTCASE_MULTI_AGENT_RUN:
         run_id = str(payload.get("run_id") or "").strip()
         if not run_id:
             raise RuntimeError("run_id bo'sh")
-        await asyncio.to_thread(execute_testcase_run, run_id)
+        await asyncio.to_thread(
+            execute_testcase_run,
+            run_id,
+            increment_quota=bool(payload.get("increment_quota")),
+        )
         return
 
     raise RuntimeError(f"Noma'lum job_type: {job_type}")

@@ -469,10 +469,22 @@ export function SettingsPanel({
       ),
   );
   const showGeminiKey1 = Boolean(
-    view?.fields.gemini_api_key_1_present ||
+    geminiKey1Mask ||
     geminiKey1Dirty ||
     clearedCreds.gemini_api_key_1 ||
     form.gemini_api_key_1.trim(),
+  );
+  const geminiKey1Configured = Boolean(
+    !clearedCreds.gemini_api_key_1
+      && (geminiKey1Mask || (geminiKey1Dirty && form.gemini_api_key_1.trim())),
+  );
+  const geminiKey2Configured = Boolean(
+    !clearedCreds.gemini_api_key_2
+      && (geminiKey2Mask || (geminiKey2Dirty && form.gemini_api_key_2.trim())),
+  );
+  const hasConfiguredGeminiKey = geminiKey1Configured || geminiKey2Configured;
+  const hasPendingGeminiRemoval = Boolean(
+    clearedCreds.gemini_api_key_1 || clearedCreds.gemini_api_key_2,
   );
 
   useEffect(() => {
@@ -1434,12 +1446,12 @@ export function SettingsPanel({
                             }}
                             type="button"
                           >
-                            ✕ O&apos;chirish
+                            Company kalitini olib tashlash
                           </button>
                         </div>
                         <BaseInputField
                           className={SETTINGS_INPUT_CLASS}
-                          hint={<>{clearedCreds.gemini_api_key_1 ? "Saqlansa kalit o'chiriladi" : view.fields.gemini_api_key_1_present ? "Bo'sh qoldirilsa mavjud kalit saqlanadi" : "Google AI Studio → Get API key"}<CredHelp href="https://aistudio.google.com/app/apikey" /></>}
+                          hint={<>{clearedCreds.gemini_api_key_1 ? "Saqlash bosilgach bu kalit o'chiriladi" : geminiKey1Mask ? "Kalit saqlangan. Almashtirish uchun yangi kalit kiriting" : "Google AI Studio → Get API key"}<CredHelp href="https://aistudio.google.com/app/apikey" /></>}
                           label="Token"
                           onBlur={() => {
                             if (geminiKey1Dirty && !clearedCreds.gemini_api_key_1 && !form.gemini_api_key_1.trim() && geminiKey1Mask) {
@@ -1495,12 +1507,12 @@ export function SettingsPanel({
                               }}
                               type="button"
                             >
-                              ✕ O&apos;chirish
+                              Company kalitini olib tashlash
                             </button>
                           </div>
                           <BaseInputField
                             className={SETTINGS_INPUT_CLASS}
-                            hint={clearedCreds.gemini_api_key_2 ? "Saqlansa kalit o'chiriladi" : view.fields.gemini_api_key_2_present ? "Bo'sh qoldirilsa mavjud kalit saqlanadi" : undefined}
+                            hint={clearedCreds.gemini_api_key_2 ? "Saqlash bosilgach bu kalit o'chiriladi" : geminiKey2Mask ? "Kalit saqlangan. Almashtirish uchun yangi kalit kiriting" : undefined}
                             label="Token"
                             onBlur={() => {
                               if (geminiKey2Dirty && !clearedCreds.gemini_api_key_2 && !form.gemini_api_key_2.trim() && geminiKey2Mask) {
@@ -1538,6 +1550,19 @@ export function SettingsPanel({
                         </button>
                       )
                     ) : null}
+                    {hasPendingGeminiRemoval && !hasConfiguredGeminiKey ? (
+                      <Notice tone="warning">
+                        Saqlash bosilgach barcha company Gemini kalitlari o&apos;chiriladi va super admin global kaliti mavjud bo&apos;lsa, tizim unga o&apos;tadi.
+                      </Notice>
+                    ) : hasConfiguredGeminiKey ? (
+                      <Notice tone="info">
+                        Hozir company Gemini kaliti ustuvor. Global kalitga o&apos;tish uchun barcha company Gemini kalitlarini olib tashlab, Saqlashni bosing.
+                      </Notice>
+                    ) : (
+                      <Notice tone="info">
+                        Company Gemini kaliti yo&apos;q. Super admin global kaliti mavjud bo&apos;lsa tizim undan foydalanadi; aks holda AI ishga tushmaydi.
+                      </Notice>
+                    )}
                   </div>
                 </SettingsInnerCard>
               </div>
@@ -2408,62 +2433,92 @@ export function SettingsPanel({
                 JIRA, GitHub va Figma konfiguratsiyasi kompaniya admini tomonidan boshqariladi.
               </p>
               <div className="mt-5 grid gap-4 md:grid-cols-2">
-                <BaseInputField
-                  className={SETTINGS_INPUT_CLASS}
-                  hint={clearedCreds.gemini_api_key_1 ? "Saqlansa kalit o'chiriladi" : view.fields.gemini_api_key_1_present ? "Bo'sh qoldirilsa mavjud kalit saqlanadi" : undefined}
-                  label="API Key 1"
-                  onBlur={() => {
-                    if (geminiKey1Dirty && !clearedCreds.gemini_api_key_1 && !form.gemini_api_key_1.trim() && geminiKey1Mask) {
-                      setForm((current) => ({ ...current, gemini_api_key_1: geminiKey1Mask }));
-                      setGeminiKey1Dirty(false);
-                    }
-                  }}
-                  onChange={(value) => {
-                    setGeminiKey1Dirty(true);
-                    setClearedCreds((current) => ({ ...current, gemini_api_key_1: false }));
-                    updateField("gemini_api_key_1", value);
-                  }}
-                  onFocus={() => {
-                    if (!geminiKey1Dirty && form.gemini_api_key_1 === geminiKey1Mask) {
-                      setForm((current) => ({ ...current, gemini_api_key_1: "" }));
+                <div className="grid gap-2">
+                  <BaseInputField
+                    className={SETTINGS_INPUT_CLASS}
+                    hint={clearedCreds.gemini_api_key_1 ? "Saqlash bosilgach bu kalit o'chiriladi" : geminiKey1Mask ? "Kalit saqlangan. Almashtirish uchun yangi kalit kiriting" : undefined}
+                    label="API Key 1"
+                    onBlur={() => {
+                      if (geminiKey1Dirty && !clearedCreds.gemini_api_key_1 && !form.gemini_api_key_1.trim() && geminiKey1Mask) {
+                        setForm((current) => ({ ...current, gemini_api_key_1: geminiKey1Mask }));
+                        setGeminiKey1Dirty(false);
+                      }
+                    }}
+                    onChange={(value) => {
                       setGeminiKey1Dirty(true);
-                    }
-                  }}
-                  placeholder="AIza..."
-                  rightSlot={clearCredentialSlot("gemini_api_key_1", setGeminiKey1Dirty, view.fields.gemini_api_key_1_present)}
-                  type="text"
-                  value={form.gemini_api_key_1}
-                />
-                <BaseInputField
-                  className={SETTINGS_INPUT_CLASS}
-                  hint={clearedCreds.gemini_api_key_2 ? "Saqlansa kalit o'chiriladi" : view.fields.gemini_api_key_2_present ? "Bo'sh qoldirilsa mavjud kalit saqlanadi" : undefined}
-                  label="API Key 2 (ixtiyoriy)"
-                  onBlur={() => {
-                    if (geminiKey2Dirty && !clearedCreds.gemini_api_key_2 && !form.gemini_api_key_2.trim() && geminiKey2Mask) {
-                      setForm((current) => ({ ...current, gemini_api_key_2: geminiKey2Mask }));
-                      setGeminiKey2Dirty(false);
-                    }
-                  }}
-                  onChange={(value) => {
-                    setGeminiKey2Dirty(true);
-                    setClearedCreds((current) => ({ ...current, gemini_api_key_2: false }));
-                    updateField("gemini_api_key_2", value);
-                  }}
-                  onFocus={() => {
-                    if (!geminiKey2Dirty && form.gemini_api_key_2 === geminiKey2Mask) {
-                      setForm((current) => ({ ...current, gemini_api_key_2: "" }));
+                      setClearedCreds((current) => ({ ...current, gemini_api_key_1: false }));
+                      updateField("gemini_api_key_1", value);
+                    }}
+                    onFocus={() => {
+                      if (!geminiKey1Dirty && form.gemini_api_key_1 === geminiKey1Mask) {
+                        setForm((current) => ({ ...current, gemini_api_key_1: "" }));
+                        setGeminiKey1Dirty(true);
+                      }
+                    }}
+                    placeholder="AIza..."
+                    type="text"
+                    value={form.gemini_api_key_1}
+                  />
+                  {geminiKey1Mask && !clearedCreds.gemini_api_key_1 ? (
+                    <button
+                      className="w-fit text-xs font-medium text-red-500 transition-colors hover:text-red-600"
+                      onClick={() => clearCredential("gemini_api_key_1", setGeminiKey1Dirty)}
+                      type="button"
+                    >
+                      Shaxsiy kalitni olib tashlash
+                    </button>
+                  ) : null}
+                </div>
+                <div className="grid gap-2">
+                  <BaseInputField
+                    className={SETTINGS_INPUT_CLASS}
+                    hint={clearedCreds.gemini_api_key_2 ? "Saqlash bosilgach bu kalit o'chiriladi" : geminiKey2Mask ? "Kalit saqlangan. Almashtirish uchun yangi kalit kiriting" : undefined}
+                    label="API Key 2 (ixtiyoriy)"
+                    onBlur={() => {
+                      if (geminiKey2Dirty && !clearedCreds.gemini_api_key_2 && !form.gemini_api_key_2.trim() && geminiKey2Mask) {
+                        setForm((current) => ({ ...current, gemini_api_key_2: geminiKey2Mask }));
+                        setGeminiKey2Dirty(false);
+                      }
+                    }}
+                    onChange={(value) => {
                       setGeminiKey2Dirty(true);
-                    }
-                  }}
-                  placeholder="AIza..."
-                  rightSlot={clearCredentialSlot("gemini_api_key_2", setGeminiKey2Dirty, view.fields.gemini_api_key_2_present)}
-                  type="text"
-                  value={form.gemini_api_key_2}
-                />
+                      setClearedCreds((current) => ({ ...current, gemini_api_key_2: false }));
+                      updateField("gemini_api_key_2", value);
+                    }}
+                    onFocus={() => {
+                      if (!geminiKey2Dirty && form.gemini_api_key_2 === geminiKey2Mask) {
+                        setForm((current) => ({ ...current, gemini_api_key_2: "" }));
+                        setGeminiKey2Dirty(true);
+                      }
+                    }}
+                    placeholder="AIza..."
+                    type="text"
+                    value={form.gemini_api_key_2}
+                  />
+                  {geminiKey2Mask && !clearedCreds.gemini_api_key_2 ? (
+                    <button
+                      className="w-fit text-xs font-medium text-red-500 transition-colors hover:text-red-600"
+                      onClick={() => clearCredential("gemini_api_key_2", setGeminiKey2Dirty)}
+                      type="button"
+                    >
+                      Shaxsiy kalitni olib tashlash
+                    </button>
+                  ) : null}
+                </div>
               </div>
-              <Notice className="mt-4" tone="info">
-                ℹ️ Agar API key kiritmasangiz, avval admin sozlagan shared key, bo'lmasa super admin default Gemini key ishlatiladi.
-              </Notice>
+              {hasPendingGeminiRemoval && !hasConfiguredGeminiKey ? (
+                <Notice className="mt-4" tone="warning">
+                  Saqlash bosilgach shaxsiy kalitlaringiz o&apos;chiriladi. Keyin company admin sozlagan shared kalit, u bo&apos;lmasa super admin global Gemini kaliti ishlatiladi.
+                </Notice>
+              ) : hasConfiguredGeminiKey ? (
+                <Notice className="mt-4" tone="info">
+                  Hozir shaxsiy Gemini kalitingiz ustuvor. Umumiy kalitga o&apos;tish uchun barcha shaxsiy Gemini kalitlarini olib tashlab, Saqlashni bosing.
+                </Notice>
+              ) : (
+                <Notice className="mt-4" tone="info">
+                  Shaxsiy Gemini kaliti yo&apos;q. Company admin sozlagan shared kalit, u bo&apos;lmasa super admin global Gemini kaliti ishlatiladi. Ikkalasi ham bo&apos;lmasa AI ishga tushmaydi.
+                </Notice>
+              )}
             </SettingsBaseCard>
           ) : null}
         </>
