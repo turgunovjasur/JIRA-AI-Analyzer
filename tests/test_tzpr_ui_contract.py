@@ -532,8 +532,3 @@ def test_jira_formatter_renders_each_requirement_as_nested_expand():
     ]:
         panels = _requirement_panels_under(section_title)
         assert [node["attrs"]["title"] for node in panels] == [requirement_title]
-
-    # Scoreboard: ball ostida talab verdiktlari bir qatorda ko'rinadi
-    doc_text = str(adf_doc["content"])
-    assert "2 bajarildi" in doc_text
-    assert "1 bajarilmadi" in doc_text

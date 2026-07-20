@@ -80,11 +80,14 @@ def ensure_db(isolate_test_databases):
 
     task_db = isolate_test_databases["task_db"]
 
+    from datetime import date, timedelta
+
     from utils.auth.auth_db import (
         create_company,
         get_company_by_code,
         init_auth_db,
         save_company_settings,
+        save_company_subscription,
         save_company_webhook_module_settings,
     )
 
@@ -97,6 +100,18 @@ def ensure_db(isolate_test_databases):
     )
     if not company:
         raise RuntimeError("Test fixture company `pytestco` yaratilmadi")
+
+    # create_company avtomatik trial obuna beradi — u tugagach webhook obuna
+    # tekshiruvi 'ignored' qaytaradi. Testlar vaqtdan mustaqil bo'lishi uchun
+    # har run'da obunani faol + uzoq muddatli qilib yangilaymiz.
+    if not save_company_subscription(company["id"], {
+        "plan_name": "base",
+        "subscription_status": "active",
+        "billing_mode": "manual",
+        "billing_start_date": date.today().isoformat(),
+        "billing_end_date": (date.today() + timedelta(days=3650)).isoformat(),
+    }):
+        raise RuntimeError("`pytestco` company subscription saqlanmadi")
 
     if not save_company_settings(company["id"], {
         "webhook_project_keys": "TEST",

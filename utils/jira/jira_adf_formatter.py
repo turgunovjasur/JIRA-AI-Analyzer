@@ -36,7 +36,7 @@ class JiraADFFormatter(BaseADFFormatter):
     # ichidagi "Figma:" qatorida bo'ladi; figma xom ma'lumoti faqat AI kontekstida.
     _default_visible_sections = ['completed', 'failed', 'skipped', 'issues']
 
-    # Har talab panelida va scoreboardda ishlatiladigan status belgisi
+    # Har talab panelida ishlatiladigan status belgisi
     _section_status_emoji = {
         'completed': '✅',
         'failed': '❌',
@@ -354,7 +354,7 @@ class JiraADFFormatter(BaseADFFormatter):
             meta_stats_content,
         ))
 
-        # AI tahlil bo'limlari — score/scoreboard uchun oldindan hisoblanadi
+        # AI tahlil bo'limlari — talab panellari uchun oldindan hisoblanadi
         sections = self._sections_from_result(result)
 
         # ━━━ DEBUG: AI PIPELINE (statistika bilan yonma-yon top-level collapse) ━━━
@@ -590,25 +590,6 @@ class JiraADFFormatter(BaseADFFormatter):
         if score >= 60:
             return "O'rtacha"
         return "Past — qayta ishlash kerak"
-
-    def _requirement_scoreboard(self, sections: Dict[str, "AnalysisSection"]) -> List[Dict]:
-        """Talab verdiktlarini bitta rangli qatorga yig'ish (bajarildi/bajarilmadi/skip)."""
-        order = [
-            ('completed', "#36B37E", "bajarildi"),
-            ('failed', "#FF5630", "bajarilmadi"),
-            ('skipped', "#8b949e", "skip"),
-        ]
-        nodes: List[Dict] = []
-        for key, color, label in order:
-            section = sections.get(key)
-            count = len(section.items) if section and section.items else 0
-            if count == 0:
-                continue
-            emoji = self._section_status_emoji.get(key, "")
-            if nodes:
-                nodes.append(self._text_node("   ·   "))
-            nodes.append(self._colored_text(f"{emoji} {count} {label}", color))
-        return nodes
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # SIMPLE TEXT FORMAT (FALLBACK)
