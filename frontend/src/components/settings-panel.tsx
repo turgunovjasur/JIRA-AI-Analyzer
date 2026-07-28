@@ -185,7 +185,7 @@ const EMPTY_WEBHOOK_FORM: WebhookFormState = {
   testcase_auto_comment_trigger_aliases: "Ready To Test,READY TO TEST",
   testcase_default_test_types: ["positive", "negative"],
   testcase_testcases_per_requirement: "3",
-  testcase_ai_data_section_order: ["tz", "comments", "custom_context", "code"],
+  testcase_ai_data_section_order: ["tz", "comments", "custom_context", "figma", "code"],
   testcase_read_comments_enabled: true,
   testcase_max_comments_to_read: "0",
   testcase_footer_text: "🤖 Test case'lar AI (Gemini) tomonidan avtomatik yaratilgan. QA Team tomonidan tekshirilishi va to'ldirilishi kerak.",
@@ -213,7 +213,7 @@ const EMPTY_WEBHOOK_TRIGGER_CONFIGURED: WebhookTriggerConfiguredState = {
 const DEFAULT_MODULE_ALLOWED: ModuleSettingsAllowed = {
   checker_visible_sections: CHECKER_COMMENT_SECTIONS,
   checker_ai_data_order: ["tz", "comments", "figma", "code"],
-  testcase_ai_data_order: ["tz", "comments", "custom_context", "code"],
+  testcase_ai_data_order: ["tz", "comments", "custom_context", "figma", "code"],
   testcase_types: ["positive", "negative", "boundary", "edge"],
 };
 
@@ -237,7 +237,7 @@ const EMPTY_MODULE_FORM: ModuleFormState = {
   testcase: {
     default_test_types: ["positive", "negative"],
     testcases_per_requirement: "3",
-    ai_data_section_order: ["tz", "comments", "custom_context", "code"],
+    ai_data_section_order: ["tz", "comments", "custom_context", "figma", "code"],
     read_comments_enabled: true,
     max_comments_to_read: "0",
     agent1_primary_model: "",
@@ -640,7 +640,7 @@ export function SettingsPanel({
               testcase_auto_comment_trigger_aliases: String(data.testcase_auto_comment_trigger_aliases || "Ready To Test,READY TO TEST"),
               testcase_default_test_types: Array.isArray(data.testcase_default_test_types) ? data.testcase_default_test_types : ["positive", "negative"],
               testcase_testcases_per_requirement: String(data.testcase_testcases_per_requirement ?? 3),
-              testcase_ai_data_section_order: Array.isArray(data.testcase_ai_data_section_order) ? data.testcase_ai_data_section_order : ["tz", "comments", "custom_context", "code"],
+              testcase_ai_data_section_order: Array.isArray(data.testcase_ai_data_section_order) ? data.testcase_ai_data_section_order : ["tz", "comments", "custom_context", "figma", "code"],
               testcase_read_comments_enabled: Boolean(data.testcase_read_comments_enabled ?? true),
               testcase_max_comments_to_read: String(data.testcase_max_comments_to_read ?? 0),
               testcase_footer_text: String(data.testcase_footer_text || EMPTY_WEBHOOK_FORM.testcase_footer_text),
@@ -686,7 +686,7 @@ export function SettingsPanel({
               testcase_auto_comment_trigger_aliases: String(data.testcase_auto_comment_trigger_aliases || "Ready To Test,READY TO TEST"),
               testcase_default_test_types: Array.isArray(data.testcase_default_test_types) ? data.testcase_default_test_types : ["positive", "negative"],
               testcase_testcases_per_requirement: String(data.testcase_testcases_per_requirement ?? 3),
-              testcase_ai_data_section_order: Array.isArray(data.testcase_ai_data_section_order) ? data.testcase_ai_data_section_order : ["tz", "comments", "custom_context", "code"],
+              testcase_ai_data_section_order: Array.isArray(data.testcase_ai_data_section_order) ? data.testcase_ai_data_section_order : ["tz", "comments", "custom_context", "figma", "code"],
               testcase_read_comments_enabled: Boolean(data.testcase_read_comments_enabled ?? true),
               testcase_max_comments_to_read: String(data.testcase_max_comments_to_read ?? 0),
               testcase_footer_text: String(data.testcase_footer_text || EMPTY_WEBHOOK_FORM.testcase_footer_text),
@@ -2052,7 +2052,7 @@ export function SettingsPanel({
                               <div className="grid gap-3">
                                 <SettingsCardItem>
                                   <BaseOrderPills
-                                    available={["tz", "comments", "custom_context", "code"]}
+                                    available={["tz", "comments", "custom_context", "figma", "code"]}
                                     onChange={(nextValue) => updateWebhookField("testcase_ai_data_section_order", nextValue)}
                                     required={["tz"]}
                                     value={webhookForm.testcase_ai_data_section_order}
@@ -2347,7 +2347,7 @@ export function SettingsPanel({
                           AI ga ma'lumotlar darajasi (tartibi)
                         </div>
                         <BaseOrderPills
-                          available={["tz", "comments", "custom_context", "code"]}
+                          available={["tz", "comments", "custom_context", "figma", "code"]}
                           onChange={(nextValue) => updateModuleOrderField("testcase", "ai_data_section_order", nextValue)}
                           required={["tz"]}
                           value={moduleForm.testcase.ai_data_section_order}

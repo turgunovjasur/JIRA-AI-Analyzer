@@ -128,7 +128,7 @@ class ModuleSettingsSaveRequest(BaseModel):
 
 _CHECKER_VISIBLE_SECTIONS_ALLOWED = ("completed", "failed", "skipped", "issues", "figma")
 _CHECKER_AI_ORDER_ALLOWED = ("tz", "comments", "figma", "code")
-_TESTCASE_AI_ORDER_ALLOWED = ("tz", "comments", "custom_context", "code")
+_TESTCASE_AI_ORDER_ALLOWED = ("tz", "comments", "custom_context", "figma", "code")
 _TESTCASE_TYPES_ALLOWED = ("positive", "negative", "boundary", "edge")
 
 
@@ -686,7 +686,7 @@ async def save_webhook_config(
                 "testcase_ai_data_section_order",
                 _TESTCASE_AI_ORDER_ALLOWED,
                 required_items=("tz",),
-                default=["tz", "comments", "custom_context", "code"],
+                default=["tz", "comments", "custom_context", "figma", "code"],
             ),
             "read_comments_enabled": _tc_bool("testcase_read_comments_enabled", True),
             "max_comments_to_read": _tc_non_negative_int("testcase_max_comments_to_read", 0),
