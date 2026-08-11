@@ -8,6 +8,7 @@ REST API v3 orqali ADF (Atlassian Document Format) qo'llab-quvvatlaydi.
 Author: JASUR TURGUNOV
 Version: 2.0 - ADF Support
 """
+from dataclasses import dataclass
 from typing import Dict
 
 import requests
@@ -16,6 +17,19 @@ from jira import JIRA
 from core.logger import get_logger
 
 log = get_logger("jira.comment")
+
+
+@dataclass(frozen=True)
+class JiraCommentWriteResult:
+    success: bool
+    status_code: int | None = None
+    response_text: str = ""
+    error: str = ""
+
+    @property
+    def content_limit_exceeded(self) -> bool:
+        details = f"{self.response_text} {self.error}".upper()
+        return "CONTENT_LIMIT_EXCEEDED" in details or "32767" in details
 
 
 class JiraCommentWriter:
@@ -75,27 +89,37 @@ class JiraCommentWriter:
         Returns:
             True - success, False - failed
         """
+        return self.add_comment_adf_result(task_key, adf_document).success
+
+    def add_comment_adf_result(
+            self,
+            task_key: str,
+            adf_document: Dict,
+    ) -> JiraCommentWriteResult:
+        """ADF yozish natijasini JIRA response tafsilotlari bilan qaytaradi."""
         try:
             url = f"{self.server}/rest/api/3/issue/{task_key}/comment"
-
-            payload = {
-                "body": adf_document
-            }
-
-            response = self.session.post(url, json=payload)
-
+            response = self.session.post(url, json={"body": adf_document})
             if response.status_code == 201:
-                return True
-            else:
-                log.log_error(
-                    task_key, "ADF comment",
-                    f"Failed: {response.status_code} - {response.text}"
+                return JiraCommentWriteResult(
+                    success=True,
+                    status_code=response.status_code,
+                    response_text=response.text,
                 )
-                return False
 
+            log.log_error(
+                task_key,
+                "ADF comment",
+                f"Failed: {response.status_code} - {response.text}",
+            )
+            return JiraCommentWriteResult(
+                success=False,
+                status_code=response.status_code,
+                response_text=response.text,
+            )
         except Exception as e:
             log.log_error(task_key, "ADF comment", str(e))
-            return False
+            return JiraCommentWriteResult(success=False, error=str(e))
 
     def add_comment(self, task_key: str, comment_text: str) -> bool:
         """
