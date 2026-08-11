@@ -447,9 +447,37 @@ class JiraClient:
             print(f"⚠️  Figma links error: {str(e)}")
             return []
 
+    def _get_pr_application_types(self, issue_id: str) -> List[str]:
+        url = f"{self.server}/rest/dev-status/1.0/issue/summary"
+
+        try:
+            response = requests.get(
+                url,
+                auth=(self.email, self.token),
+                params={'issueId': issue_id},
+                timeout=_http_timeout()
+            )
+            if response.status_code != 200:
+                _log.warning(f"Dev Status summary API status={response.status_code}")
+                return ['GitHub']
+
+            data = response.json() or {}
+            pull_request_summary = data.get('summary', {}).get('pullrequest', {})
+            by_instance_type = pull_request_summary.get('byInstanceType', {}) or {}
+            application_types = [
+                str(application_type).strip()
+                for application_type in by_instance_type
+                if str(application_type).strip()
+            ]
+            return application_types or ['GitHub']
+        except Exception as e:
+            _log.warning(f"Dev Status summary API error: {str(e)}")
+            return ['GitHub']
+
     def extract_pr_urls_dev_status(self, issue_key: str, issue_id: str | None = None) -> List[Dict]:
         """Development Status API dan PR URL olish"""
         pr_urls = []
+        seen_urls = set()
 
         try:
             numeric_id = str(issue_id or "").strip()
@@ -460,38 +488,50 @@ class JiraClient:
                 numeric_id = issue.id
 
             url = f"{self.server}/rest/dev-status/1.0/issue/detail"
-            params = {
-                'issueId': numeric_id,
-                'applicationType': 'GitHub',
-                'dataType': 'pullrequest'
-            }
+            application_types = self._get_pr_application_types(numeric_id)
 
-            response = requests.get(
-                url,
-                auth=(self.email, self.token),
-                params=params,
-                timeout=_http_timeout()
-            )
+            for application_type in application_types:
+                try:
+                    response = requests.get(
+                        url,
+                        auth=(self.email, self.token),
+                        params={
+                            'issueId': numeric_id,
+                            'applicationType': application_type,
+                            'dataType': 'pullrequest'
+                        },
+                        timeout=_http_timeout()
+                    )
+                    if response.status_code != 200:
+                        _log.warning(
+                            f"Dev Status detail API status={response.status_code} "
+                            f"provider={application_type}"
+                        )
+                        continue
 
-            if response.status_code == 200:
-                data = response.json()
-                details = data.get('detail', [])
-
-                if details and len(details) > 0:
-                    detail = details[0]
-                    pull_requests = detail.get('pullRequests', [])
-
-                    _log.info(f"Dev Status API: {len(pull_requests)} ta PR topildi")
-
-                    for pr in pull_requests:
-                        pr_url = pr.get('url', '')
-                        if pr_url and 'github.com' in pr_url:
+                    data = response.json() or {}
+                    provider_pr_count = 0
+                    for detail in data.get('detail', []) or []:
+                        for pr in detail.get('pullRequests', []) or []:
+                            pr_url = str(pr.get('url') or '').strip()
+                            if not pr_url or 'github.com' not in pr_url or pr_url in seen_urls:
+                                continue
+                            seen_urls.add(pr_url)
+                            provider_pr_count += 1
                             pr_urls.append({
                                 'url': pr_url,
                                 'title': pr.get('name', 'PR'),
                                 'status': pr.get('status', 'UNKNOWN'),
                                 'source': 'dev_status_api'
                             })
+                    _log.info(
+                        f"Dev Status API: provider={application_type}, "
+                        f"{provider_pr_count} ta yangi PR topildi"
+                    )
+                except Exception as e:
+                    _log.warning(
+                        f"Dev Status detail API error: provider={application_type}, {str(e)}"
+                    )
 
         except Exception as e:
             _log.warning(f"Dev Status API error: {str(e)}")

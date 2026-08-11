@@ -95,9 +95,26 @@ def test_get_task_details_reuses_short_lived_cache(monkeypatch):
     class FakeResponse:
         status_code = 200
 
-        @staticmethod
-        def json():
-            return {
+        def __init__(self, payload):
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    def fake_get(url, **kwargs):
+        calls["dev_status"] += 1
+        if url.endswith("/summary"):
+            return FakeResponse(
+                {
+                    "summary": {
+                        "pullrequest": {
+                            "byInstanceType": {"GitHub": {"count": 1, "name": "GitHub"}}
+                        }
+                    }
+                }
+            )
+        return FakeResponse(
+            {
                 "detail": [
                     {
                         "pullRequests": [
@@ -110,10 +127,7 @@ def test_get_task_details_reuses_short_lived_cache(monkeypatch):
                     }
                 ]
             }
-
-    def fake_get(*args, **kwargs):
-        calls["dev_status"] += 1
-        return FakeResponse()
+        )
 
     monkeypatch.setattr(client, "get_issue", fake_get_issue)
     monkeypatch.setattr("utils.jira.jira_client.requests.get", fake_get)
@@ -131,7 +145,120 @@ def test_get_task_details_reuses_short_lived_cache(monkeypatch):
             "source": "dev_status_api",
         }
     ]
-    assert calls == {"issue": 1, "dev_status": 1}
+    assert calls == {"issue": 1, "dev_status": 2}
+
+
+def test_extract_pr_urls_dev_status_uses_provider_from_summary(monkeypatch):
+    client = _make_test_client()
+    requested_application_types = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def __init__(self, payload):
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    def fake_get(url, **kwargs):
+        if url.endswith("/summary"):
+            return FakeResponse(
+                {
+                    "summary": {
+                        "pullrequest": {
+                            "byInstanceType": {
+                                "oAuth-com.github.integration.production": {
+                                    "count": 1,
+                                    "name": "GitHub",
+                                }
+                            }
+                        }
+                    }
+                }
+            )
+        requested_application_types.append(kwargs["params"]["applicationType"])
+        return FakeResponse(
+            {
+                "detail": [
+                    {
+                        "pullRequests": [
+                            {
+                                "url": "https://github.com/acme/repo/pull/11745",
+                                "name": "Fix DEV-8843",
+                                "status": "MERGED",
+                            }
+                        ]
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr("utils.jira.jira_client.requests.get", fake_get)
+
+    result = client.extract_pr_urls_dev_status("DEV-8843", issue_id="46599")
+
+    assert requested_application_types == ["oAuth-com.github.integration.production"]
+    assert result == [
+        {
+            "url": "https://github.com/acme/repo/pull/11745",
+            "title": "Fix DEV-8843",
+            "status": "MERGED",
+            "source": "dev_status_api",
+        }
+    ]
+
+
+def test_extract_pr_urls_dev_status_deduplicates_provider_results(monkeypatch):
+    client = _make_test_client()
+
+    class FakeResponse:
+        status_code = 200
+
+        def __init__(self, payload):
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    def fake_get(url, **kwargs):
+        if url.endswith("/summary"):
+            return FakeResponse(
+                {
+                    "summary": {
+                        "pullrequest": {
+                            "byInstanceType": {
+                                "GitHub": {"count": 1, "name": "GitHub"},
+                                "oAuth-com.github.integration.production": {
+                                    "count": 1,
+                                    "name": "GitHub",
+                                },
+                            }
+                        }
+                    }
+                }
+            )
+        return FakeResponse(
+            {
+                "detail": [
+                    {
+                        "pullRequests": [
+                            {
+                                "url": "https://github.com/acme/repo/pull/11745",
+                                "name": "Fix DEV-8843",
+                                "status": "MERGED",
+                            }
+                        ]
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr("utils.jira.jira_client.requests.get", fake_get)
+
+    result = client.extract_pr_urls_dev_status("DEV-8843", issue_id="46599")
+
+    assert [item["url"] for item in result] == ["https://github.com/acme/repo/pull/11745"]
 
 
 def test_get_task_details_can_skip_pr_lookup(monkeypatch):
