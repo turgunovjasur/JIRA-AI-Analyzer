@@ -19,6 +19,12 @@ import {
   ToggleRow,
 } from "@/components/settings/base-card-system";
 import { SetupWizard } from "@/components/setup-wizard";
+import {
+  JIRA_COMMENT_SECTIONS,
+  JIRA_COMMENT_SECTION_LABELS,
+  normalizeJiraCommentSections,
+  toggleJiraCommentSection,
+} from "@/lib/jira-comment-sections";
 import type {
   ModuleSettingsAllowed,
   ModuleSettingsSaveRequest,
@@ -78,6 +84,7 @@ type WebhookFormState = {
   dev_comment_source: string;
   show_contradictory_comments: boolean;
   visible_sections: string[];
+  jira_comment_sections: string[];
   ai_data_section_order: string[];
   skip_code: string;
   skip_comment_text: string;
@@ -174,6 +181,7 @@ const EMPTY_WEBHOOK_FORM: WebhookFormState = {
   dev_comment_source: "assignee_reporter",
   show_contradictory_comments: true,
   visible_sections: CHECKER_COMMENT_SECTIONS,
+  jira_comment_sections: [...JIRA_COMMENT_SECTIONS],
   ai_data_section_order: ["tz", "comments", "figma", "code"],
   skip_code: "AI_SKIP",
   skip_comment_text: "⏭️ AI tekshirish o'chirilgan. Dev tomanidan skip ko'rsatma berilgan. Manual tekshirish tavsiya etiladi.",
@@ -410,6 +418,7 @@ export function SettingsPanel({
     "dev_comment_source",
     "show_contradictory_comments",
     "visible_sections",
+    "jira_comment_sections",
     "ai_data_section_order",
     "skip_code",
     "skip_comment_text",
@@ -567,6 +576,7 @@ export function SettingsPanel({
                   dev_comment_source?: string;
                   show_contradictory_comments?: boolean;
                   visible_sections?: string[];
+                  jira_comment_sections?: string[];
                   ai_data_section_order?: string[];
                   skip_code?: string;
                   skip_comment_text?: string;
@@ -608,6 +618,7 @@ export function SettingsPanel({
             const current = String(data.trigger_status || "READY TO TEST");
             const showContradictory = Boolean(data.show_contradictory_comments ?? true);
             const normalizedSections = CHECKER_COMMENT_SECTIONS;
+            const normalizedJiraCommentSections = normalizeJiraCommentSections(data.jira_comment_sections);
             setWebhookTriggerConfigured({
               service1: Boolean(data.trigger_configured),
               service2: Boolean(data.testcase_trigger_configured),
@@ -629,6 +640,7 @@ export function SettingsPanel({
               dev_comment_source: String(data.dev_comment_source || "assignee_reporter"),
               show_contradictory_comments: showContradictory,
               visible_sections: normalizedSections,
+              jira_comment_sections: normalizedJiraCommentSections,
               ai_data_section_order: Array.isArray(data.ai_data_section_order) ? data.ai_data_section_order : EMPTY_WEBHOOK_FORM.ai_data_section_order,
               skip_code: String(data.skip_code ?? "AI_SKIP"),
               skip_comment_text: String(data.skip_comment_text || "⏭️ AI tekshirish o'chirilgan. Dev tomanidan skip ko'rsatma berilgan. Manual tekshirish tavsiya etiladi."),
@@ -675,6 +687,7 @@ export function SettingsPanel({
               dev_comment_source: String(data.dev_comment_source || "assignee_reporter"),
               show_contradictory_comments: showContradictory,
               visible_sections: normalizedSections,
+              jira_comment_sections: normalizedJiraCommentSections,
               ai_data_section_order: Array.isArray(data.ai_data_section_order) ? data.ai_data_section_order : EMPTY_WEBHOOK_FORM.ai_data_section_order,
               skip_code: String(data.skip_code ?? "AI_SKIP"),
               skip_comment_text: String(data.skip_comment_text || "⏭️ AI tekshirish o'chirilgan. Dev tomanidan skip ko'rsatma berilgan. Manual tekshirish tavsiya etiladi."),
@@ -1077,6 +1090,7 @@ export function SettingsPanel({
           dev_comment_source: webhookForm.dev_comment_source,
           show_contradictory_comments: webhookForm.show_contradictory_comments,
           visible_sections: CHECKER_COMMENT_SECTIONS,
+          jira_comment_sections: webhookForm.jira_comment_sections,
           ai_data_section_order: webhookForm.ai_data_section_order,
           skip_code: webhookForm.skip_code,
           skip_comment_text: webhookForm.skip_comment_text,
@@ -1721,6 +1735,33 @@ export function SettingsPanel({
                               value={webhookForm.trigger_status}
                             />
                           </SettingsCardItem>
+                        </div>
+                      </div>
+                    </SettingsInnerCard>
+
+                    <SettingsInnerCard>
+                      <div className="ssec mt-0 border-none pt-0">
+                        <div className="ssec-label">JIRA comment bo&apos;limlari</div>
+                        <div className="grid gap-3 md:grid-cols-2">
+                          {JIRA_COMMENT_SECTIONS.map((section) => (
+                            <SettingsCardItem key={section}>
+                              <ToggleRow
+                                desc="Faqat webhook Servis-1 yozadigan JIRA commentiga ta&apos;sir qiladi."
+                                label={JIRA_COMMENT_SECTION_LABELS[section]}
+                                onChange={(enabled) =>
+                                  updateWebhookField(
+                                    "jira_comment_sections",
+                                    toggleJiraCommentSection(
+                                      webhookForm.jira_comment_sections,
+                                      section,
+                                      enabled,
+                                    ),
+                                  )
+                                }
+                                value={webhookForm.jira_comment_sections.includes(section)}
+                              />
+                            </SettingsCardItem>
+                          ))}
                         </div>
                       </div>
                     </SettingsInnerCard>

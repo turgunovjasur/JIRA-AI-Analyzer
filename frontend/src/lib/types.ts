@@ -809,6 +809,7 @@ export type WebhookSettingsView = {
     dev_comment_source?: string;
     show_contradictory_comments: boolean;
     visible_sections: string[];
+    jira_comment_sections: string[];
     ai_data_section_order: string[];
     allowed_issue_types: string;
     skip_code: string;
@@ -854,6 +855,7 @@ export type WebhookSettingsSaveRequest = {
   dev_comment_source?: string;
   show_contradictory_comments: boolean;
   visible_sections: string[];
+  jira_comment_sections: string[];
   ai_data_section_order: string[];
   allowed_issue_types: string;
   skip_code: string;

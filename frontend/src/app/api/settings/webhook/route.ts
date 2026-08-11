@@ -6,6 +6,7 @@ import {
   readWebhookConfigWithBackend,
   saveWebhookConfigWithBackend,
 } from "@/lib/backend";
+import { normalizeJiraCommentSections } from "@/lib/jira-comment-sections";
 import { getOptionalSession } from "@/lib/session";
 
 type WebhookSavePayload = {
@@ -27,6 +28,7 @@ type WebhookSavePayload = {
   dev_comment_source?: string;
   show_contradictory_comments?: boolean;
   visible_sections?: string[];
+  jira_comment_sections?: string[];
   ai_data_section_order?: string[];
   trigger_status?: string;
   trigger_status_aliases?: string;
@@ -124,6 +126,7 @@ export async function GET(request: Request) {
         dev_comment_source: String(data.dev_comment_source || "assignee_reporter"),
         show_contradictory_comments: Boolean(data.show_contradictory_comments ?? true),
         visible_sections: Array.isArray(data.visible_sections) ? data.visible_sections : CHECKER_COMMENT_SECTIONS,
+        jira_comment_sections: normalizeJiraCommentSections(data.jira_comment_sections),
         ai_data_section_order: Array.isArray(data.ai_data_section_order) ? data.ai_data_section_order : ["tz", "comments", "figma", "code"],
         skip_code: String(data.skip_code ?? "AI_SKIP"),
         skip_comment_text: String(data.skip_comment_text || "⏭️ AI tekshirish o'chirilgan. Dev tomanidan skip ko'rsatma berilgan. Manual tekshirish tavsiya etiladi."),
@@ -195,6 +198,9 @@ export async function POST(request: Request) {
           : "assignee_reporter",
       show_contradictory_comments: Boolean(payload?.show_contradictory_comments ?? true),
       visible_sections: Array.isArray(payload?.visible_sections) ? payload!.visible_sections! : CHECKER_COMMENT_SECTIONS,
+      jira_comment_sections: normalizeJiraCommentSections(
+        payload?.jira_comment_sections ?? current?.data?.jira_comment_sections,
+      ),
       ai_data_section_order: Array.isArray(payload?.ai_data_section_order) ? payload!.ai_data_section_order! : ["tz", "comments", "figma", "code"],
       min_tz_description_chars: ensureNumber(payload?.min_tz_description_chars, 50),
       excluded_assignees: String(payload?.excluded_assignees || "").trim(),
@@ -253,6 +259,7 @@ export async function POST(request: Request) {
         dev_comment_source: cleanPayload.dev_comment_source,
         show_contradictory_comments: cleanPayload.show_contradictory_comments,
         visible_sections: cleanPayload.visible_sections,
+        jira_comment_sections: cleanPayload.jira_comment_sections,
         ai_data_section_order: cleanPayload.ai_data_section_order,
         skip_code: cleanPayload.skip_code,
         skip_comment_text: cleanPayload.skip_comment_text,
