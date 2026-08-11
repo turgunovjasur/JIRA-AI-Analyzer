@@ -239,12 +239,17 @@ async def check_tz_pr_and_comment(
 
         # 2. Muvaffaqiyatli — ADF comment yozish (yoki oddiy format fallback)
         is_recheck = return_reason in RECHECK_REASONS
-        await _write_success_comment(
+        comment_written = await _write_success_comment(
             task_key, result, new_status,
             settings, comment_writer, adf_formatter,
             is_recheck=is_recheck,
             dev_objections=result.dev_objections
         )
+        if not comment_written:
+            comment_error = "S1 JIRA comment to'liq yozilmadi"
+            set_service1_error(task_key, comment_error, company_id=company_id)
+            log.error(f"[{task_key}] {comment_error}")
+            return
 
         # 3. Service1 holatini 'done' ga o'zgartirish, score saqlash
         compliance_score = result.compliance_score

@@ -172,6 +172,7 @@ def _write_testcases_comment(
     Returns:
         Tuple[bool, str]: (success, message)
     """
+    from utils.jira.jira_comment_publisher import JiraCommentPublisher
     from utils.jira.jira_comment_writer import JiraCommentWriter
     from utils.jira.testcase_adf_formatter import TestcaseADFFormatter
 
@@ -190,8 +191,17 @@ def _write_testcases_comment(
             footer_text = _get_settings().webhook_testcase.testcase_footer_text
         _tc_footer = footer_text
 
+        def build_simple_comment() -> str:
+            return formatter.build_simple_comment(
+                task_key=task_key,
+                test_cases=result.test_cases,
+                test_scenarios=getattr(result, "test_scenarios", []),
+                agent_runs=getattr(result, "agent_runs", []),
+            )
+
+        publisher = JiraCommentPublisher(writer)
+
         if use_adf:
-            # ADF format
             adf_doc = formatter.build_testcase_document(
                 task_key=task_key,
                 test_cases=result.test_cases,
@@ -202,27 +212,21 @@ def _write_testcases_comment(
                 test_scenarios=getattr(result, "test_scenarios", []),
                 agent_runs=getattr(result, "agent_runs", []),
             )
-            success = writer.add_comment_adf(task_key, adf_doc)
-
-            if not success:
-                # Fallback to simple format
-                log.warning(f"[{task_key}] ADF failed, falling back to simple format")
-                simple_comment = formatter.build_simple_comment(
-                    task_key=task_key,
-                    test_cases=result.test_cases,
-                    test_scenarios=getattr(result, "test_scenarios", []),
-                    agent_runs=getattr(result, "agent_runs", []),
-                )
-                success = writer.add_comment(task_key, simple_comment)
-        else:
-            # Simple format
-            simple_comment = formatter.build_simple_comment(
-                task_key=task_key,
-                test_cases=result.test_cases,
-                test_scenarios=getattr(result, "test_scenarios", []),
-                agent_runs=getattr(result, "agent_runs", []),
+            publication = publisher.publish_adf(
+                task_key,
+                adf_doc,
+                marker="[AI_S2]",
+                service_name="Servis-2",
+                simple_fallback=build_simple_comment,
             )
-            success = writer.add_comment(task_key, simple_comment)
+        else:
+            publication = publisher.publish_text(
+                task_key,
+                build_simple_comment(),
+                marker="[AI_S2]",
+                service_name="Servis-2",
+            )
+        success = publication.success
 
         if success:
             message = f"Successfully wrote {len(result.test_cases)} test cases to JIRA"

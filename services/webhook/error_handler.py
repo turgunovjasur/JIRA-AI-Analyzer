@@ -107,7 +107,7 @@ async def _write_success_comment(
         adf_formatter: "JiraADFFormatter",
         is_recheck: bool = False,
         dev_objections: list = None
-) -> None:
+) -> bool:
     """
     Muvaffaqiyatli TZ-PR tahlili uchun JIRA'ga ADF comment yozish.
 
@@ -129,7 +129,10 @@ async def _write_success_comment(
         is_recheck: Agar True bo'lsa, comment'da re-check belgisi ko'rinadi
     """
     try:
+        from utils.jira.jira_comment_publisher import JiraCommentPublisher
+
         extra_scan_enabled = bool(getattr(settings, "agent2_extra_scan_enabled", True))
+        jira_comment_sections = getattr(settings, "jira_comment_sections", None)
         adf_doc = adf_formatter.build_comment_document(
             result,
             new_status,
@@ -137,22 +140,26 @@ async def _write_success_comment(
             is_recheck=is_recheck,
             recheck_text=settings.recheck_comment_text,
             dev_objections=dev_objections or [],
-            extra_scan_enabled=extra_scan_enabled
+            extra_scan_enabled=extra_scan_enabled,
+            jira_comment_sections=jira_comment_sections,
         )
-        success = comment_writer.add_comment_adf(task_key, adf_doc)
-
-        if not success:
-            # Fallback — oddiy format
-            log.warning(f"[{task_key}] ADF failed, falling back to simple format")
-            simple_comment = adf_formatter.build_simple_comment(
+        publication = JiraCommentPublisher(comment_writer).publish_adf(
+            task_key,
+            adf_doc,
+            marker="[AI_S1]",
+            service_name="Servis-1",
+            simple_fallback=lambda: adf_formatter.build_simple_comment(
                 result,
                 new_status,
                 extra_scan_enabled=extra_scan_enabled,
-            )
-            comment_writer.add_comment(task_key, simple_comment)
+                jira_comment_sections=jira_comment_sections,
+            ),
+        )
+        return publication.success
 
     except Exception as e:
         log.error(f"[{task_key}] Comment yozishda xato: {e}")
+        return False
 
 
 def _build_warning_adf(

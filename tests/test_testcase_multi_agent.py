@@ -4,6 +4,7 @@ Agent1 (talab ajratuvchi, checker kontrakti reuse) → Agent2 (testcase yozuvchi
 → Agent3 (audit/grouping). PR ishlatilmaydi. Bu testlar DB talab qilmaydi.
 """
 import json
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -16,6 +17,63 @@ LONG_TZ = (
     "tizimga kira olishi kerak. Validatsiya: bo'sh maydon xatosi, noto'g'ri parol "
     "xatosi, muvaffaqiyatli kirish. Sessiya boshqaruvi ham talab qilinadi."
 )
+
+
+def test_s2_comment_uses_shared_publisher_without_section_filter(monkeypatch):
+    import utils.auth.auth_db as auth_db
+    import utils.jira.jira_comment_writer as writer_module
+    import utils.jira.testcase_adf_formatter as formatter_module
+    from services.webhook.testcase_webhook_handler import _write_testcases_comment
+    from utils.jira import jira_comment_publisher
+    from utils.jira.jira_comment_publisher import JiraCommentPublishResult
+
+    calls: dict = {}
+
+    class FakePublisher:
+        def __init__(self, writer):
+            calls["writer"] = writer
+
+        def publish_adf(self, task_key, document, **kwargs):
+            calls["task_key"] = task_key
+            calls["document"] = document
+            calls.update(kwargs)
+            calls["simple"] = kwargs["simple_fallback"]()
+            return JiraCommentPublishResult(success=True, part_count=3, split=True)
+
+    monkeypatch.setattr(jira_comment_publisher, "JiraCommentPublisher", FakePublisher)
+    monkeypatch.setattr(
+        auth_db,
+        "get_company_webhook_credentials",
+        lambda company_id: {
+            "jira_server": "https://jira.example.com",
+            "jira_email": "qa@example.com",
+            "jira_token": "secret",
+        },
+    )
+    writer = MagicMock()
+    writer.add_comment_adf.return_value = True
+    monkeypatch.setattr(writer_module, "JiraCommentWriter", lambda **kwargs: writer)
+    formatter = MagicMock()
+    formatter.build_testcase_document.return_value = {"type": "doc", "content": []}
+    formatter.build_simple_comment.return_value = "simple-s2"
+    monkeypatch.setattr(formatter_module, "TestcaseADFFormatter", lambda: formatter)
+    result = SimpleNamespace(test_cases=[SimpleNamespace(id="TC-1")], test_scenarios=[], agent_runs=[])
+
+    success, message = _write_testcases_comment(
+        task_key="DEV-1",
+        result=result,
+        use_adf=True,
+        footer_text="footer",
+        company_id=1,
+    )
+
+    assert success is True
+    assert "1 test cases" in message
+    assert calls["writer"] is writer
+    assert calls["marker"] == "[AI_S2]"
+    assert calls["service_name"] == "Servis-2"
+    assert calls["simple"] == "simple-s2"
+    assert "jira_comment_sections" not in formatter.build_testcase_document.call_args.kwargs
 
 AGENT1_JSON = json.dumps(
     {
