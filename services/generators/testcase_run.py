@@ -467,7 +467,7 @@ class _TestcaseRunExecutor:
         if self.final_result_obj is not None:
             try:
                 snap = get_analysis_run_snapshot(self.run_id) or {}
-                setattr(self.final_result_obj, "agent_runs", snap.get("agent_runs", []))
+                self.final_result_obj.agent_runs = snap.get("agent_runs", [])
             except Exception:
                 pass
         append_analysis_run_event(

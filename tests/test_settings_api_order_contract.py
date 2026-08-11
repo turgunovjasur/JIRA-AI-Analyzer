@@ -1,8 +1,8 @@
 import pytest
 from fastapi import HTTPException
 
-from config.app_settings import TZPRCheckerSettings
 from config.app_settings import TestcaseGeneratorSettings as TestcaseSettings
+from config.app_settings import TZPRCheckerSettings
 from services.api.settings_api import (
     _CHECKER_AI_ORDER_ALLOWED,
     _TESTCASE_AI_ORDER_ALLOWED,
