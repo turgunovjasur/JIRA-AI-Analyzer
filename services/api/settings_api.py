@@ -127,6 +127,9 @@ class ModuleSettingsSaveRequest(BaseModel):
 
 
 _CHECKER_VISIBLE_SECTIONS_ALLOWED = ("completed", "failed", "skipped", "issues", "figma")
+_JIRA_COMMENT_SECTIONS_ALLOWED = (
+    "statistics", "ai_pipeline", "summary", "completed", "failed", "skipped", "issues"
+)
 _CHECKER_AI_ORDER_ALLOWED = ("tz", "comments", "figma", "code")
 _TESTCASE_AI_ORDER_ALLOWED = ("tz", "comments", "custom_context", "figma", "code")
 _TESTCASE_TYPES_ALLOWED = ("positive", "negative", "boundary", "edge")
@@ -200,6 +203,7 @@ def _parse_ordered_list(
     field_name: str,
     allowed: tuple[str, ...],
     required_items: tuple[str, ...] = (),
+    allow_empty: bool = False,
 ) -> list[str]:
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise HTTPException(status_code=400, detail=f"{field_name} string list bo'lishi kerak")
@@ -224,7 +228,7 @@ def _parse_ordered_list(
         if required not in order:
             raise HTTPException(status_code=400, detail=f"{field_name} ichida '{required}' bo'lishi shart")
 
-    if not order:
+    if not order and not allow_empty:
         raise HTTPException(status_code=400, detail=f"{field_name} bo'sh bo'lmasligi kerak")
     return order
 
@@ -404,6 +408,11 @@ async def read_webhook_config(
         for item in list(webhook_settings.visible_sections or [])
         if item in _CHECKER_VISIBLE_SECTIONS_ALLOWED
     ] or ["completed", "failed", "skipped", "issues", "figma"]
+    jira_comment_sections = [
+        item
+        for item in list(webhook_settings.jira_comment_sections or [])
+        if item in _JIRA_COMMENT_SECTIONS_ALLOWED
+    ]
     show_contradictory = bool(webhook_settings.show_contradictory_comments)
 
     return {
@@ -419,6 +428,7 @@ async def read_webhook_config(
             "recheck_comment_text": webhook_settings.recheck_comment_text,
             "show_contradictory_comments": show_contradictory,
             "visible_sections": visible_sections,
+            "jira_comment_sections": jira_comment_sections,
             "ai_data_section_order": list(webhook_settings.ai_data_section_order or []),
             "read_comments_enabled": bool(webhook_settings.read_comments_enabled),
             "max_comments_to_read": int(webhook_settings.max_comments_to_read),
@@ -536,11 +546,24 @@ async def save_webhook_config(
         allowed: tuple[str, ...],
         required_items: tuple[str, ...],
         default: list[str],
+        allow_empty: bool = False,
     ) -> list[str]:
         if key in raw:
-            return _parse_ordered_list(raw.get(key), key, allowed, required_items=required_items)
+            return _parse_ordered_list(
+                raw.get(key),
+                key,
+                allowed,
+                required_items=required_items,
+                allow_empty=allow_empty,
+            )
         if key in current_wh:
-            return _parse_ordered_list(current_wh.get(key), key, allowed, required_items=required_items)
+            return _parse_ordered_list(
+                current_wh.get(key),
+                key,
+                allowed,
+                required_items=required_items,
+                allow_empty=allow_empty,
+            )
         return default
 
     visible_sections = _wh_ordered_list(
@@ -548,6 +571,13 @@ async def save_webhook_config(
         _CHECKER_VISIBLE_SECTIONS_ALLOWED,
         required_items=(),
         default=["completed", "failed", "skipped", "issues", "figma"],
+    )
+    jira_comment_sections = _wh_ordered_list(
+        "jira_comment_sections",
+        _JIRA_COMMENT_SECTIONS_ALLOWED,
+        required_items=(),
+        default=list(_JIRA_COMMENT_SECTIONS_ALLOWED),
+        allow_empty=True,
     )
     effective_skip_code = raw_skip if raw_skip_present else str(updated_wh.get("skip_code", "AI_SKIP") or "").strip()
     effective_max_comments_to_read = _wh_non_negative_int("max_comments_to_read", 0)
@@ -585,6 +615,7 @@ async def save_webhook_config(
             ),
             "show_contradictory_comments": show_contradictory,
             "visible_sections": visible_sections,
+            "jira_comment_sections": jira_comment_sections,
             "ai_data_section_order": _wh_ordered_list(
                 "ai_data_section_order",
                 _CHECKER_AI_ORDER_ALLOWED,

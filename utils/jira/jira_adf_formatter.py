@@ -35,6 +35,9 @@ class JiraADFFormatter(BaseADFFormatter):
     # Figma comment'da alohida bo'lim sifatida ko'rsatilmaydi — moslik har talab
     # ichidagi "Figma:" qatorida bo'ladi; figma xom ma'lumoti faqat AI kontekstida.
     _default_visible_sections = ['completed', 'failed', 'skipped', 'issues']
+    _default_jira_comment_sections = [
+        'statistics', 'ai_pipeline', 'summary', 'completed', 'failed', 'skipped', 'issues'
+    ]
 
     # Har talab panelida ishlatiladigan status belgisi
     _section_status_emoji = {
@@ -140,6 +143,14 @@ class JiraADFFormatter(BaseADFFormatter):
         allowed = set(self._default_visible_sections)
         values = [section for section in (visible_sections or self._default_visible_sections) if section in allowed]
         return values or list(self._default_visible_sections)
+
+    def _normalize_jira_comment_sections(
+            self,
+            jira_comment_sections: Optional[List[str]],
+    ) -> List[str]:
+        allowed = set(self._default_jira_comment_sections)
+        source = self._default_jira_comment_sections if jira_comment_sections is None else jira_comment_sections
+        return list(dict.fromkeys(section for section in source if section in allowed))
 
     def _coerce_section_items(self, section: Any) -> List[str]:
         items = getattr(section, "items", None)
@@ -282,7 +293,8 @@ class JiraADFFormatter(BaseADFFormatter):
             recheck_text: Optional[str] = None,
             visible_sections: Optional[List[str]] = None,
             dev_objections: Optional[List[Dict]] = None,
-            extra_scan_enabled: bool = True
+            extra_scan_enabled: bool = True,
+            jira_comment_sections: Optional[List[str]] = None,
     ) -> Dict:
         """
         To'liq ADF comment document yaratish
@@ -313,53 +325,55 @@ class JiraADFFormatter(BaseADFFormatter):
         else:
             content.append(self._heading("🎯 Checker(Multi Agent)", 1))
 
-        # ━━━ META + STATISTIKA (bitta yopiq collapse; title'da task_key ko'rinadi) ━━━
-        meta_para = self._paragraph([
-            self._bold_text("Task: "),
-            self._text_node(f"{result.task_key}"),
-            self._hard_break(),
-            self._bold_text("Vaqt: "),
-            self._text_node(datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
-            self._hard_break(),
-            self._bold_text("Status: "),
-            self._text_node(new_status),
-        ])
-        stats_items = [
-            f"Pull Requests: {result.pr_count} ta",
-            f"O'zgargan fayllar: {result.files_changed} ta",
-            f"Qo'shilgan: +{result.total_additions}",
-            f"O'chirilgan: -{result.total_deletions}",
-        ]
-        meta_stats_content = [meta_para, self._bullet_list(stats_items)]
-        for pr in getattr(result, 'pr_details', []) or []:
-            pr_title = pr.get('title', 'PR')
-            pr_url = pr.get('url', '')
-            pr_files = pr.get('files', [])
-            pr_add = sum(f.get('additions', 0) for f in pr_files)
-            pr_del = sum(f.get('deletions', 0) for f in pr_files)
-            nodes = [self._text_node("🔗 ")]
-            if pr_url:
-                nodes.append(self._link_text(pr_title, pr_url))
-            else:
-                nodes.append(self._text_node(pr_title))
-            nodes += [
-                self._text_node(f" — {len(pr_files)} fayl | "),
-                self._colored_text(f"+{pr_add}", "#36B37E"),
-                self._text_node(" / "),
-                self._colored_text(f"-{pr_del}", "#FF5630"),
+        jira_sections = self._normalize_jira_comment_sections(jira_comment_sections)
+
+        if 'statistics' in jira_sections:
+            meta_para = self._paragraph([
+                self._bold_text("Task: "),
+                self._text_node(f"{result.task_key}"),
+                self._hard_break(),
+                self._bold_text("Vaqt: "),
+                self._text_node(datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
+                self._hard_break(),
+                self._bold_text("Status: "),
+                self._text_node(new_status),
+            ])
+            stats_items = [
+                f"Pull Requests: {result.pr_count} ta",
+                f"O'zgargan fayllar: {result.files_changed} ta",
+                f"Qo'shilgan: +{result.total_additions}",
+                f"O'chirilgan: -{result.total_deletions}",
             ]
-            meta_stats_content.append(self._paragraph(nodes))
-        content.append(self._expand_panel(
-            "📊 Statistika",
-            meta_stats_content,
-        ))
+            meta_stats_content = [meta_para, self._bullet_list(stats_items)]
+            for pr in getattr(result, 'pr_details', []) or []:
+                pr_title = pr.get('title', 'PR')
+                pr_url = pr.get('url', '')
+                pr_files = pr.get('files', [])
+                pr_add = sum(f.get('additions', 0) for f in pr_files)
+                pr_del = sum(f.get('deletions', 0) for f in pr_files)
+                nodes = [self._text_node("🔗 ")]
+                if pr_url:
+                    nodes.append(self._link_text(pr_title, pr_url))
+                else:
+                    nodes.append(self._text_node(pr_title))
+                nodes += [
+                    self._text_node(f" — {len(pr_files)} fayl | "),
+                    self._colored_text(f"+{pr_add}", "#36B37E"),
+                    self._text_node(" / "),
+                    self._colored_text(f"-{pr_del}", "#FF5630"),
+                ]
+                meta_stats_content.append(self._paragraph(nodes))
+            content.append(self._expand_panel(
+                "📊 Statistika",
+                meta_stats_content,
+            ))
 
         # AI tahlil bo'limlari — talab panellari uchun oldindan hisoblanadi
         sections = self._sections_from_result(result)
 
         # ━━━ DEBUG: AI PIPELINE (statistika bilan yonma-yon top-level collapse) ━━━
         debug_lines = self._debug_pipeline_lines(result)
-        if debug_lines:
+        if debug_lines and 'ai_pipeline' in jira_sections:
             content.append(self._expand_panel("🔧 AI pipeline", [self._bullet_list(debug_lines)]))
 
         summary_lines = self._summary_lines_from_result(result)
@@ -387,7 +401,7 @@ class JiraADFFormatter(BaseADFFormatter):
             content.append(self._expand_panel("⚠ Run signallari", [self._bullet_list(warnings)]))
 
         # ━━━ XULOSA (talab bo'limlaridan oldin, section heading bilan) ━━━
-        if summary_lines:
+        if summary_lines and 'summary' in jira_sections:
             content.append(self._heading("🧭 Xulosa", 3))
             content.append(self._expand_panel("Tafsilotlar", [self._bullet_list(summary_lines)]))
 
@@ -396,6 +410,8 @@ class JiraADFFormatter(BaseADFFormatter):
 
         for section_key in self._default_visible_sections:
             if section_key not in _visible:
+                continue
+            if section_key not in jira_sections:
                 continue
             # Extra Scan o'chirilgan bo'lsa (webhook 'Agent2 Extra scan' setting),
             # bu bo'lim commentda umuman ko'rinmaydi.
@@ -601,6 +617,7 @@ class JiraADFFormatter(BaseADFFormatter):
             new_status: str = "Ready to Test",
             visible_sections: Optional[List[str]] = None,
             extra_scan_enabled: bool = True,
+            jira_comment_sections: Optional[List[str]] = None,
     ) -> str:
         """
         Oddiy Jira Markup formatda comment (ADF ishlamasa)
@@ -615,8 +632,10 @@ class JiraADFFormatter(BaseADFFormatter):
             if result.compliance_score is not None
             else "🎯 Checker(Multi Agent)"
         )
-        comment = f"""[AI_S1]
-h1. {score_title}
+        jira_sections = self._normalize_jira_comment_sections(jira_comment_sections)
+        comment = f"[AI_S1]\nh1. {score_title}\n"
+        if 'statistics' in jira_sections:
+            comment += f"""
 
 *📊 Statistika:*
 *Task:* {result.task_key}
@@ -628,13 +647,13 @@ h1. {score_title}
         sections = self._sections_from_result(result)
 
         debug_lines = self._debug_pipeline_lines(result)
-        if debug_lines:
+        if debug_lines and 'ai_pipeline' in jira_sections:
             comment += "\n*🔧 AI pipeline:*\n"
             for line in debug_lines:
                 comment += f"• {line}\n"
 
         summary_lines = self._summary_lines_from_result(result)
-        if summary_lines:
+        if summary_lines and 'summary' in jira_sections:
             comment += "\nh3. 🧭 Xulosa\n"
             for line in summary_lines:
                 comment += f"• {line}\n"
@@ -646,6 +665,8 @@ h1. {score_title}
                 comment += f"• {warning}\n"
 
         for section_key in self._normalize_visible_sections(visible_sections):
+            if section_key not in jira_sections:
+                continue
             if section_key == 'issues' and not extra_scan_enabled:
                 continue
             section = sections.get(section_key)

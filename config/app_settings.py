@@ -162,6 +162,9 @@ class TZPRCheckerSettings:
     visible_sections: List[str] = field(default_factory=lambda: [
         'completed', 'failed', 'skipped', 'issues', 'figma'
     ])
+    jira_comment_sections: List[str] = field(default_factory=lambda: [
+        'statistics', 'ai_pipeline', 'summary', 'completed', 'failed', 'skipped', 'issues'
+    ])
 
     # ━━━ Webhook Filtrlari ━━━
     # Faqat bu issue type'lar uchun servislar ishga tushadi (vergul bilan)
@@ -281,6 +284,9 @@ class TZPRCheckerSettings:
 
     _AI_DATA_ORDER_ALLOWED = ("tz", "comments", "figma", "code")
     _VISIBLE_SECTIONS_ALLOWED = ("completed", "failed", "skipped", "issues", "figma")
+    _JIRA_COMMENT_SECTIONS_ALLOWED = (
+        "statistics", "ai_pipeline", "summary", "completed", "failed", "skipped", "issues"
+    )
 
     def __post_init__(self):
         """Sozlamalar validatsiyasi — noto'g'ri qiymatlar exception chiqaradi"""
@@ -311,6 +317,18 @@ class TZPRCheckerSettings:
                 )
             visible_sections.append(key)
         self.visible_sections = visible_sections or ["completed", "failed", "skipped", "issues", "figma"]
+        jira_comment_sections = []
+        for item in self.jira_comment_sections or []:
+            key = str(item or "").strip()
+            if not key or key in jira_comment_sections:
+                continue
+            if key not in self._JIRA_COMMENT_SECTIONS_ALLOWED:
+                raise ValueError(
+                    f"jira_comment_sections noto'g'ri: {key}. "
+                    f"Ruxsat: {list(self._JIRA_COMMENT_SECTIONS_ALLOWED)}"
+                )
+            jira_comment_sections.append(key)
+        self.jira_comment_sections = jira_comment_sections
         # ai_data_section_order: faqat ruxsat etilgan qiymatlar, takrorlanishsiz
         order = list(dict.fromkeys(self.ai_data_section_order or []))
         invalid = [x for x in order if x not in self._AI_DATA_ORDER_ALLOWED]

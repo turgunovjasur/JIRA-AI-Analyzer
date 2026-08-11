@@ -72,6 +72,7 @@ Har bir setting uchun roli ko'rsatiladi:
 - `webhook_tz_pr.pr_max_files` -> `MUSTAQIL`
 - `webhook_tz_pr.ai_data_section_order` -> `MUSTAQIL`
 - `webhook_tz_pr.visible_sections` -> `MUSTAQIL`
+- `webhook_tz_pr.jira_comment_sections` -> `MUSTAQIL` (faqat webhook S1 JIRA comment bloklari; manual Checker UI ga ta'sir qilmaydi)
 - `webhook_tz_pr.show_contradictory_comments` -> `MUSTAQIL`
 - `webhook_tz_pr.default_use_smart_patch` -> `MUSTAQIL`
 - `webhook_tz_pr.ai_max_output_tokens` -> `MUSTAQIL`

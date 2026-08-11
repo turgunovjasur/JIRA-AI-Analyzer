@@ -532,3 +532,95 @@ def test_jira_formatter_renders_each_requirement_as_nested_expand():
     ]:
         panels = _requirement_panels_under(section_title)
         assert [node["attrs"]["title"] for node in panels] == [requirement_title]
+
+
+def test_webhook_jira_comment_sections_gate_only_selected_blocks():
+    formatter = JiraADFFormatter()
+    result = TZPRAnalysisResult(
+        success=True,
+        task_key="DEV-1",
+        task_summary="Summary",
+        compliance_score=33,
+        pr_count=1,
+        files_changed=2,
+        total_additions=10,
+        total_deletions=3,
+        analysis_overview=TZPRAnalysisOverview(
+            summary_lines=["To'rt talabdan biri bajarilgan."],
+        ),
+        analysis_sections=[
+            TZPRAnalysisSection(
+                key="completed",
+                title="✅ Bajarilgan talablar",
+                items=["COMPLETED-ONLY"],
+                item_count=1,
+            ),
+            TZPRAnalysisSection(
+                key="failed",
+                title="❌ Bajarilmagan talablar",
+                items=["FAILED-ONLY"],
+                item_count=1,
+            ),
+            TZPRAnalysisSection(
+                key="skipped",
+                title="⏭️ Skip qilingan talablar",
+                items=["SKIPPED-ONLY"],
+                item_count=1,
+            ),
+            TZPRAnalysisSection(
+                key="issues",
+                title="🔍 Extra Scan",
+                items=["ISSUES-ONLY"],
+                item_count=1,
+            ),
+        ],
+    )
+
+    adf_doc = formatter.build_comment_document(
+        result,
+        jira_comment_sections=["summary", "failed"],
+    )
+    simple = formatter.build_simple_comment(
+        result,
+        jira_comment_sections=["summary", "failed"],
+    )
+    adf_text = str(adf_doc)
+
+    for output in (adf_text, simple):
+        assert "Xulosa" in output
+        assert "FAILED-ONLY" in output
+        assert "Statistika" not in output
+        assert "AI pipeline" not in output
+        assert "COMPLETED-ONLY" not in output
+        assert "SKIPPED-ONLY" not in output
+        assert "ISSUES-ONLY" not in output
+        assert "[AI_S1]" in output
+        assert "33" in output
+
+
+def test_webhook_jira_comment_sections_can_hide_all_optional_blocks():
+    formatter = JiraADFFormatter()
+    result = TZPRAnalysisResult(
+        success=True,
+        task_key="DEV-1",
+        compliance_score=80,
+        analysis_sections=[
+            TZPRAnalysisSection(
+                key="failed",
+                title="❌ Bajarilmagan talablar",
+                items=["HIDDEN-FAILED"],
+                item_count=1,
+            ),
+        ],
+    )
+
+    adf_text = str(
+        formatter.build_comment_document(
+            result,
+            jira_comment_sections=[],
+        )
+    )
+
+    assert "[AI_S1]" in adf_text
+    assert "80" in adf_text
+    assert "HIDDEN-FAILED" not in adf_text
