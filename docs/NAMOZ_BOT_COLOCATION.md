@@ -66,7 +66,8 @@ qilinmaydi. Verifikatsiya uchun faqat read-only amallar ishlatiladi:
 ```bash
 cd /opt/qa-assistant
 docker compose ps
-curl -fsS https://qa-assistant.uz/health
+docker compose exec -T backend curl -fsS http://localhost:8000/health
+curl -fsS -o /dev/null https://qa-assistant.uz/
 ```
 
 Namoz botning to'liq deploy/update/backup/rollback qo'llanmasi uning reposidagi
@@ -74,6 +75,9 @@ Namoz botning to'liq deploy/update/backup/rollback qo'llanmasi uning reposidagi
 
 ## Holat
 
-- Namoz bot deploy holati: tayyorlanmoqda.
+- Namoz bot deploy holati: productionda ishlayapti (2026-08-27).
+- Namoz servislar: `namoz-vaqti-bot-1` va `namoz-vaqti-db-1`.
+- Deploydan keyin QA-Assistantning besh konteyner ID va start vaqti o'zgarmadi;
+  backend health `healthy`, public sayt `/` javobi HTTP 200 bo'ldi.
+- Namoz bazasi yangi va bo'sh (`users=0`); lokal test foydalanuvchilari ko'chirilmadi.
 - QA-Assistant production foydalanuvchilari va ma'lumotlari deploy scope'iga kirmaydi.
-
