@@ -100,6 +100,9 @@ cd frontend && npm run dev
 
 Deploy (Docker): [DEPLOY_WEB.md](DEPLOY_WEB.md), `docker-compose.yml`.
 
+Shu VPSda alohida Compose project sifatida ishlaydigan Namoz bot va izolyatsiya
+qoidalari: [docs/NAMOZ_BOT_COLOCATION.md](docs/NAMOZ_BOT_COLOCATION.md).
+
 ---
 
 ## 📁 Struktura
