@@ -7,6 +7,7 @@ import math
 from datetime import datetime, timezone
 
 from services.team_analytics import as_time, normalize_event, replay_task
+from services.team_analytics_sprints import clip_interval, sprint_window
 from utils.database.runtime import connect_processing_db
 
 
@@ -235,21 +236,56 @@ def save_settings(company_id, working_status, user_id, daily_hours=8):
         conn.close()
 
 
-_SELECTED = """WITH durations AS (
-    SELECT jira_source,issue_id,sum(extract(epoch FROM (coalesce(ended_at,%(now)s)-started_at)))::double precision AS seconds
+_SPRINT_MEMBERSHIP = """(EXISTS (
+    SELECT 1 FROM team_analytics_task_sprints m WHERE m.company_id=t.company_id
+      AND m.jira_source=t.jira_source AND m.issue_id=t.issue_id AND m.sprint_id=%(sprint)s)
+    OR EXISTS (SELECT 1 FROM team_analytics_events e WHERE e.company_id=t.company_id
+      AND e.jira_source=t.jira_source AND e.issue_id=t.issue_id
+      AND e.snapshot @> %(sprint_snapshot)s::jsonb))"""
+
+_SELECTED = """WITH scoped_intervals AS (
+    SELECT jira_source,issue_id,
+      greatest(started_at,coalesce(%(window_start)s::timestamptz,started_at)) AS starts,
+      least(coalesce(ended_at,%(now)s),%(now)s,coalesce(%(window_end)s::timestamptz,%(now)s)) AS ends
     FROM team_analytics_intervals WHERE company_id=%(company)s AND started_at<=%(now)s
       AND (%(person)s::text IS NULL OR (assignee_id=%(person)s AND (%(person)s='' OR jira_source=%(source)s)))
-    GROUP BY jira_source,issue_id), selected AS (
+      AND (%(sprint)s::bigint IS NULL OR jira_source=%(sprint_source)s)), durations AS (
+    SELECT jira_source,issue_id,sum(extract(epoch FROM (ends-starts)))::double precision AS seconds
+    FROM scoped_intervals WHERE ends>starts GROUP BY jira_source,issue_id), selected AS (
     SELECT t.*,coalesce(d.seconds,0) AS seconds FROM team_analytics_tasks t LEFT JOIN durations d USING(jira_source,issue_id)
-    WHERE t.company_id=%(company)s AND (%(person)s::text IS NULL OR
+    WHERE t.company_id=%(company)s AND (%(sprint)s::bigint IS NULL OR
+      (t.jira_source=%(sprint_source)s AND """ + _SPRINT_MEMBERSHIP + """))
+      AND (%(person)s::text IS NULL OR
       (t.assignee_id=%(person)s AND (%(person)s='' OR t.jira_source=%(source)s)) OR coalesce(d.seconds,0)>0)) """
 
 
-def get_snapshot(company_id, limit=100, offset=0, assignee_id=None, jira_source=None):
+def get_snapshot(company_id, limit=100, offset=0, assignee_id=None, jira_source=None, sprint_id=None, sprint_source=None):
     conn = connect_processing_db(row_factory=True)
     try:
         conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
         now = datetime.now(timezone.utc)
+        sprints = [
+            {"jira_source": r["jira_source"], **r["metadata"], "id": r["sprint_id"]}
+            for r in conn.execute(
+                """WITH known_sprints AS (
+                  SELECT jira_source,sprint_id FROM team_analytics_task_sprints WHERE company_id=%s
+                  UNION SELECT e.jira_source,ids.value::bigint FROM team_analytics_events e
+                    CROSS JOIN LATERAL jsonb_array_elements_text(e.snapshot->'sprint_ids') ids(value)
+                    WHERE e.company_id=%s)
+                SELECT s.jira_source,s.sprint_id,s.metadata FROM team_analytics_sprints s
+                JOIN known_sprints k USING(jira_source,sprint_id)
+                WHERE s.company_id=%s AND coalesce(s.metadata->>'state','')!='deleted'
+                ORDER BY CASE s.metadata->>'state' WHEN 'active' THEN 0 WHEN 'future' THEN 1 ELSE 2 END,
+                  s.metadata->>'started_at' DESC NULLS LAST,s.sprint_id DESC,s.jira_source""",
+                [company_id, company_id, company_id],
+            ).fetchall()
+        ]
+        selected_sprint, window = None, None
+        if sprint_id is not None:
+            selected_sprint = next((s for s in sprints if s["id"] == sprint_id and s["jira_source"] == sprint_source), None)
+            if selected_sprint is None:
+                raise ValueError("Sprint topilmadi yoki kompaniyaga tegishli emas")
+            window = sprint_window(selected_sprint, now)
         params = {
             "company": company_id,
             "now": now,
@@ -257,6 +293,11 @@ def get_snapshot(company_id, limit=100, offset=0, assignee_id=None, jira_source=
             "source": jira_source,
             "limit": limit,
             "offset": offset,
+            "sprint": sprint_id,
+            "sprint_source": sprint_source,
+            "sprint_snapshot": json.dumps({"sprint_ids": [sprint_id]}),
+            "window_start": window[0] if window else None,
+            "window_end": window[1] if window else None,
         }
         settings = _settings(conn, company_id)
         productivity = conn.execute(
@@ -301,19 +342,24 @@ def get_snapshot(company_id, limit=100, offset=0, assignee_id=None, jira_source=
             }
             intervals = by_issue.get((row["jira_source"], row["issue_id"]), [])
             for i in intervals:
-                end = i["ended_at"] or now
+                bounds = clip_interval(i["started_at"], min(i["ended_at"] or now, now), window)
+                if bounds is None:
+                    continue
+                start, end = bounds
                 task["intervals"].append(
                     {
-                        "started_at": i["started_at"].isoformat(),
+                        "started_at": start.isoformat(),
                         "ended_at": end.isoformat(),
-                        "seconds": (end - i["started_at"]).total_seconds(),
+                        "seconds": (end - start).total_seconds(),
                         "assignee_id": i["assignee_id"],
                         "assignee_name": i["assignee_name"],
                         "working_status": i["working_status"],
-                        "is_open": i["ended_at"] is None,
+                        "is_open": i["ended_at"] is None and end == now,
                     }
                 )
             task["total_seconds"] = sum(i["seconds"] for i in task["intervals"])
+            if window:
+                task["is_working"] = any(i["is_open"] for i in task["intervals"])
             tasks.append(task)
         total = summary.pop("total")
         summary["work_days"] = summary["worked_seconds"] / (hours * 3600)
@@ -337,6 +383,9 @@ def get_snapshot(company_id, limit=100, offset=0, assignee_id=None, jira_source=
             "timezone": "Asia/Tashkent",
             "tasks": tasks,
             "assignees": people,
+            "sprints": sprints,
+            "selected_sprint": selected_sprint,
+            "sprint_window": {"started_at": window[0].isoformat(), "ended_at": window[1].isoformat()} if window else None,
             "summary": summary,
             "total": total,
             "limit": limit,

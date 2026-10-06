@@ -6,6 +6,7 @@ import { TeamAnalyticsTaskDetails } from "@/components/team-analytics-task-detai
 import { ANALYTICS_PAGE_SIZE as PAGE_SIZE, useTeamAnalytics } from "@/hooks/use-team-analytics";
 import { calculateDelay, parseAssignee } from "@/lib/team-analytics-calculations";
 import { duration, numberLabel } from "@/lib/team-analytics-time";
+import { sprintKey, sprintLabel, sprintWindow } from "@/lib/team-analytics-sprints";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { AnalyticsSettingsValue } from "@/lib/team-analytics-types";
@@ -13,6 +14,7 @@ import type { AnalyticsSettingsValue } from "@/lib/team-analytics-types";
 
 export function TeamAnalyticsDashboard() {
   const [assignee, setAssignee] = useState("all");
+  const [sprint, setSprint] = useState("all");
   // Only this open view uses the entered points. Never persist or send them to the API.
   const [dailyPoints, setDailyPoints] = useState("");
   const [calculatedPoints, setCalculatedPoints] = useState<number | null>(null);
@@ -22,11 +24,12 @@ export function TeamAnalyticsDashboard() {
   const [showSettings, setShowSettings] = useState(false);
   const [offset, setOffset] = useState(0);
   const [refresh, setRefresh] = useState(0);
-  const { snapshot, loading, error } = useTeamAnalytics(assignee, offset, refresh, demo, demoSettings);
+  const { snapshot, catalog, loading, error } = useTeamAnalytics(assignee, offset, refresh, demo, demoSettings, sprint);
 
   const tasks = snapshot?.tasks || [];
   const showAssigneeColumn = assignee === "all" && (snapshot?.summary.assignee_count ?? new Set(tasks.map(task => task.assignee_id || "unassigned")).size) > 1;
-  const assignees = snapshot?.assignees || [];
+  const assignees = catalog?.assignees || [];
+  const sprints = catalog?.sprints || [];
   const selectedPerson = assignees.find(person => JSON.stringify([person.jira_source, person.assignee_id]) === assignee);
   const isPersonSelected = assignee !== "all" && assignee !== "unassigned";
   const selectedId = assignee === "all" ? null : assignee === "unassigned" ? "" : parseAssignee(assignee)[1];
@@ -39,6 +42,8 @@ export function TeamAnalyticsDashboard() {
     [validPoints, pointsNumber, snapshot]);
   const nameCounts = new Map<string, number>();
   for (const person of assignees) nameCounts.set(person.assignee_name, (nameCounts.get(person.assignee_name) || 0) + 1);
+  const sprintNameCounts = new Map<string, number>();
+  for (const item of sprints) if (item.name) sprintNameCounts.set(item.name, (sprintNameCounts.get(item.name) || 0) + 1);
 
   const changeAssignee = (value: string) => {
     if (value === assignee && offset === 0) return;
@@ -72,7 +77,7 @@ export function TeamAnalyticsDashboard() {
           <Button variant="soft" aria-expanded={showSettings} onClick={() => setShowSettings(value => !value)}>Settings</Button>
           <Button disabled={loading} onClick={() => setRefresh(value => value + 1)}>Yangilash</Button>
           <Button variant={demo ? "primary" : "soft"} aria-pressed={demo} onClick={() => {
-            setDemo(value => !value); setAssignee("all"); setDailyPoints(""); setCalculatedPoints(null); setExpandedTask(null);
+            setDemo(value => !value); setSprint("all"); setAssignee("all"); setDailyPoints(""); setCalculatedPoints(null); setExpandedTask(null);
             setOffset(0);
           }}>{demo ? "Demo: yoqilgan" : "Demo"}</Button>
         </div>
@@ -84,8 +89,20 @@ export function TeamAnalyticsDashboard() {
         if (demo) setDemoSettings(values);
         else setRefresh(value => value + 1);
       }} />}
-    {snapshot && <Card>
+    {catalog && <Card>
       <div className="flex flex-wrap items-end gap-4">
+        <div className="space-y-2">
+          <label htmlFor="sprint-filter" className="block text-sm font-medium">Sprint</label>
+          <select id="sprint-filter" value={sprint} disabled={loading} onChange={event => {
+            setSprint(event.target.value); setOffset(0); setExpandedTask(null);
+          }} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm sm:w-72">
+            <option value="all">Barcha sprintlar</option>
+            {sprints.map(item => <option key={sprintKey(item)} value={sprintKey(item)}
+              disabled={!sprintWindow(item, Date.parse(catalog.generated_at))}>
+              {sprintLabel(item, (sprintNameCounts.get(item.name || "") || 0) > 1)}
+            </option>)}
+          </select>
+        </div>
         <div className="space-y-2">
           <label htmlFor="assignee-filter" className="block text-sm font-medium">Ijrochi</label>
           <select id="assignee-filter" value={assignee} onChange={event => changeAssignee(event.target.value)}
@@ -107,6 +124,11 @@ export function TeamAnalyticsDashboard() {
         <Button disabled={loading || Boolean(error) || !validEnteredPoints}
           onClick={() => setCalculatedPoints(enteredPoints)}>Hisoblash</Button>
       </div>
+      {snapshot?.selected_sprint && snapshot.sprint_window && <p className="mt-3 text-sm text-muted-foreground">
+        {snapshot.selected_sprint.name || "Tanlangan sprint"}: {new Date(snapshot.sprint_window.started_at).toLocaleDateString('en-GB', { timeZone: 'Asia/Tashkent' }).replaceAll('/', '.')}
+        {" – "}{snapshot.selected_sprint.state === "active" ? "hozir" : new Date(snapshot.sprint_window.ended_at).toLocaleDateString('en-GB', { timeZone: 'Asia/Tashkent' }).replaceAll('/', '.')}
+        . Faqat shu sprint davomidagi vaqt hisoblanadi.
+      </p>}
       {isPersonSelected && <p id="daily-points-help" className="mt-3 text-sm text-muted-foreground">
         Kunlik pointni kiriting va Hisoblash tugmasini bosing. Qiymat faqat shu jadval hisobida ishlatiladi va saqlanmaydi.
       </p>}
@@ -120,7 +142,7 @@ export function TeamAnalyticsDashboard() {
     {loading && <p role="status">Yuklanmoqda…</p>}
     {!loading && !error && snapshot && <>
       <p className="text-sm text-muted-foreground">{isPersonSelected ? `${selectedPerson?.assignee_name || "Ijrochi"} uchun hisob` : "Tasklar hisobi"} · {snapshot.total} ta task · Yangilangan: {new Date(snapshot.generated_at).toLocaleString()}</p>
-      {tasks.length === 0 ? <Card>{assignee === "all" ? "Hali Jira signallari kelmagan." : "Tanlangan ijrochiga mos tasklar topilmadi."}</Card> : <Card>
+      {tasks.length === 0 ? <Card>{assignee === "all" && sprint === "all" ? "Hali Jira signallari kelmagan." : "Tanlangan filtrlarga mos tasklar topilmadi."}</Card> : <Card>
         <div className="team-analytics-table-scroll"><table className="w-full text-left text-sm">
           <thead><tr className="border-b">
             <th className="p-3">Task</th>{showAssigneeColumn && <th className="p-3">Ijrochi</th>}<th className="p-3">Status</th>

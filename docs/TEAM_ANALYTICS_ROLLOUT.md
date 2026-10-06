@@ -76,3 +76,15 @@ Server credentialida `ADMINISTER_PROJECTS=true`, ammo `ADMINISTER=false`. Native
 - Issue JQL: `project in ("DEV")`; status filtri qo'shilmaydi. Body yuborilishi yoqilgan (`excludeBody=false`).
 - Jira webhook `secret` maydoniga GWS uchun mavjud encrypted webhook secret xavfsiz operator jarayoni orqali beriladi. Secret chat, hujjat, URL yoki logga yozilmaydi; mavjud AI integratsiyasini buzmaslik uchun rotate qilinmaydi. Jira `X-Hub-Signature` SHA-256 imzosini yuboradi.
 - Ro'yxatdan o'tkazilgach, Jira'dagi bitta haqiqiy status almashishi callbackga kelgani va yangi interval to'g'ri yozilgani tekshiriladi. Bu oxirgi native-delivery tekshiruvi hozircha bajarilmagan.
+
+## Sprint filtri — lokal o'zgarish, 2026-10-06
+
+Bu qo'shimcha hozir lokalda tayyor; productionga hali deploy qilinmagan. Deploydan oldingi server backupiga SSH escalation ruxsati rad etildi; server fayllari/imagelari o'zgartirilmadi.
+
+- Yuqorida Sprint va Ijrochi dropdownlari bor; Project dropdown qo'shilmaydi. Sprintlar kompaniyaning bazaga yig'ilgan tasklari bilan joriy yoki tarixiy bog'langan IDlardan olinadi, qo'lda kiritilmaydi.
+- Dropdown sprint nomi va holatini ko'rsatadi; takroriy nomlarga Tashkent bo'yicha sanalar qo'shiladi. Nomsiz metadata uchun ID faqat fallback labelda ko'rinadi. Identifikator kompaniya + Jira source + sprint ID; tenantlar va boshqa Jira manbalari aralashmaydi.
+- `sprint_id` va `sprint_source` API filtri backendda ishlaydi. Taskning shu sprintga joriy yoki tarixiy tegishliligi tekshiriladi; hisobdagi barcha ish intervallari tanlangan sprint kalendar davriga kesiladi. Jami SQLda barcha sahifalar bo'yicha hisoblanadi; batafsil tarix ham ayni davr bilan cheklanadi. Bu sprintga tegishlilik o'zgargan har bir subintervalning alohida productivity modeli emas.
+- Faol sprint: Jira startDate → snapshot vaqti; eski completed_at qolgan bo'lsa ham unga tayanilmaydi. Yopilgan sprint: startDate → actual completeDate, u bo'lmasa endDate. Hali boshlanmagan yoki sanalari yetishmaydigan sprint hisobga tanlanmaydi; taxminiy lifetime vaqti qo'yilmaydi.
+- Sprint almashtirilganda page va ochilgan row tozalanadi; ijrochi va uning vaqtinchalik kunlik point hisobi saqlanadi. So'rov xatosida filtrlar ko'rinib turadi va Barcha sprintlarga qaytish mumkin. Jira task pointlari aynan mavjud Jira bahosi bo'lib qoladi, sprint kunlariga prorate qilinmaydi.
+- Typecheck, Ruff va production build o'tdi; frontend lint 0 error / 95 mavjud warning. Foydalanuvchi ko'rsatmasi bo'yicha avtomatik testlar ishga tushirilmadi. Keyinchalik ishlatish uchun boundary/source/tenant/pagination regression testlari qo'shildi.
+- Lokal brauzerda demo Sprint 23 + Ali + 2 point/kun tanlovi ko'rildi: 2 task, 5 soat, 1.25 vaqtga teng point; rowning kunlik tarixi ochildi. Demo ko'rigi production Jira sprint filtrini tekshirish o'rnini bosmaydi. Production deploy va haqiqiy Jira sprinti bilan jonli ko'rik qolgan.

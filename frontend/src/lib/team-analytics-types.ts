@@ -23,6 +23,18 @@ export type AnalyticsTask = {
   assignee_seconds: number;
   work_days: number;
   intervals: AnalyticsInterval[];
+  sprint_ids?: number[];
+};
+
+export type AnalyticsSprint = {
+  jira_source: string;
+  id: number;
+  name?: string;
+  state?: string;
+  started_at?: string;
+  ends_at?: string;
+  completed_at?: string;
+  board_id?: number;
 };
 
 export type AnalyticsAssignee = {
@@ -40,6 +52,9 @@ export type AnalyticsSnapshot = {
   timezone?: string;
   sync?: { jira_source: string; last_success_at: string | null; last_error: string | null }[];
   assignees: AnalyticsAssignee[];
+  sprints?: AnalyticsSprint[];
+  selected_sprint?: AnalyticsSprint | null;
+  sprint_window?: { started_at: string; ended_at: string } | null;
   working_status: string;
   daily_hours: number;
   summary: {

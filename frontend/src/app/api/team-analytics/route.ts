@@ -13,7 +13,7 @@ async function proxy(request: Request, method: "GET" | "PUT") {
   try {
     const params = new URL(request.url).searchParams;
     const query = new URLSearchParams();
-    for (const key of ["limit", "offset", "assignee_id", "jira_source"]) {
+    for (const key of ["limit", "offset", "assignee_id", "jira_source", "sprint_id", "sprint_source"]) {
       if (params.has(key)) query.set(key, params.get(key)!);
     }
     const path = method === "GET" ? `/api/team-analytics/snapshot?${query}` : "/api/team-analytics/settings";

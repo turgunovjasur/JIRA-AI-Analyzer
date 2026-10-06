@@ -37,12 +37,19 @@ def snapshot(
     offset: int = Query(0, ge=0),
     assignee_id: str | None = Query(None, max_length=256),
     jira_source: str | None = Query(None, max_length=2048),
+    sprint_id: int | None = Query(None, ge=1, le=9223372036854775807),
+    sprint_source: str | None = Query(None, max_length=2048),
     x_session_id: str | None = Header(None, alias="X-Session-ID"),
 ):
     _, company_id = scope(x_session_id, company_id)
     if assignee_id and not jira_source:
         raise HTTPException(422, "Ijrochi uchun Jira manbasi kerak")
-    return get_snapshot(company_id, limit, offset, assignee_id, jira_source)
+    if sprint_id is not None and not sprint_source:
+        raise HTTPException(422, "Sprint uchun Jira manbasi kerak")
+    try:
+        return get_snapshot(company_id, limit, offset, assignee_id, jira_source, sprint_id, sprint_source)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @router.put("/settings")
