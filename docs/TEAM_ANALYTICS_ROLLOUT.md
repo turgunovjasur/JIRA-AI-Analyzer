@@ -77,9 +77,11 @@ Server credentialida `ADMINISTER_PROJECTS=true`, ammo `ADMINISTER=false`. Native
 - Jira webhook `secret` maydoniga GWS uchun mavjud encrypted webhook secret xavfsiz operator jarayoni orqali beriladi. Secret chat, hujjat, URL yoki logga yozilmaydi; mavjud AI integratsiyasini buzmaslik uchun rotate qilinmaydi. Jira `X-Hub-Signature` SHA-256 imzosini yuboradi.
 - Ro'yxatdan o'tkazilgach, Jira'dagi bitta haqiqiy status almashishi callbackga kelgani va yangi interval to'g'ri yozilgani tekshiriladi. Bu oxirgi native-delivery tekshiruvi hozircha bajarilmagan.
 
-## Sprint filtri — lokal o'zgarish, 2026-10-06
+## Sprint filtri — production deploy, 2026-10-06
 
-Bu qo'shimcha hozir lokalda tayyor; productionga hali deploy qilinmagan. Deploydan oldingi server backupiga SSH escalation ruxsati rad etildi; server fayllari/imagelari o'zgartirilmadi.
+Foydalanuvchi qayta deploy qilishni so'ragach, sprint filtri productionga chiqarildi. Faqat commit `63ebc4b`dagi 9 runtime fayl yuborildi; `.env`, Compose, Caddy va unrelated lokal fayllar yuborilmadi. Backend/worker/frontend production imagelari build qilindi, navbatda running/queued job yo'qligi ko'rildi, so'ng shu 3 servis `--no-deps --wait` bilan yangilandi. Health checklari o'tdi; schema migratsiyasi talab qilinmadi.
+
+Deploydan oldingi `/opt/qa-assistant/backups/sprint_filter_20261006.dump`: 2,009,764 byte, pg_restore ro'yxatida 333 qator. Source/Compose va oldingi image IDlari shu prefiks bilan saqlandi; image taglari `qa-assistant-{backend,worker,frontend}:rollback-sprint_filter_20261006`. Shu deployda alohida DB restore testi yoki avtomatik testlar ishga tushirilmadi.
 
 - Yuqorida Sprint va Ijrochi dropdownlari bor; Project dropdown qo'shilmaydi. Sprintlar kompaniyaning bazaga yig'ilgan tasklari bilan joriy yoki tarixiy bog'langan IDlardan olinadi, qo'lda kiritilmaydi.
 - Dropdown sprint nomi va holatini ko'rsatadi; takroriy nomlarga Tashkent bo'yicha sanalar qo'shiladi. Nomsiz metadata uchun ID faqat fallback labelda ko'rinadi. Identifikator kompaniya + Jira source + sprint ID; tenantlar va boshqa Jira manbalari aralashmaydi.
@@ -87,4 +89,7 @@ Bu qo'shimcha hozir lokalda tayyor; productionga hali deploy qilinmagan. Deployd
 - Faol sprint: Jira startDate → snapshot vaqti; eski completed_at qolgan bo'lsa ham unga tayanilmaydi. Yopilgan sprint: startDate → actual completeDate, u bo'lmasa endDate. Hali boshlanmagan yoki sanalari yetishmaydigan sprint hisobga tanlanmaydi; taxminiy lifetime vaqti qo'yilmaydi.
 - Sprint almashtirilganda page va ochilgan row tozalanadi; ijrochi va uning vaqtinchalik kunlik point hisobi saqlanadi. So'rov xatosida filtrlar ko'rinib turadi va Barcha sprintlarga qaytish mumkin. Jira task pointlari aynan mavjud Jira bahosi bo'lib qoladi, sprint kunlariga prorate qilinmaydi.
 - Typecheck, Ruff va production build o'tdi; frontend lint 0 error / 95 mavjud warning. Foydalanuvchi ko'rsatmasi bo'yicha avtomatik testlar ishga tushirilmadi. Keyinchalik ishlatish uchun boundary/source/tenant/pagination regression testlari qo'shildi.
-- Lokal brauzerda demo Sprint 23 + Ali + 2 point/kun tanlovi ko'rildi: 2 task, 5 soat, 1.25 vaqtga teng point; rowning kunlik tarixi ochildi. Demo ko'rigi production Jira sprint filtrini tekshirish o'rnini bosmaydi. Production deploy va haqiqiy Jira sprinti bilan jonli ko'rik qolgan.
+- Lokal brauzerda demo Sprint 23 + Ali + 2 point/kun tanlovi ko'rildi: 2 task, 5 soat, 1.25 vaqtga teng point; rowning kunlik tarixi ochildi.
+- Production sahifada haqiqiy Jira sprint nomlari/state'lari ko'rindi. `Sprint 72 DEV` (6441), boshlanishi 21.09.2026, + `Ortiqbek Bozorboyev` tanlovida 28 task chiqdi. 13:57 snapshotida jami 161 soat 5 daqiqa, 2 point/kun bo'yicha 40.27 vaqtga teng point. Ochiq intervallar tufayli keyingi snapshotlarda vaqt oshishi kutiladi.
+- DEV-10043 qatori ochilganda 29.09.2026 / 13:02–18:06 / jami 5 soat 4 daqiqa ko'rindi. Paginationning ikkinchi sahifasida 8 task, avvalgi 2 point/kun va barcha 28 taskning jami saqlandi. Brauzer console'ida tegishli error/warning ko'rilmadi. Screenshot: `/private/tmp/team-analytics-sprint-production.jpg`.
+- Post-deploy backend va worker healthy, frontend running; Postgres/Caddy va boshqa loyihalar containerlari qayta yaratilmagan. Avtomatik Jira sync job 77 `done`, 1 urinish, `last_error=null`; checkpoint 06.10.2026 13:56:31 (Asia/Tashkent).
