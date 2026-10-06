@@ -2,7 +2,7 @@
 
 ## Holat
 
-2026-10-06: release tayyorlandi. Izolyatsiyalangan PostgreSQL bilan 444 backend testi, 17 frontend testi va 3 golden-set eval o'tdi. Ruff, frontend typecheck, lint (0 error, 95 mavjud warning) va production build o'tdi. Production deploy/import natijasi quyidagi release yozuvida qayd etiladi.
+2026-10-06: release tayyorlandi. Izolyatsiyalangan PostgreSQL bilan 445 backend testi, 17 frontend testi va 3 golden-set eval o'tdi. Ruff, frontend typecheck, lint (0 error, 95 mavjud warning) va production build o'tdi. Production deploy/import natijasi quyidagi release yozuvida qayd etiladi.
 
 Ish SaaS roadmapning Data Layer Migration, Multi-Tenant Isolation va operatsion barqarorlik bosqichlariga tegishli. `PROGRESS_LOG.md` o'zgartirilmaydi.
 
@@ -10,7 +10,7 @@ Ish SaaS roadmapning Data Layer Migration, Multi-Tenant Isolation va operatsion 
 
 1. Pending migrationlar: 005–008. Startup runner ularni raqam tartibida qo'llaydi. 008 immutable eventlardan alohida task/interval/people/sprint/field-map/sync-state projection jadvallarini qo'shadi. Oldin qo'llangan migratsiyalar o'zgartirilmaydi.
 2. Super-admin company modullaridan Team Analytics’ni yoqadi; AI Webhook addonini yoqish shart emas.
-3. Jira issue created/updated/deleted va sprint lifecycle eventlarini mavjud company endpointga yuborish: `/webhook/jira/{company_code}`. Native Jira admin webhook uchun `secret` -> `X-Hub-Signature: sha256=...` ishlatiladi; raw body bounded reader va timing-safe HMAC bilan tekshiriladi. Avvalgi `X-Webhook-Secret` integratsiyalari ham ishlaydi. URLga secret kiritilmaydi. Issue JQL faqat project bilan cheklanadi, AI trigger statusi bilan emas. [Atlassian webhook docs](https://developer.atlassian.com/cloud/jira/platform/webhooks/).
+3. Native analytics issue created/updated/deleted va sprint lifecycle eventlarini `/webhook/jira/{company_code}/analytics`ga yuborish. Mavjud AI integratsiyasi `/webhook/jira/{company_code}`da qoladi; native analytics callback AI trigger pipeline'ga kirmaydi. Native Jira admin webhook uchun `secret` -> `X-Hub-Signature: sha256=...` ishlatiladi; raw body bounded reader va timing-safe HMAC bilan tekshiriladi. Avvalgi `X-Webhook-Secret` integratsiyalari ham ishlaydi. URLga secret kiritilmaydi. Issue JQL faqat project bilan cheklanadi, AI trigger statusi bilan emas. [Atlassian webhook docs](https://developer.atlassian.com/cloud/jira/platform/webhooks/).
 4. Company-admin `/team-analytics`dagi Settings’da faqat vaqt hisoblanadigan Jira statusi va kunlik ish soatini saqlaydi. Default `In Progress`, 8 soat.
 
 ## Tasdiqlangan hisob
@@ -55,3 +55,6 @@ Rollbackda eski backend/worker/frontend imagelar ishlatiladi, 005–008 additive
 Builddagi audit ogohlantirishi tekshirildi: Next.js 16.2.4 affected edi. Next.js/eslint-config-next 16.3.8 va PostCSS 8.5.29 ga yangilandi, compatible transitive patchlar qo'llandi. [Maintainer advisory](https://github.com/vercel/next.js/security/advisories/GHSA-vcvr-r3jv-pc5j). `npm audit --omit=dev`: 0 vulnerabilities. Dev lint toolchain braces/fast-glob bo'yicha 5 high advisory qoladi; audit taklifidagi major downgrade qo'llanmaydi, production dependencylari ta'sirlanmaydi.
 
 Fresh production operator processda runtime `importlib.util` implicit importga tayanishi aniqlanib explicit importga tuzatildi; `python -S` subprocess regression tekshiruvi qo'shildi.
+
+- Initial production import completed: 762 unique tasks (734 open plus 30 history keys, 2 overlap), 11,286 source events; 154 sprint metadata fetches succeeded, 0 unavailable tasks.
+- Ruling: native analytics registration uses /webhook/jira/{company_code}/analytics; shared auth/ingestion is reused, then callback returns before AI trigger pipeline to avoid duplicating existing Jira Automation AI work.

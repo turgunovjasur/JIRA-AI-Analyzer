@@ -669,6 +669,7 @@ async def _jira_webhook_impl(
     request: Request,
     background_tasks: BackgroundTasks,
     company_code: Optional[str] = None,
+    analytics_only: bool = False,
 ):
     """
     JIRA webhook endpoint — barcha JIRA event'larini qabul qiluvchi asosiy nuqta.
@@ -823,6 +824,8 @@ async def _jira_webhook_impl(
                 return JSONResponse(status_code=503, content={"status": "error", "reason": "analytics_storage_failed"})
 
         # Analytics captures all issue events before the AI-specific filters.
+        if analytics_only:
+            return {"status": "recorded"} if _eff_modules.get('team_analytics') else {"status": "ignored", "reason": "analytics_module_disabled"}
         if event != 'jira:issue_updated' or not status_changed:
             if _eff_modules.get('team_analytics'):
                 return {"status": "recorded"}
@@ -1102,6 +1105,11 @@ async def jira_webhook(request: Request, background_tasks: BackgroundTasks):
 @app.post("/webhook/jira/{company_code}")
 async def jira_webhook_company(request: Request, background_tasks: BackgroundTasks, company_code: str):
     return await _jira_webhook_impl(request, background_tasks, company_code=company_code.strip().lower())
+
+
+@app.post("/webhook/jira/{company_code}/analytics")
+async def jira_analytics_webhook(request: Request, background_tasks: BackgroundTasks, company_code: str):
+    return await _jira_webhook_impl(request, background_tasks, company_code=company_code.strip().lower(), analytics_only=True)
 
 
 # ============================================================================

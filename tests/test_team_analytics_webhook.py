@@ -82,3 +82,27 @@ def test_native_jira_signed_webhook_verifies_exact_body_and_rejects_tampering(mo
     denied = client.post("/webhook/jira/pytestco", content=raw + b" ", headers={"X-Hub-Signature": signature})
     assert denied.status_code == 401
     assert len(captured) == 1
+
+
+def test_dedicated_analytics_callback_does_not_enter_ai_trigger_pipeline(monkeypatch):
+    from services.webhook.jira_webhook_handler import app
+    from utils.auth import auth_db
+
+    captured = []
+    monkeypatch.setattr(
+        auth_db, "get_effective_company_modules", lambda company: {"team_analytics": True, "webhook": True}
+    )
+    monkeypatch.setattr(
+        "services.team_analytics_ingestion.capture_issue", lambda company, config, body: captured.append(body)
+    )
+    body = {
+        "webhookEvent": "jira:issue_updated",
+        "issue": {"id": "42", "key": "TEST-42", "fields": {"status": {"name": "Ready to Test"}}},
+        "changelog": {"items": [{"field": "status", "fromString": "In Progress", "toString": "Ready to Test"}]},
+    }
+    response = TestClient(app).post(
+        "/webhook/jira/pytestco/analytics", json=body, headers={"X-Webhook-Secret": "pytest-webhook-secret"}
+    )
+    assert response.status_code == 200
+    assert response.json() == {"status": "recorded"}
+    assert captured == [body]
