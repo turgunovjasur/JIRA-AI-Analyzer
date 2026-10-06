@@ -126,6 +126,7 @@ ALL_MODULES = {
     'monitoring':         'Monitoring Dashboard',
     'sprint_report':      'Sprint Report',
     'webhook':            'JIRA Webhook',
+    'team_analytics':     'Team Analytics',
     # Webhook sub-servislari — faqat `webhook` addon yoqilganda amal qiladi.
     'webhook_service1':   'Webhook Servis-1 (Checker)',
     'webhook_service2':   'Webhook Servis-2 (Testcase)',
@@ -136,6 +137,7 @@ SALES_READY_MODULES = {
     'testcase_generator',
     'monitoring',
     'webhook',
+    'team_analytics',
 }
 
 DEFERRED_MODULES = set(ALL_MODULES) - SALES_READY_MODULES
@@ -155,6 +157,7 @@ DEFAULT_MODULES = {
     'monitoring':         False,
     'sprint_report':      False,
     'webhook':            False,
+    'team_analytics':     False,
     'webhook_service1':   True,
     'webhook_service2':   True,
 }

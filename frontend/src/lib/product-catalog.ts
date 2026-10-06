@@ -7,6 +7,7 @@ export const MODULE_CATALOG = {
     icon: "🧪",
     label: "Test Case Generator",
   },
+  team_analytics: { icon: "👥", label: "Team Analytics" },
   monitoring: {
     icon: "📈",
     label: "Monitoring",
@@ -26,7 +27,7 @@ export const MODULE_CATALOG = {
 } as const;
 
 export const BASE_PLAN_MODULE_KEYS = ["tz_pr_checker", "testcase_generator"] as const;
-export const PAID_ADDON_MODULE_KEYS = ["webhook"] as const;
+export const PAID_ADDON_MODULE_KEYS = ["webhook", "team_analytics"] as const;
 // Webhook addon yoqilganda alohida boshqariladigan sub-servislar.
 export const WEBHOOK_SERVICE_MODULE_KEYS = ["webhook_service1", "webhook_service2"] as const;
 // Super-admin per-company yoqib-o'chira oladigan barcha modul kalitlari
@@ -35,6 +36,7 @@ export const SUPER_ADMIN_MANAGED_MODULE_KEYS = [
   "tz_pr_checker",
   "testcase_generator",
   "webhook",
+  "team_analytics",
   "webhook_service1",
   "webhook_service2",
 ] as const;

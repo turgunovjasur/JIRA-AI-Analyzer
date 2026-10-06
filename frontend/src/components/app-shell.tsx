@@ -88,6 +88,10 @@ function getNavItems(session: SessionResponse) {
     });
   }
 
+  if (role === "company_admin" && session.companyModules?.team_analytics) {
+    items.push({ href: "/team-analytics", icon: <Users size={15} />, label: "Team Analytics", description: "Jira task vaqti va jamoa yuklamasi", section: "Administration" });
+  }
+
   if (role === "company_admin" && session.companyModules?.monitoring) {
     items.push({
       href: "/monitoring",
@@ -116,6 +120,7 @@ function getPageMeta(pathname: string) {
     "/admin": { kicker: "Platform", title: "Admin" },
     "/dashboard": { kicker: "Workspace", title: "Dashboard" },
     "/settings": { kicker: "Configuration", title: "Settings" },
+    "/team-analytics": { kicker: "Team", title: "Team Analytics" },
     "/monitoring": { kicker: "Operations", title: "Monitoring" },
     "/tzpr": { kicker: "Quality", title: "TZ-PR Checker" },
     "/tzpr/history": { kicker: "Quality", title: "TZ-PR History" },

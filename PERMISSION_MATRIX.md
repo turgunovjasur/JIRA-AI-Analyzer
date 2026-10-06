@@ -15,6 +15,7 @@ Bu hujjat loyiha ichidagi rollar va ularning modul hamda boshqaruv huquqlarini b
 | `TZ-PR Checker` | Ha | Ha | Ha |
 | `Test Case Generator` | Ha | Ha | Ha |
 | `Monitoring` | Ha | Ha, agar `Webhook` yoqilgan bo'lsa | Yo'q |
+| `Team Analytics` | Support/test uchun, company tanlab | Ha, agar modul yoqilgan bo‘lsa | Yo‘q |
 | `Webhook` | Ha | Ha, agar kompaniyaga addon yoqilgan bo'lsa | Yo'q |
 | `Sprint Report` | Support/test uchun | Agar yoqilgan bo'lsa | Agar yoqilgan bo'lsa |
 
@@ -102,3 +103,9 @@ Eslatma:
 
 - Keyingi permission o'zgarishlari bu hujjat bilan birga yangilansin
 - Koddagi access logic imkon qadar shu matritsaga mos bo'lsin
+
+## Team Analytics v1
+
+- `team_analytics` alohida pullik addon; default o‘chiq, super-admin yoqadi. AI `Webhook` addoniga qaram emas.
+- Dashboard va yagona ishlash statusi sozlamasi faqat company-adminning o‘z kompaniyasi uchun; super-admin backendda explicit company scope bilan support qilishi mumkin.
+- Jira userlari kuzatiladigan ijrochilar; ularning barchasiga QA-Assistant login/seat berish talab qilinmaydi.

@@ -175,6 +175,13 @@ async def _dispatch_job(job: dict[str, Any]) -> None:
     task_details = payload.get("task_details") if isinstance(payload.get("task_details"), dict) else None
     job_type = str(job.get("job_type") or "")
 
+    if job_type == 'team_analytics_sync':
+        if company_id is None:
+            raise RuntimeError('Analytics company_id missing')
+        from services.team_analytics_sync import sync_company
+        await asyncio.to_thread(sync_company,company_id)
+        return
+
     if not task_key:
         raise RuntimeError("task_key bo'sh")
 
@@ -269,6 +276,7 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
     _run_recovery_sweep()
     poll_interval = _poll_interval_seconds()
     last_retry_scan: datetime | None = None
+    last_analytics_scan: datetime | None = None
     last_session_cleanup: datetime | None = None
     last_subscription_expire: datetime | None = None
     last_reaper_scan: datetime | None = datetime.now()
@@ -280,6 +288,14 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
     _HEARTBEAT_INTERVAL = _env_int("APP_WORKER_HEARTBEAT_SECONDS", 60, 15)
 
     while not stop_event.is_set():
+        analytics_now = datetime.now()
+        if last_analytics_scan is None or (analytics_now-last_analytics_scan).total_seconds() >= 300:
+            try:
+                from services.team_analytics_sync import enqueue_due_syncs
+                await asyncio.to_thread(enqueue_due_syncs)
+            except Exception:
+                log.warning('Analytics sync scheduling failed',exc_info=True)
+            last_analytics_scan = analytics_now
         settings = get_app_settings(force_reload=False)
         retry_scan_interval = max(5, int(settings.queue.blocked_check_interval))
 

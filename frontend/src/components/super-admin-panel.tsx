@@ -257,6 +257,7 @@ function moduleOptions(selected: string[]): BaseCheckOption[] {
   return [
     { badge: "modul", key: "tz_pr_checker", label: MODULE_CATALOG.tz_pr_checker.label },
     { badge: "modul", key: "testcase_generator", label: MODULE_CATALOG.testcase_generator.label },
+    { badge: "addon", key: "team_analytics", label: MODULE_CATALOG.team_analytics.label },
     { badge: "addon", key: "webhook", label: MODULE_CATALOG.webhook.label },
     { badge: "servis", disabled: !webhookOn, key: "webhook_service1", label: MODULE_CATALOG.webhook_service1.label },
     { badge: "servis", disabled: !webhookOn, key: "webhook_service2", label: MODULE_CATALOG.webhook_service2.label },
@@ -278,6 +279,7 @@ function buildManagedModuleState(selected: string[]): CompanyModules {
   return {
     tz_pr_checker: sel.has("tz_pr_checker"),
     testcase_generator: sel.has("testcase_generator"),
+    team_analytics: sel.has("team_analytics"),
     webhook: webhookOn,
     webhook_service1: service1,
     webhook_service2: service2,

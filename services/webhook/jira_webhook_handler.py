@@ -21,6 +21,8 @@ Author: JASUR TURGUNOV
 Version: 4.0 (Refactored)
 """
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -492,6 +494,8 @@ except ImportError:
 
 # Monitoring API ni ulash (frontend/backend ajratishning birinchi slice'i)
 try:
+    from services.api.team_analytics_api import router as team_analytics_router
+    app.include_router(team_analytics_router)
     from services.api.monitoring_api import router as monitoring_router
     app.include_router(monitoring_router)
 except ImportError:
@@ -572,12 +576,12 @@ class WebhookPayload(BaseModel):
 _WEBHOOK_MAX_BODY_BYTES = int(os.getenv("APP_WEBHOOK_MAX_BODY_BYTES", str(2 * 1024 * 1024)))
 
 
-def _check_webhook_secret(request: Request, company_id: int, log_key: str) -> Optional[JSONResponse]:
+async def _check_webhook_secret(request: Request, company_id: int, log_key: str) -> Optional[JSONResponse]:
     """
     Kompaniya webhook secret tekshiruvi.
 
     Muvaffaqiyatda None, aks holda 401 JSONResponse qaytaradi.
-    Company-specific endpointda body o'qishdan OLDIN chaqiriladi.
+    Header secret body o'qishdan oldin; native Jira HMAC bounded raw body orqali tekshiriladi.
     """
     from utils.auth.auth_db import get_company_settings
 
@@ -596,6 +600,17 @@ def _check_webhook_secret(request: Request, company_id: int, log_key: str) -> Op
         header_secret = (request.headers.get("X-Webhook-Secret") or "").strip()
         query_secret = (request.query_params.get("token") or "").strip()
         provided_secret = header_secret or query_secret
+        signature = (request.headers.get("X-Hub-Signature") or "").strip()
+        if not provided_secret and signature:
+            if not re.fullmatch(r"sha256=[0-9a-f]{64}", signature):
+                return JSONResponse(status_code=401, content={"status": "unauthorized", "reason": "invalid webhook signature"})
+            raw, error = await _read_webhook_body(request)
+            if error is not None:
+                return error
+            expected = "sha256=" + hmac.new(expected_secret.encode("utf-8"), raw, hashlib.sha256).hexdigest()
+            if not secrets.compare_digest(signature, expected):
+                return JSONResponse(status_code=401, content={"status": "unauthorized", "reason": "invalid webhook signature"})
+            return None
         if not secrets.compare_digest(provided_secret, expected_secret):
             return JSONResponse(status_code=401, content={"status": "unauthorized", "reason": "invalid webhook secret"})
         if not header_secret and query_secret:
@@ -606,14 +621,11 @@ def _check_webhook_secret(request: Request, company_id: int, log_key: str) -> Op
     return None
 
 
-async def _read_webhook_json(request: Request) -> tuple:
-    """
-    Webhook body'ni hajm cheklovi bilan o'qish va JSON parse qilish.
-
-    Returns:
-        (body_dict, None) — muvaffaqiyatda
-        (None, JSONResponse) — hajm oshsa 413, JSON buzuq bo'lsa 400
-    """
+async def _read_webhook_body(request: Request) -> tuple:
+    """Bound raw bytes for both native signature verification and JSON decoding."""
+    cached = getattr(request.state, "webhook_raw_body", None)
+    if cached is not None:
+        return cached, None
     content_length = (request.headers.get("content-length") or "").strip()
     if content_length:
         try:
@@ -631,8 +643,17 @@ async def _read_webhook_json(request: Request) -> tuple:
             return None, JSONResponse(status_code=413, content={"status": "error", "reason": "payload too large"})
         chunks.append(chunk)
 
+    raw = b"".join(chunks)
+    request.state.webhook_raw_body = raw
+    return raw, None
+
+
+async def _read_webhook_json(request: Request) -> tuple:
+    raw, error = await _read_webhook_body(request)
+    if error is not None:
+        return None, error
     try:
-        body = json.loads(b"".join(chunks))
+        body = json.loads(raw)
     except (ValueError, UnicodeDecodeError):
         return None, JSONResponse(status_code=400, content={"status": "error", "reason": "invalid JSON body"})
     if not isinstance(body, dict):
@@ -696,7 +717,7 @@ async def _jira_webhook_impl(
                 log.warning(f"Company code '{company_code}' uchun kompaniya topilmadi — ignored")
                 return {"status": "ignored", "reason": f"unknown company code '{company_code}'"}
             company_id = company['id']
-            auth_error = _check_webhook_secret(request, company_id, log_key=company_code)
+            auth_error = await _check_webhook_secret(request, company_id, log_key=company_code)
             if auth_error:
                 return auth_error
             secret_checked = True
@@ -708,8 +729,26 @@ async def _jira_webhook_impl(
 
         event = body.get('webhookEvent', 'unknown')
 
+        if event in {'sprint_created','sprint_updated','sprint_deleted','sprint_started','sprint_closed'}:
+            if company_id is None:
+                return {'status':'ignored','reason':'sprint_requires_company_endpoint'}
+            from utils.auth.auth_db import (
+                get_company_settings,
+                get_effective_company_modules,
+                is_company_subscription_active,
+            )
+            if not is_company_subscription_active(company_id)[0] or not get_effective_company_modules(company_id).get('team_analytics'):
+                return {'status':'ignored','reason':'analytics_disabled'}
+            from services.team_analytics_ingestion import capture_sprint
+            try:
+                await asyncio.to_thread(capture_sprint,company_id,get_company_settings(company_id),body)
+            except Exception:
+                log.exception('Analytics sprint persistence failed')
+                return JSONResponse(status_code=503,content={'status':'error','reason':'analytics_storage_failed'})
+            return {'status':'recorded'}
+
         # Faqat issue update event'larni qabul qilamiz
-        if event != "jira:issue_updated":
+        if event not in {"jira:issue_updated", "jira:issue_created", "jira:issue_deleted"}:
             return {"status": "ignored", "reason": f"event is '{event}'"}
 
         issue = body.get('issue', {})
@@ -740,8 +779,6 @@ async def _jira_webhook_impl(
                 status_changed = True
                 break
 
-        if not status_changed:
-            return {"status": "ignored", "reason": "status not changed", "debug_items": items}
 
         # Tavsiya etilgan routing: company-specific endpoint (yuqorida auth-first
         # bilan allaqachon aniqlangan). Legacy endpoint faqat backward
@@ -761,7 +798,7 @@ async def _jira_webhook_impl(
         # Webhook secret tekshiruvi (legacy endpoint — company endpointda bu
         # tekshiruv body o'qishdan oldin bajarilgan)
         if not secret_checked:
-            auth_error = _check_webhook_secret(request, company_id, log_key=task_key)
+            auth_error = await _check_webhook_secret(request, company_id, log_key=task_key)
             if auth_error:
                 return auth_error
 
@@ -775,6 +812,21 @@ async def _jira_webhook_impl(
         # Webhook moduli kompaniyaga yoqilganmi? (super-admin boshqaradi)
         from utils.auth.auth_db import get_effective_company_modules
         _eff_modules = get_effective_company_modules(company_id)
+        if _eff_modules.get('team_analytics', False):
+            from services.team_analytics_ingestion import capture_issue
+            from utils.auth.auth_db import get_company_settings
+            company_settings = get_company_settings(company_id) or {}
+            try:
+                await asyncio.to_thread(capture_issue,company_id,company_settings,body)
+            except Exception:
+                log.exception("[%s] Analytics event persistence failed", task_key)
+                return JSONResponse(status_code=503, content={"status": "error", "reason": "analytics_storage_failed"})
+
+        # Analytics captures all issue events before the AI-specific filters.
+        if event != 'jira:issue_updated' or not status_changed:
+            if _eff_modules.get('team_analytics'):
+                return {"status": "recorded"}
+            return {"status": "ignored", "reason": "status not changed" if not status_changed else f"event is '{event}'"}
         if not _eff_modules.get('webhook', False):
             log.info(f"[{task_key}] SKIP -> webhook moduli yoqilmagan (company_id={company_id})")
             return {"status": "ignored", "reason": "webhook_module_disabled"}
