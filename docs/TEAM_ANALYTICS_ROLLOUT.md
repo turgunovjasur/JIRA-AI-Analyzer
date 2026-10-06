@@ -2,7 +2,7 @@
 
 ## Holat
 
-2026-10-06: release tayyorlandi. Izolyatsiyalangan PostgreSQL bilan 445 backend testi, 17 frontend testi va 3 golden-set eval o'tdi. Ruff, frontend typecheck, lint (0 error, 95 mavjud warning) va production build o'tdi. Production deploy/import natijasi quyidagi release yozuvida qayd etiladi.
+2026-10-06: backend, worker va frontend productionga deploy qilindi; company 1 (GWS / DEV) pilot yoqildi. Izolyatsiyalangan PostgreSQL bilan 445 backend testi, 17 frontend testi va 3 golden-set eval o'tdi. Ruff, frontend typecheck, lint (0 error, 95 mavjud warning) va production build o'tdi. Jira ma'lumotlari import qilindi, davriy sync va jonli sahifa tekshirildi. Native Jira webhook ro'yxatdan o'tkazilishi sayt administratorining huquqini kutmoqda; Jira mavjud server tokeniga HTTP 403 qaytardi.
 
 Ish SaaS roadmapning Data Layer Migration, Multi-Tenant Isolation va operatsion barqarorlik bosqichlariga tegishli. `PROGRESS_LOG.md` o'zgartirilmaydi.
 
@@ -56,5 +56,23 @@ Builddagi audit ogohlantirishi tekshirildi: Next.js 16.2.4 affected edi. Next.js
 
 Fresh production operator processda runtime `importlib.util` implicit importga tayanishi aniqlanib explicit importga tuzatildi; `python -S` subprocess regression tekshiruvi qo'shildi.
 
-- Initial production import completed: 762 unique tasks (734 open plus 30 history keys, 2 overlap), 11,286 source events; 154 sprint metadata fetches succeeded, 0 unavailable tasks.
-- Ruling: native analytics registration uses /webhook/jira/{company_code}/analytics; shared auth/ingestion is reused, then callback returns before AI trigger pipeline to avoid duplicating existing Jira Automation AI work.
+## Production release natijasi — 2026-10-06
+
+- Faqat backend, worker va frontend qayta yaratildi. Backend/worker health checklari o'tdi; mavjud Postgres, Caddy, Namoz bot va Playwright CI bot containerlari ishlashda davom etdi.
+- Deploydan oldingi `/opt/qa-assistant/backups/team_analytics_20261006.dump` custom-format backup: 1,376,807 byte / 269 obyekt. Alohida vaqtinchalik DBga restore qilib 30 tarixiy task tekshirildi; faqat shu test DB olib tashlandi. Eski source, Compose va image IDlari shu backup prefiksi bilan saqlandi. Eski image taglari: `qa-assistant-{backend,worker,frontend}:rollback-team_analytics_20261006`.
+- Initial import: 734 ochiq task + 30 server tarixidagi task − 2 takror = **762 task**, **11,286 source event**, **128 interval**, **33 ijrochi**, **162 sprint ID**. 154 sprintning to'liq metadata so'rovi muvaffaqiyatli; qolgan 8 sprintning IDsi saqlangan, to'liq metadata olinmagan. 336 joriy issue–sprint bog'lanishi saqlandi. 30 tarixiy taskning barchasi olindi; importda unavailable task yo'q.
+- Jira manbasiga solishtirish: DEV-10043 jami 23,542.777 sekund, DEV-10122 3,462.088 sekund, DEV-9919 78,160.371 sekund. Tarixiy assignee almashishi hisobda saqlanadi: ijrochi filtri taskning barcha vaqtini emas, aynan shu ijrochi interval vaqtini chiqaradi.
+- Workerning avtomatik sync joblari 64 va 66 hamda operator tekshiruvidagi 65 `done`, bittadan urinish, `last_error=null`. Oxirgi tekshirilgan muvaffaqiyat checkpointi `2026-10-06 08:05:51.506038 UTC`. Har 5 daqiqalik reconciliation yangi va o'tkazib yuborilgan update'larni oladi.
+- Public API autentifikatsiyasiz 401 berdi. Native callback to'g'ri HMAC bilan 200/`recorded`, ayni imzo bilan o'zgartirilgan bodyga 401 berdi. Takroriy DEV-10043 importi 0 yangi event qo'shdi.
+- Jonli `/team-analytics` sahifada ijrochi filtri, vaqtinchalik 2 point/kun bilan Hisoblash, pagination, barcha sahifalarning jami, yashirin ijrochi ustuni, vertikal rang belgisi, sticky header va row bosilgandagi kunlik interval tarixi tekshirildi. Screenshot: `artifacts/team-analytics-production.jpg`.
+
+## Qolgan qadam: Jira sayt administratorining webhook sozlashi
+
+Server credentialida `ADMINISTER_PROJECTS=true`, ammo `ADMINISTER=false`. Native admin webhook yaratish so'rovi HTTP 403 bilan rad etildi; webhook **yaratilmadi**. Analytics ishlayapti, REST reconciliation har 5 daqiqada yangilaydi; native signallar darhol kelishi uchun sayt administratori quyidagilarni ro'yxatdan o'tkazishi kerak:
+
+- Callback URL: `https://qa-assistant.uz/webhook/jira/gws/analytics`.
+- Issue eventlar: `jira:issue_created`, `jira:issue_updated`, `jira:issue_deleted`.
+- Sprint eventlar: `sprint_created`, `sprint_updated`, `sprint_started`, `sprint_closed`, `sprint_deleted`.
+- Issue JQL: `project in ("DEV")`; status filtri qo'shilmaydi. Body yuborilishi yoqilgan (`excludeBody=false`).
+- Jira webhook `secret` maydoniga GWS uchun mavjud encrypted webhook secret xavfsiz operator jarayoni orqali beriladi. Secret chat, hujjat, URL yoki logga yozilmaydi; mavjud AI integratsiyasini buzmaslik uchun rotate qilinmaydi. Jira `X-Hub-Signature` SHA-256 imzosini yuboradi.
+- Ro'yxatdan o'tkazilgach, Jira'dagi bitta haqiqiy status almashishi callbackga kelgani va yangi interval to'g'ri yozilgani tekshiriladi. Bu oxirgi native-delivery tekshiruvi hozircha bajarilmagan.

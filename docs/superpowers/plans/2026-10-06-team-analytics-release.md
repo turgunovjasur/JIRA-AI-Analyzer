@@ -59,11 +59,12 @@ Files: frontend/src/lib/team-analytics-calculations.ts, frontend/src/lib/team-an
 Files: .dockerignore, frontend/.dockerignore, docs/TEAM_ANALYTICS_ROLLOUT.md.
 - [x] Exclude credentials, local data/backups and development artifacts from images.
 - [x] Run complete backend suite on isolated Postgres; frontend lint/typecheck/tests/build; inspect full feature diff.
-- [ ] Commit only feature release files. Build new production images without changing running containers.
-- [ ] Backup DB and old image IDs; verify backup and wait for running worker jobs.
-- [ ] Deploy backend, migrate, deploy worker/frontend and verify health.
-- [ ] Discover fields and import selected history; enable company 1 pilot and verify persisted sprint/assignee/time data against Jira.
-- [ ] Confirm periodic reconciliation, API authorization and public page. Preserve new data if code rollback becomes necessary.
+- [x] Commit only feature release files. Build new production images without changing running containers.
+- [x] Backup DB and old image IDs; verify backup and wait for running worker jobs.
+- [x] Deploy backend, migrate, deploy worker/frontend and verify health.
+- [x] Discover fields and import selected history; enable company 1 pilot and verify persisted sprint/assignee/time data against Jira.
+- [x] Confirm periodic reconciliation, API authorization and public page. Preserve new data if code rollback becomes necessary.
+- [ ] Register native Jira analytics webhook with site-admin permission and verify a real newly emitted Jira transition.
 
 ## Execution ledger
 
@@ -79,3 +80,7 @@ Files: .dockerignore, frontend/.dockerignore, docs/TEAM_ANALYTICS_ROLLOUT.md.
 
 - Initial production import completed: 762 unique tasks (734 open plus 30 history keys, 2 overlap), 11,286 source events; 154 sprint metadata fetches succeeded, 0 unavailable tasks.
 - Ruling: native analytics registration uses /webhook/jira/{company_code}/analytics; shared auth/ingestion is reused, then callback returns before AI trigger pipeline to avoid duplicating existing Jira Automation AI work.
+- Production backend/worker/frontend healthy; other server services retained. Imported 128 intervals, 33 people, 162 sprint IDs, 336 current issue-sprint memberships. 154 sprint metadata reads succeeded; 8 IDs retained without complete metadata. Source timing checks DEV-10043/DEV-10122/DEV-9919 matched Jira, including historical assignee ownership.
+- Automatic sync jobs 64/66 and operator smoke job 65 completed once without errors. Checkpoint verified at 2026-10-06 08:05:51.506038 UTC. Signed public callback 200, tampered body 401, repeat REST import 0 inserted events, unauthenticated API 401.
+- Authenticated production browser verified executor selection, ephemeral points, calculation, pagination/global totals, row expansion, day formatting, vertical colors and sticky header; proof saved to artifacts/team-analytics-production.jpg.
+- Remaining external dependency: native webhook POST rejected HTTP 403. Current Jira account has ADMINISTER_PROJECTS but not ADMINISTER. Site administrator must register the documented callback; periodic sync works while native delivery is pending. Do not mark native registration or real event delivery complete.
