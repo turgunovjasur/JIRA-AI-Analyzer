@@ -71,4 +71,8 @@ Files: .dockerignore, frontend/.dockerignore, docs/TEAM_ANALYTICS_ROLLOUT.md.
 
 - Tasks 1–4: complete. RED→GREEN engine/import/DB/frontend regressions verified. Whole feature fresh-context review completed; fixes include source snapshot timing, independently overridden credentials, expiry gate, moved task reconciliation and HMAC native Jira authentication.
 - Ruling: authoritative snapshots use source updated time; availability recovery is a separate empty observation event, protecting concurrent newer webhook fields.
-- Verification: 443 backend tests / 17 frontend tests / 3 eval cases green, Ruff clean, typecheck/lint/build pass. Real DEV field discovery passes; 734 open issues and existing 30 history keys are selected, as authorized.
+- Verification: 444 backend tests / 17 frontend tests / 3 eval cases green, Ruff clean, typecheck/lint/build pass. Real DEV field discovery passes; 734 open issues and existing 30 history keys are selected, as authorized.
+
+- Ruling: production dependency audit surfaced affected Next.js; patched Next.js/eslint-config-next 16.3.8 and PostCSS 8.5.29 + compatible transitive updates, runtime audit 0. Dev-only braces chain remains upstream; unsafe major downgrade is outside release scope.
+- Ruling: fresh Python operator execution exposed implicit importlib.util dependency; add explicit import and fresh-process regression coverage.
+- Production backend healthy; additive 005–008 applied. Backup custom dump 1,376,807 bytes / 269 objects restored to isolated temporary DB, verified 30 history keys, temporary DB removed. Rollback images and prior source preserved under /opt/qa-assistant/backups/team_analytics_20261006*.

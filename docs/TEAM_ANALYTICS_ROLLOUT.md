@@ -2,7 +2,7 @@
 
 ## Holat
 
-2026-10-06: release tayyorlandi. Izolyatsiyalangan PostgreSQL bilan 443 backend testi, 17 frontend testi va 3 golden-set eval o'tdi. Ruff, frontend typecheck, lint (0 error, 95 mavjud warning) va production build o'tdi. Production deploy/import natijasi quyidagi release yozuvida qayd etiladi.
+2026-10-06: release tayyorlandi. Izolyatsiyalangan PostgreSQL bilan 444 backend testi, 17 frontend testi va 3 golden-set eval o'tdi. Ruff, frontend typecheck, lint (0 error, 95 mavjud warning) va production build o'tdi. Production deploy/import natijasi quyidagi release yozuvida qayd etiladi.
 
 Ish SaaS roadmapning Data Layer Migration, Multi-Tenant Isolation va operatsion barqarorlik bosqichlariga tegishli. `PROGRESS_LOG.md` o'zgartirilmaydi.
 
@@ -49,3 +49,9 @@ Ish SaaS roadmapning Data Layer Migration, Multi-Tenant Isolation va operatsion 
 Production `.env`, Compose va Caddyfile saqlanadi. Faqat QA-Assistant backend/worker/frontend build va recreate qilinadi; Postgres/Caddy va boshqa Compose loyihalariga tegilmaydi. DB pg_dump custom-format backup va eski image rollback taglari deploydan oldin saqlanadi. Yangi image qurilishi eski ishlayotgan containerlarni o'zgartirmaydi.
 
 Rollbackda eski backend/worker/frontend imagelar ishlatiladi, 005–008 additive schema va yig'ilgan eventlar o'chirilmaydi. DB restore faqat alohida recovery qarori bilan; oddiy code rollback uchun kerak emas.
+
+## Release dependency tekshiruvi
+
+Builddagi audit ogohlantirishi tekshirildi: Next.js 16.2.4 affected edi. Next.js/eslint-config-next 16.3.8 va PostCSS 8.5.29 ga yangilandi, compatible transitive patchlar qo'llandi. [Maintainer advisory](https://github.com/vercel/next.js/security/advisories/GHSA-vcvr-r3jv-pc5j). `npm audit --omit=dev`: 0 vulnerabilities. Dev lint toolchain braces/fast-glob bo'yicha 5 high advisory qoladi; audit taklifidagi major downgrade qo'llanmaydi, production dependencylari ta'sirlanmaydi.
+
+Fresh production operator processda runtime `importlib.util` implicit importga tayanishi aniqlanib explicit importga tuzatildi; `python -S` subprocess regression tekshiruvi qo'shildi.

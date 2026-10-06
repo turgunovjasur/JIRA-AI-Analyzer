@@ -7,7 +7,7 @@ hech qanday o'zgarishsiz ishlaydi: `conn = connect_*(...)` pooldan ulanish oladi
 xato tufayli `close()` chaqirmasa, proxy `__del__` (GC) orqali ulanish baribir
 poolga qaytariladi — bu connection leak'ning oldini oladi.
 """
-import importlib
+import importlib.util
 import os
 import threading
 from dataclasses import dataclass
