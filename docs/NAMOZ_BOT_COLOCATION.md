@@ -1,10 +1,38 @@
-# QA-Assistant serverida alohida Namoz bot
+# QA-Assistant serveridagi alohida Docker loyihalari
 
 ## Maqsad
 
-Hetzner VPS faqat QA-Assistantni emas, `Namoz vaqti` Telegram botini ham ishlatadi.
-Ikki mahsulot bir serverda joylashgan, ammo application va data qatlamlarida bir-biriga
-bog'lanmagan.
+Hetzner VPS QA-Assistant, `Namoz vaqti` Telegram boti va Playwright
+repositorysining `@smartup_ci_bot` servislarini ishlatadi. Uchala loyiha bir
+serverda joylashgan, ammo alohida Docker Compose project bo'lib, application,
+data va runtime qatlamlarida bir-biriga bog'lanmagan.
+
+## Serverdagi Compose projectlar
+
+| Loyiha | Server katalogi | Compose project | Asosiy container(lar) |
+|---|---|---|---|
+| QA-Assistant (`@qa_assistant_leads_bot`) | `/opt/qa-assistant` | `qa-assistant` | `qa-assistant-*` |
+| Namoz bot (`@UzNamozTaqvimiBot`) | `/opt/namoz-vaqti` | `namoz-vaqti` | `namoz-vaqti-bot-1`, `namoz-vaqti-db-1` |
+| Playwright CI (`@smartup_ci_bot`) | `/opt/playwright-ci-bot` | `playwright-ci-bot` | `playwright-ci-bot-bot-1` |
+
+Har bir qator alohida deploy va rollback chegarasi hisoblanadi. Bir project
+buyrug'ida boshqa projectning katalogi, Compose fayli, containeri, networki,
+volume'i yoki `.env` fayli ishlatilmaydi.
+
+## Playwright CI bot izolyatsiyasi
+
+- Playwright bot `playwright-ci-bot_default` networkida ishlaydi.
+- Host port, database va persistent volume ochmaydi.
+- Credentiallari faqat `/opt/playwright-ci-bot/.env`da `0600` permission bilan
+  saqlanadi; QA-Assistant va Namoz tokenlari qayta ishlatilmaydi.
+- Deploy va operator buyruqlari faqat `/opt/playwright-ci-bot` ichida, explicit
+  `-p playwright-ci-bot` bilan bajariladi.
+- Playwright botni build, recreate, restart yoki rollback qilish
+  `qa-assistant` va `namoz-vaqti` projectlarini o'zgartirmaydi.
+- Runtime limitlari: `0.25 CPU`, `128 MB` RAM va `3 x 5 MB` log rotation.
+
+Playwright operator qo'llanmasi Playwright reposidagi
+`deploy/playwright-ci-bot/README.md` faylida saqlanadi.
 
 ## Izolyatsiya chegarasi
 

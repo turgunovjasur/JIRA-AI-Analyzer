@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { calculateDelay, parseAssignee, summarizeTasks } from './team-analytics-calculations';
-import { groupIntervalsByDay } from './team-analytics-time';
+import { duration, groupIntervalsByDay } from './team-analytics-time';
 
 describe('analytics calculations', () => {
+  it('does not drop a minute due to proportional allocation precision', () => {
+    expect(duration(28800 - 1e-9)).toBe('8 soat 0 daqiqa');
+    expect(duration(59.9)).toBe('0 soat 0 daqiqa');
+  });
   it('sums each overrun without subtracting savings and excludes missing estimates', () => {
     expect(calculateDelay([{ worked_seconds: 10 * 3600, story_points: 2 },
       { worked_seconds: 2 * 3600, story_points: 2 }, { worked_seconds: 20 * 3600, story_points: null }], 8, 2))

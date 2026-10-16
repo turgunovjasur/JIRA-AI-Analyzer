@@ -7,7 +7,7 @@ import math
 from datetime import datetime, timezone
 
 from services.team_analytics import as_time, normalize_event, replay_task
-from services.team_analytics_sprints import clip_interval, sprint_window
+from services.team_analytics_sprints import sprint_window
 from utils.database.runtime import connect_processing_db
 
 
@@ -206,7 +206,7 @@ def save_sprints(company_id, source, sprints):
         conn.close()
 
 
-def save_settings(company_id, working_status, user_id, daily_hours=8):
+def save_settings(company_id, working_status, user_id, daily_hours=8, weekly_hours=40):
     conn = connect_processing_db(row_factory=True)
     try:
         conn.execute("SELECT pg_advisory_xact_lock(%s,%s)", [51005, company_id])
@@ -224,9 +224,10 @@ def save_settings(company_id, working_status, user_id, daily_hours=8):
             ).fetchall():
                 _project(conn, company_id, row["jira_source"], row["issue_id"], settings, now)
         conn.execute(
-            """INSERT INTO team_analytics_productivity_settings(company_id,daily_hours,updated_by) VALUES(%s,%s,%s)
-            ON CONFLICT(company_id) DO UPDATE SET daily_hours=excluded.daily_hours,updated_by=excluded.updated_by""",
-            [company_id, daily_hours, user_id],
+            """INSERT INTO team_analytics_productivity_settings(company_id,daily_hours,weekly_hours,updated_by)
+            VALUES(%s,%s,%s,%s) ON CONFLICT(company_id) DO UPDATE
+            SET daily_hours=excluded.daily_hours,weekly_hours=excluded.weekly_hours,updated_by=excluded.updated_by""",
+            [company_id, daily_hours, weekly_hours, user_id],
         )
         conn.commit()
     except Exception:
@@ -236,27 +237,60 @@ def save_settings(company_id, working_status, user_id, daily_hours=8):
         conn.close()
 
 
-_SPRINT_MEMBERSHIP = """(EXISTS (
+_SPRINT_MEMBERSHIP = """EXISTS (
     SELECT 1 FROM team_analytics_task_sprints m WHERE m.company_id=t.company_id
-      AND m.jira_source=t.jira_source AND m.issue_id=t.issue_id AND m.sprint_id=%(sprint)s)
-    OR EXISTS (SELECT 1 FROM team_analytics_events e WHERE e.company_id=t.company_id
-      AND e.jira_source=t.jira_source AND e.issue_id=t.issue_id
-      AND e.snapshot @> %(sprint_snapshot)s::jsonb))"""
+      AND m.jira_source=t.jira_source AND m.issue_id=t.issue_id AND m.sprint_id=%(sprint)s)"""
 
-_SELECTED = """WITH scoped_intervals AS (
-    SELECT jira_source,issue_id,
-      greatest(started_at,coalesce(%(window_start)s::timestamptz,started_at)) AS starts,
-      least(coalesce(ended_at,%(now)s),%(now)s,coalesce(%(window_end)s::timestamptz,%(now)s)) AS ends
-    FROM team_analytics_intervals WHERE company_id=%(company)s AND started_at<=%(now)s
-      AND (%(person)s::text IS NULL OR (assignee_id=%(person)s AND (%(person)s='' OR jira_source=%(source)s)))
-      AND (%(sprint)s::bigint IS NULL OR jira_source=%(sprint_source)s)), durations AS (
-    SELECT jira_source,issue_id,sum(extract(epoch FROM (ends-starts)))::double precision AS seconds
+# Allowances are shared by every task of a source/account, before sprint and page filters.
+# Each calendar day's allowance, then the week's allowance, is distributed proportionally.
+_LIMITED = """WITH day_segments AS (
+    SELECT i.jira_source,i.issue_id,i.ordinal,i.assignee_id,i.assignee_name,i.working_status,
+      i.ended_at IS NULL AS is_open, day.local_day,
+      greatest(i.started_at,day.local_day AT TIME ZONE 'Asia/Tashkent') AS starts,
+      least(coalesce(i.ended_at,%(now)s),%(now)s,
+        (day.local_day + interval '1 day') AT TIME ZONE 'Asia/Tashkent') AS ends
+    FROM team_analytics_intervals i CROSS JOIN LATERAL generate_series(
+      date_trunc('day',i.started_at AT TIME ZONE 'Asia/Tashkent'),
+      date_trunc('day',least(coalesce(i.ended_at,%(now)s),%(now)s) AT TIME ZONE 'Asia/Tashkent'),
+      interval '1 day') AS day(local_day)
+    WHERE i.company_id=%(company)s AND i.started_at<%(now)s
+      AND (%(person)s::text IS NULL OR
+        (i.assignee_id=%(person)s AND (%(person)s='' OR i.jira_source=%(source)s)))
+), raw_segments AS (
+    SELECT *,extract(epoch FROM (ends-starts))::double precision AS raw_seconds
+    FROM day_segments WHERE ends>starts
+), daily_limited AS (
+    SELECT *,least(1.0,%(daily_hours)s * 3600.0 / sum(raw_seconds) OVER
+      (PARTITION BY jira_source,assignee_id,local_day)) AS daily_factor
+    FROM raw_segments
+), weekly_limited AS (
+    SELECT *,daily_factor * least(1.0,%(weekly_hours)s * 3600.0 /
+      sum(raw_seconds * daily_factor) OVER
+        (PARTITION BY jira_source,assignee_id,date_trunc('week',local_day))) AS factor
+    FROM daily_limited
+), clipped_segments AS (
+    SELECT jira_source,issue_id,ordinal,assignee_id,assignee_name,working_status,is_open,factor,
+      greatest(starts,coalesce(%(window_start)s::timestamptz,starts)) AS starts,
+      least(ends,coalesce(%(window_end)s::timestamptz,ends)) AS ends
+    FROM weekly_limited
+    WHERE (%(sprint)s::bigint IS NULL OR jira_source=%(sprint_source)s)
+), scoped_intervals AS (
+    SELECT *,extract(epoch FROM (ends-starts))::double precision AS raw_seconds,
+      extract(epoch FROM (ends-starts))::double precision * factor AS counted_seconds
+    FROM clipped_segments WHERE ends>starts
+) """
+
+_SELECTED = _LIMITED + """, durations AS (
+    SELECT jira_source,issue_id,sum(counted_seconds)::double precision AS seconds
     FROM scoped_intervals WHERE ends>starts GROUP BY jira_source,issue_id), selected AS (
     SELECT t.*,coalesce(d.seconds,0) AS seconds FROM team_analytics_tasks t LEFT JOIN durations d USING(jira_source,issue_id)
-    WHERE t.company_id=%(company)s AND (%(sprint)s::bigint IS NULL OR
+    WHERE t.company_id=%(company)s
+      AND coalesce(t.snapshot->>'deleted','false')!='true'
+      AND coalesce(t.snapshot->>'unavailable','false')!='true'
+      AND (%(sprint)s::bigint IS NULL OR
       (t.jira_source=%(sprint_source)s AND """ + _SPRINT_MEMBERSHIP + """))
       AND (%(person)s::text IS NULL OR
-      (t.assignee_id=%(person)s AND (%(person)s='' OR t.jira_source=%(source)s)) OR coalesce(d.seconds,0)>0)) """
+      (t.assignee_id=%(person)s AND (%(person)s='' OR t.jira_source=%(source)s)))) """
 
 
 def get_snapshot(company_id, limit=100, offset=0, assignee_id=None, jira_source=None, sprint_id=None, sprint_source=None):
@@ -295,15 +329,16 @@ def get_snapshot(company_id, limit=100, offset=0, assignee_id=None, jira_source=
             "offset": offset,
             "sprint": sprint_id,
             "sprint_source": sprint_source,
-            "sprint_snapshot": json.dumps({"sprint_ids": [sprint_id]}),
             "window_start": window[0] if window else None,
             "window_end": window[1] if window else None,
         }
         settings = _settings(conn, company_id)
         productivity = conn.execute(
-            "SELECT daily_hours FROM team_analytics_productivity_settings WHERE company_id=%s", [company_id]
+            "SELECT daily_hours,weekly_hours FROM team_analytics_productivity_settings WHERE company_id=%s", [company_id]
         ).fetchone()
         hours = float(productivity["daily_hours"]) if productivity else 8
+        weekly_hours = float(productivity["weekly_hours"]) if productivity else 40
+        params.update(daily_hours=hours, weekly_hours=weekly_hours)
         summary = dict(
             conn.execute(
                 _SELECTED
@@ -322,13 +357,12 @@ def get_snapshot(company_id, limit=100, offset=0, assignee_id=None, jira_source=
         ).fetchall()
         by_issue = {}
         if page:
-            identities = [value for row in page for value in (row["jira_source"], row["issue_id"])]
-            placeholders = ",".join(["(%s,%s)"] * len(page))
+            params["page_issues"] = json.dumps([[row["jira_source"], row["issue_id"]] for row in page])
             for interval in conn.execute(
-                "SELECT * FROM team_analytics_intervals WHERE company_id=%s AND (jira_source,issue_id) IN ("
-                + placeholders
-                + ") ORDER BY jira_source,issue_id,ordinal",
-                [company_id, *identities],
+                _LIMITED + """SELECT * FROM scoped_intervals WHERE (jira_source,issue_id) IN (
+                    SELECT value->>0,value->>1 FROM jsonb_array_elements(%(page_issues)s::jsonb))
+                    ORDER BY jira_source,issue_id,starts,ordinal""",
+                params,
             ).fetchall():
                 by_issue.setdefault((interval["jira_source"], interval["issue_id"]), []).append(interval)
         for row in page:
@@ -342,19 +376,17 @@ def get_snapshot(company_id, limit=100, offset=0, assignee_id=None, jira_source=
             }
             intervals = by_issue.get((row["jira_source"], row["issue_id"]), [])
             for i in intervals:
-                bounds = clip_interval(i["started_at"], min(i["ended_at"] or now, now), window)
-                if bounds is None:
-                    continue
-                start, end = bounds
+                start, end = i["starts"], i["ends"]
                 task["intervals"].append(
                     {
                         "started_at": start.isoformat(),
                         "ended_at": end.isoformat(),
                         "seconds": (end - start).total_seconds(),
+                        "counted_seconds": float(i["counted_seconds"]),
                         "assignee_id": i["assignee_id"],
                         "assignee_name": i["assignee_name"],
                         "working_status": i["working_status"],
-                        "is_open": i["ended_at"] is None and end == now,
+                        "is_open": i["is_open"] and end == now,
                     }
                 )
             task["total_seconds"] = sum(i["seconds"] for i in task["intervals"])
@@ -380,6 +412,7 @@ def get_snapshot(company_id, limit=100, offset=0, assignee_id=None, jira_source=
         return {
             "working_status": settings[-1]["working_status"] if settings else "In Progress",
             "daily_hours": hours,
+            "weekly_hours": weekly_hours,
             "timezone": "Asia/Tashkent",
             "tasks": tasks,
             "assignees": people,

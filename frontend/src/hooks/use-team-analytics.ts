@@ -28,7 +28,7 @@ export function useTeamAnalytics(assignee: string, offset: number, refresh: numb
     fetch(`/api/team-analytics?${query}`, { signal: controller.signal }).then(async response => {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Ma’lumot olishda xato');
-      if (!Array.isArray(data.tasks) || !Array.isArray(data.assignees) || !data.summary || !(data.daily_hours > 0))
+      if (!Array.isArray(data.tasks) || !Array.isArray(data.assignees) || !data.summary || !(data.daily_hours > 0) || !(data.weekly_hours > 0))
         throw new Error('Analytics javobi noto‘g‘ri');
       if (!controller.signal.aborted) setResult({ key: requestKey, snapshot: data, error: '' });
     }).catch(error => {
@@ -40,7 +40,7 @@ export function useTeamAnalytics(assignee: string, offset: number, refresh: numb
   const demoSnapshot = useMemo(() => {
     if (!demo) return null;
     const [selected, pageOffset] = JSON.parse(requestKey) as [string, number];
-    const data = createAnalyticsDemo(settings.working_status, settings.daily_hours);
+    const data = createAnalyticsDemo(settings.working_status, settings.daily_hours, settings.weekly_hours);
     if (sprint !== 'all') {
       const selectedSprint = data.sprints?.find(item => sprintKey(item) === sprint);
       if (selectedSprint) {
@@ -54,9 +54,10 @@ export function useTeamAnalytics(assignee: string, offset: number, refresh: numb
     if (selected !== 'all') {
       const [source, id] = parseAssignee(selected);
       data.tasks = data.tasks.filter(task => id ? task.jira_source === source &&
-        (task.assignee_id === id || task.intervals.some(interval => interval.assignee_id === id)) : !task.assignee_id);
+        task.assignee_id === id : !task.assignee_id);
       data.tasks = data.tasks.map(task => {
-        const seconds = task.intervals.filter(interval => interval.assignee_id === id).reduce((sum, interval) => sum + interval.seconds, 0);
+        const seconds = task.intervals.filter(interval => interval.assignee_id === id)
+          .reduce((sum, interval) => sum + (interval.counted_seconds ?? interval.seconds), 0);
         return { ...task, assignee_seconds: seconds, work_days: seconds / (data.daily_hours * 3600) };
       });
     }

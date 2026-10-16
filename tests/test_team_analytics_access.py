@@ -4,6 +4,14 @@ from fastapi import HTTPException
 from services.api import team_analytics_api as api
 
 
+@pytest.mark.parametrize("hours", [0, -1, 169, float("inf"), float("nan")])
+def test_weekly_hours_reject_invalid_limits(hours):
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        api.AnalyticsSettings(working_status="In Progress", weekly_hours=hours)
+
+
 def test_company_admin_cannot_request_other_tenant(monkeypatch):
     monkeypatch.setattr(
         api, "load_api_session", lambda *args, **kwargs: {"auth": {"role": "company_admin", "company_id": 3}}

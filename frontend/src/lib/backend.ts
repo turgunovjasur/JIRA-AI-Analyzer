@@ -25,6 +25,7 @@ import type {
 
 type BackendRequestOptions = Omit<RequestInit, "body"> & {
   body?: unknown;
+  expectedErrorStatuses?: readonly number[];
 };
 
 const SESSION_COOKIE = "qa_backend_session";
@@ -103,15 +104,16 @@ export async function backendRequest<T>(
   path: string,
   options: BackendRequestOptions = {},
 ) {
+  const { expectedErrorStatuses = [], ...requestOptions } = options;
   const requestId = newRequestId();
-  const headers = await buildBackendHeaders(options.headers);
+  const headers = await buildBackendHeaders(requestOptions.headers);
   if (!headers.has("X-Request-ID")) headers.set("X-Request-ID", requestId);
 
-  const method = options.method ?? "GET";
+  const method = requestOptions.method ?? "GET";
   const response = await fetch(`${getBackendBaseUrl()}${path}`, {
-    ...options,
+    ...requestOptions,
     headers,
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    body: requestOptions.body === undefined ? undefined : JSON.stringify(requestOptions.body),
     cache: "no-store",
   });
 
@@ -123,8 +125,10 @@ export async function backendRequest<T>(
       (isRecord(payload) && typeof payload.request_id === "string" ? payload.request_id : null) ||
       requestId;
     const message = extractBackendErrorMessage(payload, response.statusText);
-    // Server-side log — Next.js konteyner stdout'ida (docker logs) ko'rinadi.
-    console.error(`[BFF] backend ${method} ${path} -> ${response.status} reqId=${backendReqId} msg=${message}`);
+    // Expected responses still throw for callers to handle, without a dev error overlay.
+    if (!expectedErrorStatuses.includes(response.status)) {
+      console.error(`[BFF] backend ${method} ${path} -> ${response.status} reqId=${backendReqId} msg=${message}`);
+    }
     throw new BackendRequestError(message, response.status, errorPayload, backendReqId);
   }
 
@@ -152,6 +156,8 @@ export function loginWithBackend(username: string, password: string) {
 export function getBackendSession(sessionToken: string) {
   return backendRequest<BackendSessionResponse>("/api/auth/me", {
     method: "GET",
+    // An expired session is handled as signed out by getOptionalSession().
+    expectedErrorStatuses: [401],
     headers: {
       "X-Session-ID": sessionToken,
     },

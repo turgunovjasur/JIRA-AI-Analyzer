@@ -1,8 +1,9 @@
 import { summarizeTasks } from "./team-analytics-calculations";
+import { applyTaskWorkLimits } from "./team-analytics-limits";
 import type { AnalyticsSnapshot, AnalyticsSprint, AnalyticsTask } from "@/lib/team-analytics-types";
 
 /** Browser-only fixtures: never sent to Jira or persisted to the database. */
-export function createAnalyticsDemo(workingStatus: string, dailyHours = 8): AnalyticsSnapshot {
+export function createAnalyticsDemo(workingStatus: string, dailyHours = 8, weeklyHours = 40): AnalyticsSnapshot {
   const now = Date.now();
   const fortnight = 14 * 86400_000;
   const sprints: AnalyticsSprint[] = Array.from({ length: 9 }, (_, index) => ({
@@ -32,7 +33,7 @@ export function createAnalyticsDemo(workingStatus: string, dailyHours = 8): Anal
     { key: "DEMO-118", name: "Ali Valiyev", summary: "Kechikkan task: to‘lov xatolarini tuzatish", status: "Review", hours: [4, 4, 4, 4, 2], active: false },
     { key: "DEMO-119", name: "Ali Valiyev", summary: "Kechikkan task: hisobot generatsiyasi", status: "Done", hours: [4, 4, 4, 4, 4, 4, 2], active: false },
   ];
-  const tasks: AnalyticsTask[] = samples.map((sample, index) => {
+  const rawTasks: AnalyticsTask[] = samples.map((sample, index) => {
     const assigneeId = sample.name ? `demo-${sample.name.split(" ")[0].toLowerCase()}` : "";
     const intervals = sample.hours.map((hours, intervalIndex) => {
       // Past tasks use distinct business days and morning/afternoon work sessions.
@@ -59,10 +60,11 @@ export function createAnalyticsDemo(workingStatus: string, dailyHours = 8): Anal
       story_points: [2, 2, 4, 2, 2, 2, 2, 2, 4, 2, 4, 2, 2, 2, 4, 2, 2, 4, 6][index], assignee_seconds: intervals.reduce((sum, interval) => sum + interval.seconds, 0), work_days: intervals.reduce((sum, interval) => sum + interval.seconds, 0) / (dailyHours * 3600),
       is_working: sample.active, deleted: false, total_seconds: intervals.reduce((sum, interval) => sum + interval.seconds, 0), intervals };
   });
+  const tasks = applyTaskWorkLimits(rawTasks, dailyHours, weeklyHours);
   const assignees = Array.from(new Map(tasks.filter(task => task.assignee_id).map(task => [task.assignee_id,
     { jira_source: task.jira_source, assignee_id: task.assignee_id!, assignee_name: task.assignee_name! }])).values())
     .sort((a, b) => a.assignee_name.localeCompare(b.assignee_name));
-  return { assignees, sprints, selected_sprint: null, sprint_window: null, daily_hours: dailyHours,
+  return { assignees, sprints, selected_sprint: null, sprint_window: null, daily_hours: dailyHours, weekly_hours: weeklyHours,
     summary: summarizeTasks(tasks),
     timezone: "Asia/Tashkent",
     working_status: workingStatus, tasks, total: tasks.length, limit: 100, offset: 0, generated_at: new Date(now).toISOString() };

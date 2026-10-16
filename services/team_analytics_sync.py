@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from datetime import datetime, timezone
 
-from services.team_analytics import normalize_sprints
+from services.team_analytics import as_time, normalize_sprints
 from services.team_analytics_history import history_events
 from services.team_analytics_jira import JiraAnalyticsClient, JiraReadError, project_keys, read_issue_history
 from utils.auth.auth_db import get_company_settings, get_effective_company_modules, is_company_subscription_active
@@ -38,13 +38,52 @@ def sync_company(company_id: int, *, initial=False) -> dict:
         ).fetchone()
         selected_projects = ",".join('"' + p + '"' for p in projects)
         since = checkpoint["last_success_at"] if checkpoint else None
-        if initial:
-            jql = f"project in ({selected_projects}) AND statusCategory != Done"
+        full_import = initial or since is None
+        active_sprints = []
+        if full_import:
+            # Jira lists completed issues too. Bootstrap every configured project
+            # without assuming a company's workflow/status names or categories.
+            jql = f"project in ({selected_projects})"
         else:
-            minutes = max(30, math.ceil((started - since).total_seconds() / 60) + 15) if since else 1440
-            jql = f"project in ({selected_projects}) AND updated >= -{minutes}m"
-        keys = {issue["key"] for issue in client.search(jql)}
-        if initial:
+            minutes = max(30, math.ceil((started - since).total_seconds() / 60) + 15)
+            active_sprints = [
+                row["sprint_id"]
+                for row in conn.execute(
+                    """SELECT sprint_id FROM team_analytics_sprints
+                    WHERE company_id=%s AND jira_source=%s AND metadata->>'state'='active'
+                    ORDER BY sprint_id""",
+                    [company_id, client.source],
+                ).fetchall()
+            ]
+            recent = f"updated >= -{minutes}m"
+            if active_sprints:
+                # Reconcile unchanged completed tasks missed by older imports.
+                # IDs come from this tenant's Jira metadata, never global defaults.
+                ids = ",".join(str(sprint_id) for sprint_id in active_sprints)
+                recent = f"({recent} OR sprint in ({ids}))"
+            jql = f"project in ({selected_projects}) AND {recent}"
+        known = {
+            row["issue_key"]: row["snapshot"]
+            for row in conn.execute(
+                "SELECT issue_key,snapshot FROM team_analytics_tasks WHERE company_id=%s AND jira_source=%s",
+                [company_id, client.source],
+            ).fetchall()
+        }
+        keys = set()
+        found = set()
+        for issue in client.search(jql, "id,key,updated"):
+            found.add(issue["key"])
+            previous = known.get(issue["key"], {})
+            updated = (issue.get("fields") or {}).get("updated")
+            unchanged = False
+            if updated and previous.get("jira_updated_at"):
+                try:
+                    unchanged = as_time(updated) == as_time(previous["jira_updated_at"])
+                except (ValueError, TypeError, OverflowError):
+                    pass
+            if full_import or not unchanged or previous.get("unavailable"):
+                keys.add(issue["key"])
+        if full_import:
             keys.update(
                 row["task_id"]
                 for row in conn.execute(
@@ -52,6 +91,16 @@ def sync_company(company_id: int, *, initial=False) -> dict:
                 ).fetchall()
             )
         else:
+            # A task removed from an active sprint can disappear from search
+            # before its update reaches our time window. Verify the stored row
+            # so missed moves/deletions cannot leave stale Jira membership.
+            active_ids = set(active_sprints)
+            keys.update(
+                key for key, snapshot in known.items()
+                if key not in found and not snapshot.get("deleted")
+                and key.split("-")[0].upper() in projects
+                and active_ids.intersection(snapshot.get("sprint_ids", []))
+            )
             keys.update(
                 row["issue_key"]
                 for row in conn.execute(
@@ -74,7 +123,7 @@ def sync_company(company_id: int, *, initial=False) -> dict:
 
         for key in sorted(keys):
             project = key.split("-")[0].upper()
-            if initial and project not in projects:
+            if full_import and project not in projects:
                 continue
             mapping = mapping_for(project)
             try:

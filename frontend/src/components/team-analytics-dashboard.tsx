@@ -3,7 +3,7 @@
 import { Fragment, useMemo, useState } from "react";
 import { TeamAnalyticsSettings } from "@/components/team-analytics-settings";
 import { TeamAnalyticsTaskDetails } from "@/components/team-analytics-task-details";
-import { ANALYTICS_PAGE_SIZE as PAGE_SIZE, useTeamAnalytics } from "@/hooks/use-team-analytics";
+import { useTeamAnalytics } from "@/hooks/use-team-analytics";
 import { calculateDelay, parseAssignee } from "@/lib/team-analytics-calculations";
 import { duration, numberLabel } from "@/lib/team-analytics-time";
 import { sprintKey, sprintLabel, sprintWindow } from "@/lib/team-analytics-sprints";
@@ -20,7 +20,7 @@ export function TeamAnalyticsDashboard() {
   const [calculatedPoints, setCalculatedPoints] = useState<number | null>(null);
   const [expandedTask, setExpandedTask] = useState<string | null>(null);
   const [demo, setDemo] = useState(false);
-  const [demoSettings, setDemoSettings] = useState<AnalyticsSettingsValue>({ working_status: "In Progress", daily_hours: 8 });
+  const [demoSettings, setDemoSettings] = useState<AnalyticsSettingsValue>({ working_status: "In Progress", daily_hours: 8, weekly_hours: 40 });
   const [showSettings, setShowSettings] = useState(false);
   const [offset, setOffset] = useState(0);
   const [refresh, setRefresh] = useState(0);
@@ -72,7 +72,7 @@ export function TeamAnalyticsDashboard() {
     <Card>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div><h1 className="text-xl font-semibold">Team Analytics</h1>
-          <p className="mt-2 text-sm text-muted-foreground">Hisoblash statusi: {snapshot?.working_status || "…"}. Bir ish kuni: {snapshot?.daily_hours ?? 8} soat.</p></div>
+          <p className="mt-2 text-sm text-muted-foreground">Hisoblash statusi: {snapshot?.working_status || "…"}. Kunlik limit: {snapshot?.daily_hours ?? 8} soat. Haftalik limit: {snapshot?.weekly_hours ?? 40} soat.</p></div>
         <div className="flex flex-wrap gap-3">
           <Button variant="soft" aria-expanded={showSettings} onClick={() => setShowSettings(value => !value)}>Settings</Button>
           <Button disabled={loading} onClick={() => setRefresh(value => value + 1)}>Yangilash</Button>
@@ -85,7 +85,7 @@ export function TeamAnalyticsDashboard() {
       <p className="mt-3 text-sm text-muted-foreground">{demo ? "Demo rejimi: soxta tasklar va ijrochilar." : "Ma’lumotlar Jira signallaridan avtomatik yig‘iladi."}</p>
     </Card>
     {showSettings && snapshot && <TeamAnalyticsSettings key={demo ? "demo" : "live"}
-      workingStatus={snapshot.working_status} dailyHours={snapshot.daily_hours} demo={demo} onSaved={values => {
+      workingStatus={snapshot.working_status} dailyHours={snapshot.daily_hours} weeklyHours={snapshot.weekly_hours} demo={demo} onSaved={values => {
         if (demo) setDemoSettings(values);
         else setRefresh(value => value + 1);
       }} />}
@@ -146,7 +146,7 @@ export function TeamAnalyticsDashboard() {
         <div className="team-analytics-table-scroll"><table className="w-full text-left text-sm">
           <thead><tr className="border-b">
             <th className="p-3">Task</th>{showAssigneeColumn && <th className="p-3">Ijrochi</th>}<th className="p-3">Status</th>
-            <th className="p-3">{assignee === "all" ? "Jami vaqt" : "Ijrochi ishlagan vaqt"}</th>
+            <th className="p-3" title="Kunlik va haftalik limitdan keyingi vaqt">{assignee === "all" ? "Jami vaqt" : "Ijrochi ishlagan vaqt"}</th>
             <th className="p-3">Task pointi</th><th className="p-3">Vaqtga teng point</th>
           </tr></thead>
           <tbody>{tasks.map(task => {
@@ -195,10 +195,18 @@ export function TeamAnalyticsDashboard() {
             <td className="p-3">{validPoints ? numberLabel(snapshot.summary.work_days * pointsNumber) : "—"}</td>
           </tr></tfoot>
         </table></div>
-        {snapshot.total > PAGE_SIZE && <div className="mt-4 flex gap-3">
-          <Button disabled={offset === 0} onClick={() => { setExpandedTask(null); setOffset(value => Math.max(0, value - PAGE_SIZE)); }}>Oldingi</Button>
-          <Button disabled={offset + snapshot.limit >= snapshot.total} onClick={() => { setExpandedTask(null); setOffset(value => value + PAGE_SIZE); }}>Keyingi</Button>
-        </div>}
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3" aria-label="Jadval sahifalari">
+          <div className="space-y-1 text-sm text-muted-foreground" aria-live="polite">
+            <p>{tasks.length ? snapshot.offset + 1 : 0}–{snapshot.offset + tasks.length} / {snapshot.total} · {tasks.length} ta qator ko‘rsatilmoqda</p>
+            <p>Sahifa {Math.floor(snapshot.offset / snapshot.limit) + 1} / {Math.max(1, Math.ceil(snapshot.total / snapshot.limit))}
+              {snapshot.offset + snapshot.limit < snapshot.total && ` · Keyingi sahifada: ${Math.min(snapshot.limit, snapshot.total - snapshot.offset - snapshot.limit)} ta`}
+            </p>
+          </div>
+          {snapshot.total > snapshot.limit && <div className="flex gap-3">
+            <Button disabled={snapshot.offset === 0} onClick={() => { setExpandedTask(null); setOffset(Math.max(0, snapshot.offset - snapshot.limit)); }}>Oldingi</Button>
+            <Button disabled={snapshot.offset + snapshot.limit >= snapshot.total} onClick={() => { setExpandedTask(null); setOffset(snapshot.offset + snapshot.limit); }}>Keyingi</Button>
+          </div>}
+        </div>
       </Card>}
       <Card>
         <h2 className="font-semibold">{isPersonSelected ? `${selectedPerson?.assignee_name || "Ijrochi"} natijasi` : "Jami hisob"}</h2>
@@ -215,7 +223,7 @@ export function TeamAnalyticsDashboard() {
           {snapshot.summary.missing_points > 0 && <p className="mt-2 text-sm text-muted-foreground">Pointi belgilanmagan {snapshot.summary.missing_points} ta task kechikish hisobiga kiritilmadi.</p>}
         </div>}
         {snapshot.summary.missing_points > 0 && <p className="mt-2 text-sm text-muted-foreground">{snapshot.summary.missing_points} ta taskda Jira pointi belgilanmagan.</p>}
-        <p className="mt-3 text-sm text-muted-foreground">Task pointi — Jira bahosi. Vaqtga teng point — sarflangan vaqtning kiritilgan kunlik point bo‘yicha hisobi. Natija barcha sahifalarni qamrab oladi.</p>
+        <p className="mt-3 text-sm text-muted-foreground">Task pointi — Jira bahosi. Vaqtga teng point — kunlik {snapshot.daily_hours} va haftalik {snapshot.weekly_hours ?? 40} soat limiti bilan hisoblangan vaqtning kiritilgan kunlik point bo‘yicha hisobi. Natija barcha sahifalarni qamrab oladi.</p>
       </Card>
     </>}
   </div>;

@@ -2,6 +2,7 @@ export type AnalyticsInterval = {
   started_at: string;
   ended_at: string;
   seconds: number;
+  counted_seconds?: number;
   assignee_id: string;
   assignee_name: string;
   working_status: string;
@@ -46,6 +47,7 @@ export type AnalyticsAssignee = {
 export type AnalyticsSettingsValue = {
   working_status: string;
   daily_hours: number;
+  weekly_hours: number;
 };
 
 export type AnalyticsSnapshot = {
@@ -57,6 +59,7 @@ export type AnalyticsSnapshot = {
   sprint_window?: { started_at: string; ended_at: string } | null;
   working_status: string;
   daily_hours: number;
+  weekly_hours: number;
   summary: {
     assignee_count?: number;
     worked_seconds: number;

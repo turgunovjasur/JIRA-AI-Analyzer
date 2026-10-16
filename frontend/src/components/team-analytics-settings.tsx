@@ -5,23 +5,26 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { AnalyticsSettingsValue } from "@/lib/team-analytics-types";
 
-export function TeamAnalyticsSettings({ workingStatus, dailyHours, demo = false, onSaved }: {
-  workingStatus: string; dailyHours: number; demo?: boolean;
+export function TeamAnalyticsSettings({ workingStatus, dailyHours, weeklyHours = 40, demo = false, onSaved }: {
+  workingStatus: string; dailyHours: number; weeklyHours?: number; demo?: boolean;
   onSaved: (settings: AnalyticsSettingsValue) => void;
 }) {
   const [status, setStatus] = useState(workingStatus);
   const [hours, setHours] = useState(String(dailyHours));
+  const [weekHours, setWeekHours] = useState(String(weeklyHours));
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  useEffect(() => { setStatus(workingStatus); setHours(String(dailyHours)); }, [workingStatus, dailyHours]);
+  useEffect(() => { setStatus(workingStatus); setHours(String(dailyHours)); setWeekHours(String(weeklyHours)); },
+    [workingStatus, dailyHours, weeklyHours]);
   return <Card>
     <h2 className="text-lg font-semibold">Settings</h2>
     <form className="mt-4 flex flex-wrap items-end gap-4" onSubmit={async event => {
       event.preventDefault(); setBusy(true); setMessage("");
       try {
-        const values: AnalyticsSettingsValue = { working_status: status.trim(), daily_hours: Number(hours) };
-        if (!values.working_status || !Number.isFinite(values.daily_hours) || values.daily_hours <= 0 || values.daily_hours > 24)
-          throw new Error("Status va kunlik ish soatini to‘g‘ri kiriting");
+        const values: AnalyticsSettingsValue = { working_status: status.trim(), daily_hours: Number(hours), weekly_hours: Number(weekHours) };
+        if (!values.working_status || !Number.isFinite(values.daily_hours) || values.daily_hours <= 0 || values.daily_hours > 24 ||
+          !Number.isFinite(values.weekly_hours) || values.weekly_hours <= 0 || values.weekly_hours > 168)
+          throw new Error("Status, kunlik (0–24) va haftalik (0–168) ish soatini to‘g‘ri kiriting");
         if (demo) { onSaved(values); setMessage("Demo sozlamalari saqlandi."); return; }
         const response = await fetch("/api/team-analytics", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values) });
         const data = await response.json();
@@ -38,9 +41,13 @@ export function TeamAnalyticsSettings({ workingStatus, dailyHours, demo = false,
         <input className="w-36 rounded-md border bg-background px-3 py-2" type="number" required min="0.01" max="24" step="0.01"
           value={hours} onChange={event => setHours(event.target.value)} disabled={busy} placeholder="8" />
       </label>
-      <Button type="submit" disabled={busy || !status.trim() || !hours}>{busy ? "Saqlanmoqda…" : "Saqlash"}</Button>
+      <label className="grid gap-2 text-sm">Haftalik ish soati
+        <input className="w-36 rounded-md border bg-background px-3 py-2" type="number" required min="0.01" max="168" step="0.01"
+          value={weekHours} onChange={event => setWeekHours(event.target.value)} disabled={busy} placeholder="40" />
+      </label>
+      <Button type="submit" disabled={busy || !status.trim() || !hours || !weekHours}>{busy ? "Saqlanmoqda…" : "Saqlash"}</Button>
     </form>
-    <p className="mt-3 text-sm text-muted-foreground">Vaqt faqat tanlangan statusda yuradi. Boshqa barcha statuslarda to‘xtaydi, qaytganda oldingi vaqtga qo‘shilib davom etadi.</p>
+    <p className="mt-3 text-sm text-muted-foreground">Vaqt tanlangan status bo‘yicha olinadi va ijrochining barcha tasklari uchun kunlik, keyin haftalik limit bilan cheklanadi. Hafta dushanbadan boshlanadi. Limit tasklarga sarflangan vaqtiga mutanosib taqsimlanadi.</p>
     {message && <p role="status" className="mt-3 text-sm">{message}</p>}
   </Card>;
 }

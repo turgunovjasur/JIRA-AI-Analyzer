@@ -39,9 +39,13 @@ export function filterSprintTasks(tasks: AnalyticsTask[], sprint: AnalyticsSprin
       const end = Math.min(Date.parse(interval.ended_at), window[1]);
       if (end <= start) return [];
       return [{ ...interval, started_at: new Date(start).toISOString(), ended_at: new Date(end).toISOString(),
-        seconds: (end - start) / 1000, is_open: interval.is_open && end === now }];
+        seconds: (end - start) / 1000,
+        counted_seconds: interval.counted_seconds === undefined ? undefined
+          : (end - start) / 1000 * interval.counted_seconds / (interval.seconds || 1),
+        is_open: interval.is_open && end === now }];
     });
-    const seconds = intervals.reduce((sum, interval) => sum + interval.seconds, 0);
-    return { ...task, intervals, total_seconds: seconds, assignee_seconds: seconds, is_working: intervals.some(interval => interval.is_open) };
+    const seconds = intervals.reduce((sum, interval) => sum + (interval.counted_seconds ?? interval.seconds), 0);
+    return { ...task, intervals, total_seconds: intervals.reduce((sum, interval) => sum + interval.seconds, 0),
+      assignee_seconds: seconds, is_working: intervals.some(interval => interval.is_open) };
   });
 }

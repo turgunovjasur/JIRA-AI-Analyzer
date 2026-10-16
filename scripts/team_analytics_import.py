@@ -1,4 +1,4 @@
-"""Operator entry point: read Jira, import only open issues and existing task history."""
+"""Operator entry point: import configured Jira projects in every status and task history."""
 
 import argparse
 import json
@@ -12,6 +12,7 @@ from services.team_analytics_sync import sync_company
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--company-id", type=int, required=True)
-    parser.add_argument("--initial", action="store_true")
+    parser.add_argument("--initial", action="store_true",
+                        help="Backfill all configured projects, including completed issues")
     args = parser.parse_args()
     print(json.dumps(sync_company(args.company_id, initial=args.initial), default=str), flush=True)

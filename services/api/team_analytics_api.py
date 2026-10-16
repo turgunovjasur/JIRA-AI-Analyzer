@@ -28,6 +28,7 @@ class AnalyticsSettings(BaseModel):
     model_config = {"extra": "forbid"}
     working_status: str = Field(min_length=1, max_length=128)
     daily_hours: float = Field(default=8, gt=0, le=24, allow_inf_nan=False)
+    weekly_hours: float = Field(default=40, gt=0, le=168, allow_inf_nan=False)
 
 
 @router.get("/snapshot")
@@ -63,5 +64,6 @@ def settings(
     if not status:
         raise HTTPException(422, "Status nomi bo'sh bo'lishi mumkin emas")
     actor_id = get_session_user_id(session) if get_session_role(session) == "company_admin" else None
-    save_settings(company_id, status, actor_id, body.daily_hours)
-    return {"success": True, "working_status": status, "daily_hours": body.daily_hours}
+    save_settings(company_id, status, actor_id, body.daily_hours, body.weekly_hours)
+    return {"success": True, "working_status": status, "daily_hours": body.daily_hours,
+            "weekly_hours": body.weekly_hours}
